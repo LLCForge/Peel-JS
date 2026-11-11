@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="PEEL: open-source JavaScript deobfuscator that runs entirely in your browser. Your code never leaves your device.">
+  <meta name="theme-color" content="#0c0c0c">
+  <meta property="og:title" content="PEEL · JS Deobfuscator">
+  <meta property="og:description" content="Open-source JavaScript deobfuscator. Runs in your browser, your code never leaves your device.">
+  <meta property="og:image" content="/peel-logo-horizontal-dark-3000.png">
+  <title>PEEL · JS Deobfuscator</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" href="/peel-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon-180.png">
+  <link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+  <a class="skip" href="#input" data-i18n="skip">İçeriğe geç</a>
+
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="PEEL">
+      <img src="/peel-icon.svg" alt="" width="32" height="32">
+      <span class="brand-text">
+        <span class="wordmark" aria-hidden="true">pee<span>l</span></span>
+        <span class="brand-sub" data-i18n="brand.sub">JS DEOBFUSCATOR</span>
+      </span>
+    </a>
+    <div class="actions">
+      <button type="button" id="btn-lang" class="ghost small" data-i18n="action.lang" data-i18n-label="action.lang.label">EN</button>
+      <button type="button" id="btn-load" class="ghost" data-i18n="action.open">Dosya aç</button>
+      <button type="button" id="btn-stop" class="ghost danger" data-i18n="action.stop" hidden>Durdur</button>
+      <button type="button" id="btn-run" class="primary">
+        <span class="label" data-i18n="action.run">Çöz</span>
+        <kbd aria-hidden="true">Ctrl ↵</kbd>
+      </button>
+    </div>
+  </header>
+  <div id="passbar" aria-hidden="true"></div>
+
+  <main id="main">
+    <section class="panel" aria-labelledby="in-title">
+      <div class="ph">
+        <h2 id="in-title" data-i18n="panel.input">Girdi</h2>
+        <span class="count" id="in-info">0</span>
+        <div class="ph-actions">
+          <button type="button" id="btn-sample" class="tiny" data-i18n="action.sample">Örnek</button>
+          <button type="button" id="btn-clear" class="tiny" data-i18n="action.clear">Temizle</button>
+        </div>
+      </div>
+      <div class="body">
+        <textarea id="input" spellcheck="false" autocomplete="off" aria-labelledby="in-title"></textarea>
+        <div id="empty" class="empty">
+          <img src="/peel-icon.svg" alt="" width="88" height="88">
+          <p class="empty-title" data-i18n="empty.title">Gizlenmiş kodu yapıştır</p>
+          <p class="empty-body" data-i18n="empty.body">ya da bir .js dosyasını buraya sürükle. Kod tarayıcından çıkmaz.</p>
+          <div class="empty-actions">
+            <button type="button" id="btn-empty-open" class="ghost" data-i18n="action.open">Dosya aç</button>
+            <button type="button" id="btn-empty-sample" class="ghost accent" data-i18n="empty.sample">Örnek kodla dene</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div id="divider" role="separator" aria-orientation="vertical" aria-label="Resize panels"
+      aria-valuemin="20" aria-valuemax="80" aria-valuenow="50" tabindex="0"></div>
+
+    <section class="panel" aria-labelledby="out-title">
+      <div class="ph">
+        <h2 id="out-title" class="sr-only" data-i18n="panel.output">Çıktı</h2>
+        <div class="tabs" role="tablist" aria-labelledby="out-title">
+          <button type="button" role="tab" id="tab-code" aria-controls="output" aria-selected="true" data-i18n="tab.code">Kod</button>
+          <button type="button" role="tab" id="tab-report" aria-controls="view-report" aria-selected="false" tabindex="-1" data-i18n="tab.report">Rapor</button>
+          <button type="button" role="tab" id="tab-timeline" aria-controls="view-timeline" aria-selected="false" tabindex="-1" data-i18n="tab.timeline">Zaman çizelgesi</button>
+          <button type="button" role="tab" id="tab-diff" aria-controls="view-diff" aria-selected="false" tabindex="-1" data-i18n="tab.diff">Fark</button>
+        </div>
+        <span class="count" id="out-info">0</span>
+        <div class="ph-actions">
+          <button type="button" id="btn-copy" class="tiny" data-i18n="action.copy" disabled>Kopyala</button>
+          <button type="button" id="btn-dl" class="tiny" data-i18n="action.download" disabled>İndir</button>
+        </div>
+      </div>
+      <div class="body">
+        <textarea id="output" class="view" role="tabpanel" aria-labelledby="tab-code" spellcheck="false" readonly
+          data-i18n-placeholder="output.placeholder"></textarea>
+        <div id="view-report" class="view scroll" role="tabpanel" aria-labelledby="tab-report" tabindex="0" hidden></div>
+        <div id="view-timeline" class="view" role="tabpanel" aria-labelledby="tab-timeline" hidden></div>
+        <div id="view-diff" class="view scroll mono" role="tabpanel" aria-labelledby="tab-diff" tabindex="0" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="log" role="log" aria-live="polite" aria-label="Log" hidden></div>
+
+  <footer class="statusbar">
+    <span id="status" role="status">Hazır</span>
+    <div id="stats"></div>
+    <span id="net" class="net" hidden></span>
+    <button type="button" id="btn-log" class="tiny" aria-expanded="false" aria-controls="log" data-i18n="action.log">Kayıt</button>
+  </footer>
+
+  <input type="file" id="file" accept=".js,.mjs,.cjs,.txt" hidden>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

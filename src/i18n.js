@@ -1,0 +1,223 @@
+// Arayüz metinleri. Pass log'ları ve rapordaki teknik etiketler şimdilik Türkçe kalır.
+const DICT = {
+  tr: {
+    'brand.sub': 'JS DEOBFUSCATOR',
+    'action.lang': 'EN',
+    'action.lang.label': 'Switch to English',
+    'action.open': 'Dosya aç',
+    'action.run': 'Çöz',
+    'action.stop': 'Durdur',
+    'action.sample': 'Örnek',
+    'action.clear': 'Temizle',
+    'action.copy': 'Kopyala',
+    'action.download': 'İndir',
+    'action.log': 'Kayıt',
+    'action.export': 'Raporu JSON indir',
+    'panel.input': 'Girdi',
+    'panel.output': 'Çıktı',
+    'tab.code': 'Kod',
+    'tab.report': 'Rapor',
+    'tab.timeline': 'Zaman çizelgesi',
+    'tab.diff': 'Fark',
+    'input.placeholder': 'Obfuscated JavaScript…',
+    'output.placeholder': 'Çözülen kod burada görünecek.',
+    'empty.title': 'Gizlenmiş kodu yapıştır',
+    'empty.body': 'ya da bir .js dosyasını buraya sürükle. Kod tarayıcından çıkmaz.',
+    'empty.sample': 'Örnek kodla dene',
+    'drop': '.js dosyasını bırak',
+    'status.ready': 'Hazır',
+    'status.running': 'Çözülüyor',
+    'status.done': 'Çözüldü · {s} sn',
+    'status.unchanged': 'Değişiklik yok · {s} sn',
+    'status.empty': 'Önce çözülecek kodu yapıştır ya da bir dosya aç.',
+    'status.parse': 'Kod parse edilemedi. Ayrıntı kayıtta.',
+    'status.stopped': 'Durduruldu',
+    'status.error': 'Hata: {m}',
+    'status.copied': 'Çıktı panoya kopyalandı',
+    'status.copyFail': 'Panoya yazılamadı; çıktıyı seçip elle kopyala.',
+    'status.nosandbox': 'Sandbox yok: sınırlı mod',
+    'status.offline': 'Dış ağ isteği yok',
+    'report.empty': 'Rapor, kod çözüldükten sonra burada görünür.',
+    'report.detect': 'Tespit',
+    'report.detect.none': 'Bilinen bir obfuscator imzası bulunamadı.',
+    'report.metrics': 'Ölçümler',
+    'report.metric.size': 'Boyut',
+    'report.metric.hexCalls': 'Hex argümanlı decoder çağrısı',
+    'report.metric.ids': '_0x tanımlayıcısı',
+    'report.metric.vm': 'İşaretlenen durum makinesi',
+    'report.metric.functions': 'Fonksiyon',
+    'report.metric.hash': 'Çıktı özeti (FNV-1a)',
+    'report.network': 'Ağ çağrıları',
+    'report.network.none': 'Çalıştırmada ağ isteği denenmedi.',
+    'report.reads': 'Okunan tarayıcı özellikleri',
+    'report.reads.none': 'Çalıştırmada navigator/screen/document/location okunmadı.',
+    'report.apis': 'Dikkat çeken API\'ler',
+    'report.apis.none': 'Dikkat çeken API kullanımı yok.',
+    'report.iocs': 'Göstergeler (IOC)',
+    'report.iocs.none': 'URL, alan adı, IP, e-posta, cüzdan ya da gömülü anahtar bulunamadı.',
+    'report.ioc.domains': 'Alan adları',
+    'report.ioc.urls': 'URL\'ler',
+    'report.ioc.ips': 'IP adresleri',
+    'report.ioc.emails': 'E-postalar',
+    'report.ioc.wallets': 'Kripto cüzdanları',
+    'report.ioc.jwts': 'JWT',
+    'report.ioc.secrets': 'Gömülü anahtar adayları',
+    'report.passes': 'Pass süreleri',
+    'report.rollbacks': 'Geri alınan değişiklikler',
+    'report.rollbacks.none': 'Hiçbir değişiklik geri alınmadı.',
+    'report.runtimeError': 'Program sandbox\'ta hata verdi: {m}',
+    'timeline.empty': 'Zaman çizelgesi, kod çözüldükten sonra burada görünür.',
+    'timeline.step': 'Adım {i}/{n}',
+    'timeline.round': 'tur {r}',
+    'timeline.prev': 'Önceki adım',
+    'timeline.next': 'Sonraki adım',
+    'diff.header': 'Kırmızı: kaldırıldı · Yeşil: eklendi',
+    'diff.tooBig': 'Dosya fark görünümü için çok büyük ({a} × {b} satır).',
+    'skip': 'İçeriğe geç',
+    'stat.literal': 'literal', 'stat.stringArray': 'string tablosu', 'stat.runtimeDecoder': 'decoder çağrısı',
+    'stat.proxy': 'proxy', 'stat.constFold': 'katlama', 'stat.deadCode': 'ölü kod', 'stat.opaque': 'sabit test',
+    'stat.stateVar': 'durum değişkeni', 'stat.vm': 'VM', 'stat.controlFlow': 'akış', 'stat.unused': 'kullanılmayan',
+    'stat.rename': 'isim',
+  },
+  en: {
+    'brand.sub': 'JS DEOBFUSCATOR',
+    'action.lang': 'TR',
+    'action.lang.label': 'Türkçeye geç',
+    'action.open': 'Open file',
+    'action.run': 'Peel',
+    'action.stop': 'Stop',
+    'action.sample': 'Sample',
+    'action.clear': 'Clear',
+    'action.copy': 'Copy',
+    'action.download': 'Download',
+    'action.log': 'Log',
+    'action.export': 'Download report JSON',
+    'panel.input': 'Input',
+    'panel.output': 'Output',
+    'tab.code': 'Code',
+    'tab.report': 'Report',
+    'tab.timeline': 'Timeline',
+    'tab.diff': 'Diff',
+    'input.placeholder': 'Obfuscated JavaScript…',
+    'output.placeholder': 'Deobfuscated code appears here.',
+    'empty.title': 'Paste obfuscated code',
+    'empty.body': 'or drop a .js file here. Your code never leaves the browser.',
+    'empty.sample': 'Try a sample',
+    'drop': 'Drop the .js file',
+    'status.ready': 'Ready',
+    'status.running': 'Peeling',
+    'status.done': 'Peeled · {s} s',
+    'status.unchanged': 'No changes · {s} s',
+    'status.empty': 'Paste some code or open a file first.',
+    'status.parse': 'Could not parse the code. Details in the log.',
+    'status.stopped': 'Stopped',
+    'status.error': 'Error: {m}',
+    'status.copied': 'Output copied to clipboard',
+    'status.copyFail': 'Clipboard unavailable; select the output and copy it manually.',
+    'status.nosandbox': 'No sandbox: limited mode',
+    'status.offline': 'No external network requests',
+    'report.empty': 'The report appears here after peeling.',
+    'report.detect': 'Detection',
+    'report.detect.none': 'No known obfuscator signature found.',
+    'report.metrics': 'Metrics',
+    'report.metric.size': 'Size',
+    'report.metric.hexCalls': 'Decoder calls with hex arguments',
+    'report.metric.ids': '_0x identifiers',
+    'report.metric.vm': 'Marked state machines',
+    'report.metric.functions': 'Functions',
+    'report.metric.hash': 'Output digest (FNV-1a)',
+    'report.network': 'Network calls',
+    'report.network.none': 'No network request was attempted during the run.',
+    'report.reads': 'Browser properties read',
+    'report.reads.none': 'No navigator/screen/document/location reads during the run.',
+    'report.apis': 'Notable APIs',
+    'report.apis.none': 'No notable API usage.',
+    'report.iocs': 'Indicators (IOC)',
+    'report.iocs.none': 'No URLs, domains, IPs, emails, wallets or embedded keys found.',
+    'report.ioc.domains': 'Domains',
+    'report.ioc.urls': 'URLs',
+    'report.ioc.ips': 'IP addresses',
+    'report.ioc.emails': 'Emails',
+    'report.ioc.wallets': 'Crypto wallets',
+    'report.ioc.jwts': 'JWT',
+    'report.ioc.secrets': 'Embedded key candidates',
+    'report.passes': 'Pass timings',
+    'report.rollbacks': 'Rolled-back changes',
+    'report.rollbacks.none': 'No change was rolled back.',
+    'report.runtimeError': 'The program threw in the sandbox: {m}',
+    'timeline.empty': 'The timeline appears here after peeling.',
+    'timeline.step': 'Step {i}/{n}',
+    'timeline.round': 'round {r}',
+    'timeline.prev': 'Previous step',
+    'timeline.next': 'Next step',
+    'diff.header': 'Red: removed · Green: added',
+    'diff.tooBig': 'File too large for the diff view ({a} × {b} lines).',
+    'skip': 'Skip to content',
+    'stat.literal': 'literals', 'stat.stringArray': 'string table', 'stat.runtimeDecoder': 'decoder calls',
+    'stat.proxy': 'proxies', 'stat.constFold': 'folds', 'stat.deadCode': 'dead code', 'stat.opaque': 'opaque tests',
+    'stat.stateVar': 'state vars', 'stat.vm': 'VMs', 'stat.controlFlow': 'flows', 'stat.unused': 'unused',
+    'stat.rename': 'renames',
+  },
+};
+
+// Analiz modülünün ürettiği Türkçe etiketlerin İngilizce karşılıkları
+const DATA_EN = {
+  'çok sayıda _0x tanımlayıcısı': 'many _0x identifiers',
+  'string dizisi rotasyonu': 'string array rotation',
+  'rotasyon checksum döngüsü': 'rotation checksum loop',
+  'while(!![]) dispatcher': 'while(!![]) dispatcher',
+  '"2|0|1".split akış düzleştirme': '"2|0|1".split control-flow flattening',
+  'rest parametre + length hilesi': 'rest parameter + length trick',
+  'fonksiyon length sahteciliği': 'function length spoofing',
+  'with tabanlı durum makinesi': 'with-based state machine',
+  'global gizleme tablosu': 'global concealing table',
+  'LZString ile sıkıştırılmış string tablosu': 'LZString-compressed string table',
+  'yalnızca []()!+ karakterleri': 'only []()!+ characters',
+  'japonca emoji karakterleri': 'Japanese emoticon characters',
+  '$=~[]; başlangıcı': 'starts with $=~[];',
+  'program eval(...) ile başlıyor': 'program starts with eval(...)',
+  'program Function(...) ile başlıyor': 'program starts with Function(...)',
+  'webpack çalışma zamanı': 'webpack runtime',
+  'eval sarmalayıcı': 'eval wrapper',
+  'Function sarmalayıcı': 'Function wrapper',
+  'kod çalıştırma': 'code execution', 'DOM enjeksiyonu': 'DOM injection', 'kalıcı bağlantı': 'persistent connection',
+  'arka planda veri gönderimi': 'background data upload', 'ağ isteği': 'network request', 'çerez erişimi': 'cookie access',
+  'kalıcı depolama': 'persistent storage', 'canvas fingerprint': 'canvas fingerprinting', 'ses fingerprint': 'audio fingerprinting',
+  'yerel IP sızıntısı': 'local IP leak', 'bot tespiti': 'bot detection', kriptografi: 'cryptography', 'anti-debug': 'anti-debug',
+  zamanlayıcı: 'timer', 'base64 çözme': 'base64 decoding', 'çerçeveler arası mesaj': 'cross-frame messaging', fingerprint: 'fingerprinting',
+  davranış: 'behaviour changed',
+};
+
+// Rapor verisindeki etiketi etkin dile çevirir (karşılığı yoksa olduğu gibi)
+export const td = (s) => (lang === 'en' && s && DATA_EN[s]) || s;
+
+const KEY = 'peel.lang';
+let lang = (() => {
+  try {
+    const saved = localStorage.getItem(KEY);
+    if (saved === 'tr' || saved === 'en') return saved;
+  } catch { /* depolama kapalı */ }
+  return navigator.language?.toLowerCase().startsWith('tr') ? 'tr' : 'en';
+})();
+
+export const getLang = () => lang;
+
+export function t(key, vars = {}) {
+  const s = DICT[lang][key] ?? DICT.tr[key] ?? key;
+  return s.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
+}
+
+// data-i18n (metin), data-i18n-placeholder, data-i18n-label (aria-label) özniteliklerini doldurur
+export function applyI18n(root = document) {
+  document.documentElement.lang = lang;
+  for (const el of root.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
+  for (const el of root.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder);
+  for (const el of root.querySelectorAll('[data-i18n-label]')) el.setAttribute('aria-label', t(el.dataset.i18nLabel));
+}
+
+export function toggleLang() {
+  lang = lang === 'tr' ? 'en' : 'tr';
+  try { localStorage.setItem(KEY, lang); } catch { /* depolama kapalı */ }
+  applyI18n();
+  return lang;
+}
