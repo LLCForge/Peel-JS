@@ -9,9 +9,9 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 - [x] 1. Obfuscator parmak izi: hangi araçla (obfuscator.io, js-confuser, packer…) üretildiğini tahmin etme
 - [ ] 2. obfuscator.io ayarlarını (rotate, encoding, threshold) çıktıdan geri çıkarma
 - [~] 3. RC4/base64 string kodlaması — sandbox ile çözülüyor, statik çözüm yok
-- [ ] 4. Fonksiyon içine gömülmüş string dizileri (`_0x1234()` getter biçimi)
+- [x] 4. Fonksiyon içine gömülmüş string dizileri (`_0x1234()` getter biçimi)
 - [ ] 5. Decoder ofsetini sembolik çıkarma
-- [~] 6. Kendini değiştiren decoder'lar — ilk çağrıda yakalanan fonksiyonla çözülüyor
+- [x] 6. Kendini değiştiren decoder'lar — ilk çağrıda yakalanan fonksiyonla çözülüyor
 - [ ] 7. Obje tabanlı proxy'leri satır içi yazma
 - [ ] 8. Operatör proxy'leri (`o.KJs(a, b)` → `a + b`)
 - [ ] 9. js-confuser dispatcher fonksiyonları
@@ -212,7 +212,7 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 - [x] 180. Geri alınan pass'lerin nedeni
 - [ ] 181. Pass başına risk rozeti
 - [ ] 182. Sandbox kaçış testi paketi
-- [ ] 183. obfuscator.io kombinasyon benchmark'ı
+- [x] 183. Gerçek obfuscator benchmark'ı (`npm run bench`: 12 obfuscator.io + 10 js-confuser ayarı)
 - [~] 184. Başarı metriği — kalan decoder çağrısı / _0x sayısı
 - [ ] 185. Yanlış sonuç bildirme şablonu
 - [ ] 186. Determinizm kontrolü
@@ -233,3 +233,613 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 - [x] 198. Türkçe / İngilizce arayüz
 - [ ] 199. "Neden gizlenmiş olabilir" açıklaması
 - [ ] 200. Yeni kalıplar changelog'u
+
+---
+
+# Genişletilmiş yol haritası / Extended roadmap (E26–E750)
+
+Önerilen numaralar korunmuştur; yukarıdaki 1–200 ile çakışanlar burada da yer alır.
+Henüz tanımlanmamış aralıklar: E241–E250 (I) ve E331–E500 (M–T).
+Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E241–E250 and E331–E500 are not defined yet.
+
+## E-A. Motor, dedeksiyon, yapılandırma (E26–E60)
+
+- [~] E26. Obfuscator imza veritabanı (40+ araç, skor eşiğiyle otomatik profil) — 9 aile tanınıyor
+- [ ] E27. Pass başına 0–100 güven skoru
+- [ ] E28. Yapılandırma geri çıkarma (rotate, threshold, splitStrings)
+- [~] E29. Araç parmak izi raporu — raporda tespit ve gerekçeler
+- [ ] E30. Aynı aracın sürümlerini ayırt etme
+- [x] E31. Bilinmeyen araç modu — her çalıştırma tüm pass'leri en yüksek seviyede koşar
+- [ ] E32. Pass sırası arama
+- [ ] E33. Kademeli saldırı
+- [ ] E34. Bağımlı pass'leri de kapsayan geri alma zinciri
+- [x] E35. Deterministik mod
+- [ ] E36. Seçili bölgede artımlı çözme
+- [x] E37. Fonksiyon içi string dizi getter'ı
+- [~] E38. Decoder ofset çözümü — sandbox ile, sembolik değil
+- [x] E39. Kendini değiştiren decoder
+- [~] E40. Çok katmanlı decoder zinciri — turlar arasında çözülüyor
+- [ ] E41. Obje proxy satır içi yazma
+- [ ] E42. Operatör proxy
+- [ ] E43. js-confuser dispatcher
+- [~] E44. Global gizleme tablosu — çağrılar çözülüyor, tablo silinmiyor
+- [x] E45. Bölünmüş string birleştirme
+- [ ] E46. Tekrarlanan literal toplama
+- [x] E47. Sayısal artefakt katlama
+- [x] E48. `toString` tamper tespiti ve silme (obfuscator.io selfDefending dahil)
+- [ ] E49. Regex `.source/.flags/.length` katlama
+- [ ] E50. Destructuring gizleme açma
+- [~] E51. `void 0` ve virgül zinciri — virgül zinciri deyimlere bölünüyor
+- [x] E52. `!0` / `!1` → boolean
+- [ ] E53. `a && b()` → if
+- [ ] E54. İç içe ternary → if/else
+- [ ] E55. `M.length=2; M[0]` → gerçek parametreler
+- [ ] E56. Generator tabanlı durum makinesi
+- [ ] E57. Sabit `with` bloğu açma
+- [ ] E58. Bundle ayırma
+- [ ] E59. Source map ile isim kurtarma
+- [ ] E60. Çıktı için source map üretme
+
+## E-B. String kodlama ve çözme (E61–E95)
+
+- [~] E61. Base64 varyantları — koddaki decoder sandbox'ta çalışınca
+- [ ] E62. Base32/Base58/Base85
+- [x] E63. Hex string
+- [x] E64. Unicode kaçışları
+- [x] E65. Octal kaçışları
+- [ ] E66. HTML entity
+- [~] E67. Percent encoding — `eval(decodeURIComponent(…))`
+- [ ] E68. UTF-16 / UTF-7 / CESU-8
+- [ ] E69. ROT-n
+- [ ] E70. Atbash
+- [ ] E71. Vigenère / Sezar
+- [ ] E72. Tek bayt XOR
+- [ ] E73. Çok bayt XOR (Kasiski)
+- [x] E74. RC4 (obfuscator.io rc4 benchmark'ta tam)
+- [ ] E75. AES-CBC/CTR
+- [ ] E76. DES/3DES
+- [ ] E77. RSA parça çözümü
+- [ ] E78. TEA/XTEA/XXTEA
+- [ ] E79. Blowfish
+- [x] E80. Özel alfabeli base64
+- [x] E81. `String.fromCharCode(...)`
+- [x] E82. `fromCharCode.apply(null, arr)`
+- [~] E83. `join` tabanlı sayı çözümü — saf ifadeyse
+- [~] E84. `parseInt(x, 16)` zinciri — saf ifadeyse
+- [~] E85. `unescape`/`escape`
+- [~] E86. `encodeURI` ailesi
+- [ ] E87. BigInt ile paketlenmiş string
+- [ ] E88. Bitsel paketleme
+- [ ] E89. Uint8Array + TextDecoder
+- [~] E90. Sıkıştırılmış blob — LZString programın kendi koduyla; pako/gzip/brotli yok
+- [x] E91. `atob(x).split("").reverse().join("")`
+- [~] E92. Çok katmanlı zincir — katman sayısı raporlanmıyor
+- [~] E93. Ayrı fonksiyondan anahtar toplayan şifreli tablo
+- [x] E94. Çalışma anında üretilen alfabe
+- [ ] E95. Kodlama raporu
+
+## E-C. Proxy ve dolaylılık (E96–E120)
+
+- [x] E96. Switch proxy
+- [ ] E97. Fonksiyon proxy (`W("k")(...)`)
+- [ ] E98. İki argümanlı proxy
+- [~] E99. Proxy zinciri — turlar arasında
+- [ ] E100. Getter proxy
+- [ ] E101. Sınıf üye proxy
+- [x] E102. `window["x"]` → nokta notasyonu
+- [x] E103. Global alias sadeleştirme
+- [~] E104. `self`/`globalThis` birleştirme
+- [~] E105. `this` proxy — yalnızca `Function("return this")()`
+- [ ] E106. `arguments[0]` → parametre adı
+- [ ] E107. `bind` düzleştirme
+- [ ] E108. `.call/.apply` düzleştirme
+- [ ] E109. Kısmi uygulama açma
+- [ ] E110. Sarmalayıcı fonksiyon sökme
+- [ ] E111. Kimlik fonksiyonu
+- [ ] E112. Operatör fonksiyonu
+- [ ] E113. Sabit döndüren fonksiyon
+- [ ] E114. `o["m"].call(o, …)` → `o.m(…)`
+- [ ] E115. `Object.create` sarmalını açma
+- [ ] E116. `Reflect.get/set`
+- [ ] E117. `Object.defineProperty` sabit değer
+- [ ] E118. Symbol anahtarlarını isimlendirme
+- [x] E119. `eval` sarmalayıcı
+- [x] E120. `Function` sarmalayıcı
+
+## E-D. Sabit katlama ve sadeleştirme (E121–E150)
+
+- [x] E121. Aritmetik
+- [x] E122. Bitsel
+- [x] E123. Karşılaştırma
+- [x] E124. Mantıksal
+- [x] E125. `typeof`
+- [~] E126. `instanceof` / `in` — `in` boş fonksiyon/obje tuzaklarında
+- [x] E127. Dizi metotları
+- [x] E128. String metotları
+- [x] E129. `Math.*` (random hariç)
+- [x] E130. `JSON.parse/stringify`
+- [x] E131. `Number/String/Boolean`
+- [x] E132. `parseInt/parseFloat`
+- [x] E133. İfadesiz şablon literal
+- [x] E134. Parçaları sabit şablon literal
+- [ ] E135. RegExp `.source/.test`
+- [ ] E136. `!!x` → `Boolean(x)`
+- [ ] E137. `~~x`
+- [ ] E138. `+""`
+- [ ] E139. `x|0`
+- [ ] E140. `0+x`
+- [ ] E141. `x*1`, `x+0`, `x**1`
+- [ ] E142. `x*0`
+- [ ] E143. De Morgan
+- [ ] E144. Çift olumsuzlama kaldırma
+- [x] E145. `true?x:y` / `false?x:y`
+- [ ] E146. `x?x:y` → `x||y`
+- [ ] E147. `x?y:y` → `y`
+- [ ] E148. Boş blok temizliği
+- [ ] E149. Özdeş atama
+- [ ] E150. `delete` katlama
+
+## E-E. Kontrol akışı (E151–E175)
+
+- [x] E151. String-order dispatcher
+- [ ] E152. Sayı-order dispatcher
+- [~] E153. İç içe dispatcher — içten dışa
+- [~] E154. Trace ile sıra kurtarma — gözleniyor, kod değiştirilmiyor
+- [ ] E155. Dallanan dispatcher → if/else
+- [ ] E156. Çoklu yol keşfi
+- [ ] E157. Koşul fonksiyonu kurtarma
+- [ ] E158. `do/while` dispatcher
+- [ ] E159. `for(;;)` dispatcher
+- [ ] E160. Etiketli blok dispatcher
+- [ ] E161. `try/catch` akış gizleme
+- [ ] E162. Koşullu `return` düzleştirme
+- [ ] E163. `switch` → if zinciri
+- [ ] E164. `switch` → tablo
+- [ ] E165. Dispatcher döngüsünü while/for'a çevirme
+- [ ] E166. `break/continue` normalizasyonu
+- [x] E167. Sabit koşulda ölü dal budama
+- [ ] E168. İç içe aynı koşullu if birleştirme
+- [ ] E169. `else` sonrası erken çıkış
+- [ ] E170. Guard cümlesi üretimi
+- [ ] E171. Tek iterasyonlu döngüyü açma
+- [ ] E172. `while(true){…break}` → blok
+- [ ] E173. Yineleme tanıma
+- [ ] E174. Çözülemeyen bölge için DOT/Mermaid
+- [ ] E175. Akış raporu
+
+## E-F. VM ve durum makineleri (E176–E200)
+
+- [x] E176. Register VM tespiti
+- [~] E177. Stack VM tespiti — genel tespit
+- [~] E178. String opcode VM — tespit
+- [x] E179. Sayaç toplamı discriminant → `__peelS`
+- [ ] E180. XOR/çarpım discriminant
+- [ ] E181. Opcode şablon kütüphanesi
+- [ ] E182. Ham gövde koruması
+- [x] E183. İşaretleyici ile trace
+- [ ] E184. Proxy ile state gözleme
+- [x] E185. `with` içindeki switch'e ulaşma
+- [ ] E186. Terminatör modelleme
+- [ ] E187. `default` dalı
+- [x] E188. Geçiş tablosu
+- [ ] E189. Opcode isimlendirme
+- [ ] E190. Opcode kaldırma
+- [ ] E191. Dallanma şablonları
+- [ ] E192. Sembolik yorumlayıcı
+- [ ] E193. Bytecode'u ayrı dosyaya çıkarma
+- [ ] E194. Assembler/disassembler
+- [ ] E195. Çoklu çalıştırma sentezi
+- [ ] E196. Tekrar eden durumları döngüye çevirme
+- [ ] E197. `__peelS` sonrası ölü aritmetik temizliği
+- [ ] E198. jsvmp özel modu
+- [ ] E199. VM raporu
+- [~] E200. VM çıktısı doğrulama — genel davranış karşılaştırması
+
+## E-G. Ölü kod ve bütünlük (E201–E220)
+
+- [x] E201. Self-defending IIFE ve callController geri çağrıları
+- [x] E202. Debug protection
+- [ ] E203. Zamanlama tabanlı anti-debug
+- [ ] E204. `console` tespiti
+- [ ] E205. Bütünlük hash kontrolü tespiti
+- [ ] E206. Bütünlük bloğunu silme
+- [ ] E207. Bütünlük raporu
+- [x] E208. Kullanılmayan fonksiyon
+- [x] E209. Kullanılmayan değişken
+- [ ] E210. Kullanılmayan parametre
+- [~] E211. Kullanılmayan import
+- [ ] E212. Kullanılmayan sınıf üyesi
+- [x] E213. Boş fonksiyon
+- [ ] E214. `return/throw` sonrası erişilemeyen kod
+- [ ] E215. Yinelenen tanım
+- [x] E216. Sabit `if` budama
+- [ ] E217. Boş `catch`
+- [x] E218. No-op ifade
+- [ ] E219. Fazla argüman
+- [~] E220. Ölü kod raporu — sayı var, tür yok
+
+## E-H. Kapsam, isimlendirme, okunabilirlik (E221–E240)
+
+- [x] E221. Scope-güvenli rename
+- [ ] E222. Callback parametresinden anlam çıkarımı
+- [ ] E223. Tip tabanlı isim
+- [ ] E224. Fiil isimleri
+- [ ] E225. DOM elemanı ismi
+- [ ] E226. Olay ismi
+- [ ] E227. `with` varken güvenli rename alt kümesi
+- [ ] E228. `window.x` erişimi olan global'leri koruma
+- [x] E229. Export koruması
+- [~] E230. `eval` varken güvenli mod — rename tamamen atlanıyor
+- [ ] E231. Kullanıcı isim sözlüğü
+- [ ] E232. Orijinal adı yorumda saklama
+- [ ] E233. `let/const`'a çevirme
+- [ ] E234. Fonksiyon çıkarma
+- [ ] E235. Değişken birleştirme
+- [ ] E236. Tanımı kullanıma yaklaştırma
+- [ ] E237. Yorum geri yükleme
+- [ ] E238. Bölüm başlıkları
+- [ ] E239. Biçim profilleri
+- [~] E240. Okunabilirlik skoru — önce/sonra metrikleri
+
+## E-J. Arayüz ve etkileşim (E251–E285)
+
+- [ ] E251. AST düğüm seçimi ve çift yönlü vurgu
+- [ ] E252. Katlanabilir bloklar
+- [ ] E253. Seçili bölgede pass çalıştırma
+- [ ] E254. Düğüm bağlam menüsü
+- [ ] E255. Pass önizlemesi
+- [ ] E256. Kuru çalıştırma
+- [ ] E257. Adım adım onaylı ilerleme
+- [x] E258. Zaman çizelgesi kaydırıcısı
+- [ ] E259. Sınırsız geri al / yinele
+- [ ] E260. Oturum kaydı (JSON)
+- [ ] E261. Komut paleti
+- [ ] E262. Atanabilir kısayollar
+- [ ] E263. Çoklu sekme
+- [ ] E264. Sekme grupları
+- [ ] E265. 3–4 panelli görünüm
+- [ ] E266. Mini harita
+- [ ] E267. Yakınlaştırma
+- [ ] E268. Kelime kaydırma
+- [ ] E269. Görünmez karakter gösterimi
+- [ ] E270. Kontrol karakteri vurgusu
+- [ ] E271. Eşleşen parantez
+- [ ] E272. Girinti rehberleri
+- [ ] E273. Aktif satır vurgusu
+- [ ] E274. Odak modu
+- [ ] E275. Tam ekran
+- [ ] E276. Okuma modu
+- [ ] E277. Tema seçimi
+- [ ] E278. Renk körlüğü paletleri
+- [~] E279. Ligatür seçimi — kodda ligatür kapalı
+- [ ] E280. Onaltılık satır numarası
+- [~] E281. Durum çubuğu — sonuç özeti var, imleç konumu yok
+- [ ] E282. Pass listesini sürükle-bırak sıralama
+- [~] E283. Arayüz dili — TR/EN; DE/ES ve RTL yok
+- [~] E284. Ekran okuyucu — ARIA rolleri, canlı bölgeler
+- [ ] E285. Dokunmatik jestler
+
+## E-K. Görselleştirme (E286–E310)
+
+- [ ] E286. AST ağacı
+- [ ] E287. Kontrol akış grafiği
+- [ ] E288. Veri akış grafiği
+- [ ] E289. Çağrı grafiği
+- [ ] E290. Bağımlılık grafiği
+- [ ] E291. String tablosu görünümü
+- [ ] E292. Proxy eşleme tablosu
+- [~] E293. VM geçiş grafiği — metin tablosu olarak
+- [ ] E294. Opcode frekans grafiği
+- [ ] E295. Dönüşüm ısı haritası
+- [ ] E296. Karmaşıklık haritası
+- [ ] E297. Renk kodlu kapsam
+- [ ] E298. Gölge ilişkisi görünümü
+- [ ] E299. Ölü kod katmanı
+- [ ] E300. Güven ısı haritası
+- [ ] E301. Katman görünümü
+- [x] E302. Pass süreleri çubuk grafiği
+- [ ] E303. Bellek grafiği
+- [ ] E304. Düğüm sayısı grafiği
+- [ ] E305. Karşılaştırmalı grafik
+- [ ] E306. Grafik dışa aktarma
+- [ ] E307. Grafik filtreleme
+- [ ] E308. Grafik düzeni seçimi
+- [ ] E309. Büyük grafik sanallaştırma
+- [ ] E310. Grafikte arama
+
+## E-L. Arama ve gezinme (E311–E330)
+
+- [ ] E311. Regex metin arama
+- [ ] E312. Yapısal AST sorgusu
+- [ ] E313. Düğüm yolu seçici
+- [ ] E314. String tablosunda arama
+- [~] E315. Çözülmemiş kalıntılar — raporda kalan decoder çağrısı / `_0x` sayısı
+- [ ] E316. Yüksek entropi arama
+- [ ] E317. Tekrar eden kod
+- [ ] E318. Benzer fonksiyon
+- [ ] E319. Tanımsız referanslar
+- [ ] E320. Kullanılmayan tanımlar
+- [ ] E321. Uzun satırlar
+- [ ] E322. Derin iç içelik
+- [ ] E323. Sihirli sayılar
+- [ ] E324. Sonraki/önceki eşleşme
+- [ ] E325. Sonuç listesi paneli
+- [ ] E326. Arama geçmişi
+- [ ] E327. Kayıtlı aramalar
+- [ ] E328. Arama sonucu dışa aktarma
+- [ ] E329. Sembol listesi
+- [ ] E330. Tanıma git / referansları bul
+
+## E-U. Semantik modelleme (E501–E540)
+
+- [ ] E501. ToPrimitive/ToNumber/ToString modeli
+- [ ] E502. Sıkı/gevşek mod ayrımı
+- [ ] E503. TDZ modelleme
+- [ ] E504. Getter/setter yan etkisi
+- [ ] E505. Proxy tuzağı semantiği
+- [ ] E506. Symbol anahtarlı özellikler
+- [ ] E507. Özel alanlar
+- [ ] E508. `with` kapsam modeli
+- [ ] E509. `eval` kapsam modeli
+- [ ] E510. Realm ayrımı
+- [ ] E511. Modül ad alanı nesnesi
+- [ ] E512. Top-level await
+- [ ] E513. Iterator protokolü
+- [ ] E514. Async iterator
+- [ ] E515. Thenable çözümü
+- [ ] E516. Mikrogörev sırası
+- [ ] E517. Yakalanmamış ret
+- [ ] E518. Yığın izi yakalama
+- [ ] E519. `Error.captureStackTrace`
+- [ ] E520. `arguments.callee`
+- [ ] E521. `function.length/caller`
+- [ ] E522. `new.target`
+- [ ] E523. Sınıf alan başlatma sırası
+- [ ] E524. Statik bloklar
+- [ ] E525. Dekoratörler
+- [ ] E526. RegExp motoru farkları
+- [ ] E527. Unicode özellik kaçışları
+- [ ] E528. `lastIndex` durumu
+- [~] E529. Saat dilimi — sandbox'ta saat sabit, dilim değil
+- [ ] E530. `toLocaleString`
+- [ ] E531. `Intl.NumberFormat`
+- [x] E532. Tohumlu `crypto.getRandomValues`
+- [x] E533. Tohumlu `Math.random`
+- [~] E534. `performance.now` — sandbox'ta sabit
+- [x] E535. `-0` ve `NaN` ayrımı
+- [ ] E536. BigInt semantiği
+- [ ] E537. TypedArray takma adı
+- [ ] E538. Ayrılmış ArrayBuffer
+- [ ] E539. SharedArrayBuffer / Atomics
+- [ ] E540. WeakRef / FinalizationRegistry
+
+## E-V. Analiz altyapısı (E541–E580)
+
+- [ ] E541. Pass bağımlılık DAG'ı
+- [ ] E542. Pass çakışma tespiti
+- [ ] E543. Pass etkileşim matrisi
+- [ ] E544. Maliyet modeliyle sıralama
+- [x] E545. Hash ile fixpoint/döngü kırıcı
+- [~] E546. İşlem geri alma — pass başına
+- [ ] E547. Kontrol noktası
+- [ ] E548. Yapısal paylaşım
+- [ ] E549. Artımlı yeniden analiz
+- [ ] E550. Kirli küme takibi
+- [ ] E551. Alt ağaç hash önbelleği
+- [ ] E552. Talep odaklı analiz
+- [ ] E553. Analiz geçersizleştirme
+- [ ] E554. Worklist algoritmaları
+- [~] E555. Deterministik sıra
+- [ ] E556. Kararlı düğüm kimlikleri
+- [ ] E557. Düğüm kökeni meta verisi
+- [~] E558. Dönüşüm gerekçesi — log satırları
+- [ ] E559. Geri alınabilir dönüşüm günlüğü
+- [x] E560. Diff'lenebilir anlık görüntüler (zaman çizelgesi)
+- [ ] E561. Sürümlü AST serileştirme
+- [ ] E562. AST diff/patch biçimi
+- [ ] E563. Çalıştırmalar arası düğüm eşleme
+- [ ] E564. Yorumdan ayrı not kanalı
+- [ ] E565. Yorum koruma stratejisi
+- [x] E566. Direktif koruma
+- [x] E567. ASI'ye duyarlı üretim
+- [x] E568. Parantez minimizasyonu
+- [x] E569. Öncelik farkındalıklı yazdırma
+- [ ] E570. Minifier güvenli çıktı
+- [~] E571. Gölgeleme analizi — katlama ve proxy'de
+- [x] E572. Kapsam sınırı haritası
+- [x] E573. Binding grafiği
+- [x] E574. Referans sayımı
+- [ ] E575. Def-use zincirleri
+- [ ] E576. Ulaşan tanımlar
+- [ ] E577. Canlılık analizi
+- [ ] E578. Ölü atama tespiti
+- [ ] E579. Kopya yayılımı
+- [~] E580. Sabit yayılımı — test pozisyonlarıyla sınırlı
+
+## E-W. Sembolik ve concolic yürütme (E581–E610)
+
+- [ ] E581. Sembolik değerler
+- [ ] E582. Kısıt deposu
+- [ ] E583. Yol çatallama
+- [ ] E584. Yol birleştirme
+- [ ] E585. Durum patlaması kontrolü
+- [ ] E586. Concolic mod
+- [ ] E587. Kapsam geri beslemesi
+- [ ] E588. Girdi sentezi
+- [ ] E589. Bit-vektör/dizi/string yol koşulu çözücüsü
+- [ ] E590. String kısıt çözücü
+- [ ] E591. Regex sentezi
+- [ ] E592. Opaque predicate SMT çözümü
+- [ ] E593. Dallanma korelasyonu
+- [ ] E594. Kanıt üretimi
+- [ ] E595. Tanık küçültme
+- [ ] E596. Sembolik dizi modeli
+- [ ] E597. Sembolik nesne modeli
+- [ ] E598. Sembolik string modeli
+- [ ] E599. Sembolik tip modeli
+- [ ] E600. Yol budama
+- [ ] E601. Sabit yayılımıyla budama
+- [ ] E602. Kısmi değerlendirme
+- [ ] E603. Fonksiyon özelleştirme
+- [ ] E604. Döngü kısmi açma
+- [ ] E605. Durum birleştirme
+- [ ] E606. Özet yorumlama
+- [ ] E607. Özet tablosu
+- [ ] E608. Özet yeniden kullanımı
+- [ ] E609. Sembolik yürütme bütçesi
+- [ ] E610. Sembolik iz
+
+## E-Kripto. Kripto ve istatistik (E611–E630)
+
+- [ ] E611. Şifre tanıma (S-box, round sabiti)
+- [ ] E612. Hash tanıma (MD5/SHA sabitleri)
+- [ ] E613. Anahtar çıkarma
+- [ ] E614. IV/salt tespiti
+- [ ] E615. Mod tespiti
+- [ ] E616. Dolgu tespiti
+- [ ] E617. Entropi analizi
+- [ ] E618. Shannon entropisi eşiği
+- [ ] E619. Sıkıştırma oranı analizi
+- [~] E620. Base64 tespiti — raporda gömülü anahtar adayları
+- [ ] E621. Çoklu kodlama katmanı tespiti
+- [ ] E622. Doğal dil tespiti
+- [ ] E623. Karakter dağılımı
+- [ ] E624. Tekrar eden blok (ECB)
+- [ ] E625. Rastgelelik testleri
+- [ ] E626. Korelasyonla XOR anahtarı
+- [ ] E627. Kasiski
+- [ ] E628. Index of coincidence
+- [ ] E629. Bilinen düz metin saldırısı
+- [ ] E630. Küçük anahtar uzayında kaba kuvvet
+
+## E-VM. VM ve decompilation (E631–E660)
+
+- [x] E631. Decoder şekli tanıma
+- [~] E632. Rotasyon cebiri — sandbox ile, statik değil
+- [ ] E633. Decoder tersini sentezleme
+- [ ] E634. String tablosu tekilleştirme
+- [ ] E635. Kullanımlardan tablo yeniden kurma
+- [ ] E636. Kısmi tablo kurtarma
+- [ ] E637. Proxy tablosunu deneyerek tamamlama
+- [ ] E638. Opcode alfabesi çıkarımı
+- [ ] E639. Komut kümesi çıkarımı
+- [ ] E640. Handler kümeleme
+- [ ] E641. VM bellek düzeni
+- [ ] E642. Register sayısı
+- [ ] E643. Yığın derinliği
+- [ ] E644. Dispatch stili sınıflandırma
+- [ ] E645. Döngü yapısı kurtarma
+- [ ] E646. Çıkış koşulu
+- [ ] E647. Bytecode bölütleme
+- [ ] E648. Sabit havuzu
+- [ ] E649. Bytecode → IR
+- [ ] E650. IR → yapısal kod
+- [ ] E651. Handler semantiği sentezi
+- [ ] E652. Okunur yorumlayıcı üretimi
+- [ ] E653. Hibrit VM + host kod
+- [ ] E654. İç içe VM tespiti
+- [ ] E655. VM içinde VM açma
+- [ ] E656. VM sürüm ayrımı
+- [ ] E657. jsvmp şablon seti
+- [ ] E658. Bytecode assembler
+- [~] E659. Decompiler çıktı doğrulama — genel davranış karşılaştırması
+- [ ] E660. Decompilation raporu
+
+## E-X. Derleyici optimizasyonları (E661–E700)
+
+- [ ] E661. Koşula sabit yayılımı
+- [ ] E662. Kopya yayılımı
+- [ ] E663. Ölü atama eleme
+- [ ] E664. Fazla yükleme eleme
+- [ ] E665. Global değer numaralandırma
+- [ ] E666. Ortak alt ifade eleme
+- [ ] E667. Kısmi fazlalık eleme
+- [ ] E668. Döngü değişmezi taşıma
+- [ ] E669. Güç indirgeme
+- [ ] E670. İndüksiyon değişkeni sadeleştirme
+- [ ] E671. Döngü açma
+- [ ] E672. Döngü soyma
+- [ ] E673. Döngü bölme/birleştirme
+- [x] E674. Dal katlama (sabit koşul)
+- [ ] E675. Switch normalizasyonu
+- [ ] E676. Kuyruk çoğaltma
+- [ ] E677. Atlama ipekleme
+- [ ] E678. If-dönüşümü
+- [ ] E679. Yüklemleme
+- [ ] E680. Seyrek koşullu sabit yayılımı
+- [ ] E681. SSA kurulumu
+- [ ] E682. Phi yerleştirme
+- [ ] E683. SSA bozma
+- [ ] E684. Fazla phi eleme
+- [ ] E685. Andersen alias analizi
+- [ ] E686. Nokta-analizi
+- [ ] E687. Kaçış analizi
+- [~] E688. Saflık/etki çıkarımı — deterministik fonksiyon analizi
+- [ ] E689. Taint takibi
+- [ ] E690. Aralık analizi
+- [ ] E691. Yapısal tip çıkarımı
+- [ ] E692. Nesne şekli çıkarımı
+- [ ] E693. String uzunluk analizi
+- [ ] E694. Nullability analizi
+- [ ] E695. Erişilemezlik kanıtı
+- [ ] E696. İddia sentezi
+- [ ] E697. Ön koşul çıkarımı
+- [ ] E698. Son koşul çıkarımı
+- [ ] E699. Spesifikasyon madenciliği
+- [ ] E700. Değişmez tespiti
+
+## E-Y. Doğrulama (E701–E725)
+
+- [ ] E701. SMT ile semantik denklik kanıtı
+- [ ] E702. Sınırlı model kontrolü
+- [ ] E703. Ayrışan girdi için yol koşulu çözümü
+- [ ] E704. Tanık üretimi
+- [ ] E705. Karşı örnek küçültme
+- [~] E706. Her dönüşüm sonrası çeviri doğrulaması — parse + davranış
+- [~] E707. Bisimülasyon — console çıktısı karşılaştırması
+- [ ] E708. İz denkliği
+- [~] E709. Determinizm kontrolü — sabit tohumlu sandbox
+- [ ] E710. Idempotans kanıtı
+- [ ] E711. Davranış parmak izi (etki vektörü)
+- [ ] E712. Semantik hash
+- [ ] E713. Denklik sınıfı kümeleme
+- [ ] E714. Hash tabanlı regresyon seçimi
+- [ ] E715. Etki farkı
+- [ ] E716. Semantik yama sentezi
+- [ ] E717. Kanıt taşıyan çıktı
+- [~] E718. Dönüşüm gerekçesi kaydı — log
+- [ ] E719. Doğrulama bütçesi
+- [~] E720. Doğrulama seviyeleri — parse ve davranış; doğrulanamayan çalıştırmalar uyarıyla işaretleniyor
+- [ ] E721. Başarısız kanıt raporu
+- [x] E722. Geri alma politikası — doğrulanamayan değişiklik kabul edilmez
+- [ ] E723. Kademeli sıkılaştırma
+- [ ] E724. Z3 wasm entegrasyonu
+- [ ] E725. Çözücü zaman aşımı yönetimi
+
+## E-Z. Yürütme motoru (E726–E750)
+
+- [ ] E726. Heap anlık görüntüsü / geri yükleme
+- [ ] E727. Deterministik yeniden oynatma
+- [ ] E728. Zaman yolculuğu hata ayıklama
+- [~] E729. Etki günlüğü — ağ çağrıları ve tarayıcı özelliği okumaları
+- [ ] E730. `onRead/onWrite/onCall` kanca API'si
+- [~] E731. Builtin'lerde proxy tuzağı — navigator/screen/document/location
+- [ ] E732. Gölge bellek
+- [ ] E733. Sembolik değer enjeksiyonu
+- [ ] E734. Kısıt deposu entegrasyonu
+- [ ] E735. Yol çatallama motoru
+- [ ] E736. Yol birleştirme motoru
+- [ ] E737. Durum patlaması sınırlayıcı
+- [ ] E738. Kapsam geri besleme döngüsü
+- [ ] E739. Girdi sentezleyici
+- [ ] E740. Gramer tabanlı fuzz
+- [ ] E741. AST mutasyon motoru
+- [ ] E742. Çökme triyajı
+- [ ] E743. Etki farkı motoru
+- [ ] E744. Yeniden oynatma kayıt biçimi
+- [ ] E745. Motor durumu serileştirme
+- [x] E746. Çalıştırma başına izolasyon (her probe taze QuickJS runtime)
+- [x] E747. Kaynak muhasebesi (bellek, süre, yığın)
+- [x] E748. Kesme ve Durdur
+- [ ] E749. Motor telemetrisi
+- [ ] E750. Motor eklenti kancası

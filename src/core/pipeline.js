@@ -73,6 +73,8 @@ export async function deobfuscate(input, {
   }
   onSnapshot({ id: 'girdi', round: 0, code });
 
+  // davranış temeli alınamazsa (program sandbox'ta çalışmazsa) değişiklikler yalnızca parse ile doğrulanır
+  let baseline = null;
   try {
     // 2) değerlendirme bağlamı: program bir kez yüklenir, decoder'lar o bağlamda çağrılır
     if (sandbox && text.length <= CONTEXT_MAX_LEN) {
@@ -86,7 +88,6 @@ export async function deobfuscate(input, {
       }
     }
 
-    let baseline = null;
     if (deep && sandbox) {
       if (text.length > DEEP_MAX_LEN) {
         onLog('derin doğrulama kapalı: kod çok büyük', 'warn');
@@ -161,5 +162,5 @@ export async function deobfuscate(input, {
   const out = await pretty(code);
   onProgress(100);
   // text: metin katmanları açıldıktan sonraki program; rapor çalışma anı analizini bunun üzerinde yapar
-  return { code: out, stats, events, text };
+  return { code: out, stats, events, text, verified: Boolean(baseline) };
 }

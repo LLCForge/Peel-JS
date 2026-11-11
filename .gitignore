@@ -23,3 +23,6 @@ desktop.ini
 # geçici analiz dosyaları (çözülecek örnekleri depoya koyma)
 tmp-*
 *.peel-out.js
+
+# benchmark çıktıları
+test/bench-out/

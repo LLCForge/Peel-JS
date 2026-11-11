@@ -36,19 +36,36 @@ export function createHost(QuickJS) {
     rt.setInterruptHandler(() => Date.now() > deadline);
     const vm = rt.newContext();
 
+    // Kesilen (interrupt), belleği taşan ya da yığını patlayan çalıştırmalar QuickJS'te nesne artığı bırakabilir;
+    // böyle bir runtime'ı serbest bırakmak assert ile tüm WASM modülünü düşürür.
+    // shortcut: kirlenen runtime serbest bırakılmaz (en fazla memoryMB sızar); sızıntı büyürse worker'ı yeniden başlat.
+    let tainted = false;
     const evalRaw = (src, ms) => {
       deadline = Date.now() + ms;
-      const r = vm.evalCode(src);
+      let r;
+      try {
+        r = vm.evalCode(src);
+      } catch (e) {
+        // QuickJS regex motoru (ör. self-defending'in (((.+)+)+)+$ kalıbı) host yığınını taşırabilir
+        tainted = true;
+        return { ok: false, error: `host: ${e?.message ?? e}` };
+      }
       if (r.error) {
         const e = vm.dump(r.error);
         r.error.dispose();
-        return { ok: false, error: e?.message ?? String(e) };
+        const message = e?.message ?? String(e);
+        if (/interrupted|out of memory|stack overflow/i.test(message)) tainted = true;
+        return { ok: false, error: message };
       }
       const value = vm.dump(r.value);
       r.value.dispose();
       return { ok: true, value };
     };
-    const dispose = () => { vm.dispose(); rt.dispose(); };
+    const dispose = () => {
+      if (tainted) return;
+      vm.dispose();
+      rt.dispose();
+    };
 
     // atob/btoa QuickJS'te yok: host'unkini bağla
     for (const name of ['atob', 'btoa']) {

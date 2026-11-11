@@ -153,7 +153,13 @@ async function run() {
     setStats(res.stats);
     const s = ((performance.now() - t0) / 1000).toFixed(2);
     log(`OK (${s}s)`, 'ok');
-    setStatus(res.code.trim() === src.trim() ? 'status.unchanged' : 'status.done', { s }, 'ok');
+    if (sandboxOk && !res.verified) {
+      // program sandbox'ta çalışamadı: değişiklikler yalnızca sözdizimi düzeyinde doğrulandı
+      log(t('status.unverified', { s }), 'warn');
+      setStatus('status.unverified', { s }, 'err');
+    } else {
+      setStatus(res.code.trim() === src.trim() ? 'status.unchanged' : 'status.done', { s }, 'ok');
+    }
     lastReport = await analyze({ input: src, text: res.text, output: res.code, events: res.events, sandbox: sandboxOk ? sandbox : null });
     lastReport.stats = res.stats;
     renderReport(views.report, lastReport, exportReport);

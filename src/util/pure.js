@@ -95,7 +95,13 @@ export function isPureExpr(path, { programFns = false } = {}) {
     if (p.isIdentifier() && p.isReferencedIdentifier()) {
       const b = p.scope.getBinding(n.name);
       if (!b) return SAFE_GLOBALS.has(n.name);
-      return programFns && isProgramFunction(b) && deterministicFn(b);
+      // Program fonksiyonu yalnızca decoder biçiminde çağrılabilir: M(0x2). Özelliğini okumak (M.cache)
+      // değişken durumu sabitler; greet("x") gibi normal fonksiyonları katlamak program mantığını siler.
+      const call = p.parentPath;
+      const decoderCall = call.isCallExpression({ callee: n }) && call.node.arguments.length > 0 &&
+        call.node.arguments.every((a) => literalValue(a).ok) &&
+        call.node.arguments.some((a) => typeof literalValue(a).value === 'number');
+      return programFns && decoderCall && isProgramFunction(b) && deterministicFn(b);
     }
     return true;
   };

@@ -33,7 +33,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "bench": "node test/bench.js"
   },
   "dependencies": {
     "@babel/generator": "^7.26.0",
@@ -46,6 +47,8 @@
     "quickjs-emscripten": "^0.31.0"
   },
   "devDependencies": {
+    "javascript-obfuscator": "^5.10.0",
+    "js-confuser": "^2.1.3",
     "vite": "^6.0.0"
   }
 }

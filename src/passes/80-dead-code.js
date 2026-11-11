@@ -126,6 +126,75 @@ function isLengthSpoofer(fnPath) {
     t.isReturnStatement(ret) && t.isIdentifier(ret.argument, { name: params[0].name });
 }
 
+// obfuscator.io selfDefending / debugProtection / disableConsoleOutput: bir "callController" ile tek seferlik
+// çalıştırılan koruma geri çağrıları. Kodun kendi metnini regex ile tarar; biçimlendirilmiş kodda sonsuz döngüye girer.
+const GUARD_STRINGS = new Set(['(((.+)+)+)+$', 'function *\\( *\\)', '\\+\\+ *(?:[a-zA-Z_$][0-9a-zA-Z_$]*)']);
+
+function isGuardCallback(node) {
+  if (!t.isFunctionExpression(node) && !t.isArrowFunctionExpression(node)) return false;
+  let hit = false;
+  t.traverseFast(node, (n) => { if (t.isStringLiteral(n) && GUARD_STRINGS.has(n.value)) hit = true; });
+  return hit;
+}
+
+// C(this, function () { …koruma… })
+const guardCall = (n) => t.isCallExpression(n) && n.arguments.length === 2 &&
+  t.isThisExpression(n.arguments[0]) && isGuardCallback(n.arguments[1]);
+
+function removeGuardedCallbacks(ast, onLog) {
+  let n = 0;
+  traverse(ast, {
+    CallExpression(p) {
+      if (!p.node || !guardCall(p.node)) return;
+      const parent = p.parentPath;
+      // C(this, cb)();  → deyimi sil
+      if (parent.isCallExpression({ callee: p.node }) && !parent.node.arguments.length && parent.parentPath.isExpressionStatement()) {
+        const stmt = parent.parentPath;
+        if (Array.isArray(stmt.container)) { stmt.remove(); n++; }
+        return;
+      }
+      // var g = C(this, cb); … g();  → bildirimi ve tüm g() çağrılarını sil
+      if (!parent.isVariableDeclarator({ init: p.node }) || !t.isIdentifier(parent.node.id)) return;
+      const b = parent.scope.getBinding(parent.node.id.name);
+      if (!b?.constant) return;
+      // geri çağrı kendi değişkenini de okur (v7.toString()); o referanslar silinen bildirimle birlikte gider
+      const refs = b.referencePaths.filter((r) => !r.findParent((x) => x === p));
+      const calls = refs.map((r) => r.parentPath);
+      if (!calls.every((c, i) => c.isCallExpression({ callee: refs[i].node }) && !c.node.arguments.length)) return;
+      for (const c of calls) {
+        const host = c.parentPath;
+        if (host.isExpressionStatement() && Array.isArray(host.container)) host.remove();
+        else if (host.isSequenceExpression() && host.node.expressions.length > 1) {
+          host.node.expressions = host.node.expressions.filter((x) => x !== c.node);
+          if (host.node.expressions.length === 1) host.replaceWith(host.node.expressions[0]);
+        } else c.replaceWith(t.unaryExpression('void', t.numericLiteral(0)));
+      }
+      parent.remove();
+      n += calls.length + 1;
+    },
+    // virgül zincirindeki boş IIFE: ((function () {})(), x) → x
+    SequenceExpression(p) {
+      const kept = p.node.expressions.filter((e, i, all) => i === all.length - 1 || !(t.isCallExpression(e) &&
+        !e.arguments.length && t.isFunctionExpression(e.callee) && !e.callee.body.body.length));
+      if (kept.length === p.node.expressions.length) return;
+      n += p.node.expressions.length - kept.length;
+      if (kept.length === 1) p.replaceWith(kept[0]);
+      else p.node.expressions = kept;
+    },
+    // (function () {})();  — içi boşalmış IIFE
+    ExpressionStatement(p) {
+      const e = p.node.expression;
+      if (t.isCallExpression(e) && !e.arguments.length && t.isFunctionExpression(e.callee) &&
+          !e.callee.body.body.length && Array.isArray(p.container)) {
+        p.remove();
+        n++;
+      }
+    },
+  });
+  if (n) onLog(`dead-code: koruma geri çağrıları söküldü (${n})`, 'info');
+  return n;
+}
+
 function unwrapCalls(ast, onLog) {
   let n = 0;
   traverse(ast, {
@@ -212,6 +281,7 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
 
   n += await foldInTests(ast, { sandbox, ctx });
   n += unwrapCalls(ast, onLog);
+  n += removeGuardedCallbacks(ast, onLog);
 
   if (n) onLog(`dead-code: ${n} öğe temizlendi`, 'info');
   bump('deadCode', n);

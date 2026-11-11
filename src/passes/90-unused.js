@@ -18,7 +18,18 @@ function isInertInit(path) {
   const n = path.node;
   if (isLiteralTree(n) || t.isFunction(n) || t.isClassExpression(n) && !n.superClass) return true;
   if (t.isIdentifier(n)) return Boolean(path.scope.getBinding(n.name)) || n.name === 'undefined';
-  return false;
+  return isFactoryIife(n);
+}
+
+// (function () { var x = true; return function () { … }; })() — yalnızca fonksiyon üreten IIFE
+// (obfuscator.io'nun "callController"ı). Çağrılması gözlenebilir bir şey yapmaz.
+function isFactoryIife(n) {
+  if (!t.isCallExpression(n) || n.arguments.length || !t.isFunctionExpression(n.callee)) return false;
+  const body = n.callee.body.body;
+  const last = body[body.length - 1];
+  if (!t.isReturnStatement(last) || !t.isFunction(last.argument)) return false;
+  return body.slice(0, -1).every((s) => t.isVariableDeclaration(s) &&
+    s.declarations.every((d) => !d.init || isLiteralTree(d.init) || t.isFunction(d.init)));
 }
 
 const isExported = (p) => p.findParent((x) => x.isExportDeclaration());

@@ -53,6 +53,7 @@ if (result.error) {
   console.error(`Parse error: ${result.error}`);
   process.exit(1);
 }
+if (!result.verified) console.error('[warn] behaviour could not be verified in the sandbox; review the output');
 if (opts.out) writeFileSync(opts.out, result.code);
 else process.stdout.write(result.code);
 

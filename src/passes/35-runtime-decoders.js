@@ -39,6 +39,74 @@ function __peelEval(id, args) {
 
 const argsKey = (call) => JSON.stringify(call.node.arguments.map((a) => literalValue(a).value));
 
+// obfuscator.io rotasyon döngüsü: decoder'ı checksum için çağırıp diziyi push(shift()) ile döndürür.
+// Bu çağrıları son değerleriyle değiştirmek döngüyü erken bitirir ve diziyi döndürülmemiş bırakır.
+const ROTATION = /\.push\([^;]*\.shift\(\)\)|\["push"\]\([^;]*\["shift"\]\(\)\)/;
+function inRotation(p) {
+  return Boolean(p.findParent((x) => x.isFunction() && ROTATION.test(gen(x.node.body))));
+}
+
+// Üst seviyedeki decoder altyapısı (string tablosu getter'ı, rotasyon IIFE'si, decoder ve alias'ları):
+// canlı koddan hiçbir referans kalmadıysa birlikte silinir. Sabit nokta: bir deyimin bildirdiği isim
+// aday kümesi dışından okunuyorsa o deyim kalır; rotasyon deyimi ancak dokunduğu her isim siliniyorsa gider.
+function removeInfrastructure(ast, decoderNames) {
+  let program = null;
+  traverse(ast, { Program(p) { program = p; p.stop(); } });
+  program.scope.crawl();
+  const names = (s) => {
+    if (s.isFunctionDeclaration() && s.node.id) return [s.node.id.name];
+    if (s.isVariableDeclaration()) return s.node.declarations.flatMap((d) => Object.keys(t.getBindingIdentifiers(d.id)));
+    return [];
+  };
+  const isRotation = (s) => s.isExpressionStatement() && (() => {
+    let e = s.node.expression;
+    if (t.isUnaryExpression(e)) e = e.argument;
+    return t.isCallExpression(e) && t.isFunction(e.callee) && ROTATION.test(gen(e.callee.body));
+  })();
+  const candidate = (s) => s.isFunctionDeclaration() || isRotation(s) || (s.isVariableDeclaration() &&
+    s.node.declarations.every((d) => !d.init || t.isIdentifier(d.init) || t.isFunction(d.init)));
+
+  const set = new Set(program.get('body').filter(candidate));
+  const inSet = (p) => [...set].some((s) => p === s || p.findParent((x) => x === s));
+  const owner = (p) => [...set].find((s) => p === s || p.findParent((x) => x === s));
+
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const s of [...set]) {
+      const declared = names(s).map((n) => program.scope.getBinding(n)).filter(Boolean);
+      const usedOutside = declared.some((b) => b.referencePaths.some((r) => !inSet(r)) ||
+        b.constantViolations.some((v) => !inSet(v)));
+      let rotationLeaks = false;
+      if (isRotation(s)) {
+        s.traverse({
+          Identifier(p) {
+            if (!p.isReferencedIdentifier()) return;
+            const b = p.scope.getBinding(p.node.name);
+            if (b?.scope === program.scope && !inSet(b.path)) rotationLeaks = true;
+          },
+        });
+      }
+      if (usedOutside || rotationLeaks) { set.delete(s); changed = true; }
+    }
+  }
+
+  // yalnızca decoder'lara bağlı olan deyimler: decoder'dan başlayıp referanslar üzerinden yayıl
+  // tohum: bilinen decoder'lar ve rotasyon deyimleri (rotasyon yalnızca decoder altyapısında bulunur)
+  const connected = new Set(program.get('body').filter((s) => set.has(s) &&
+    (isRotation(s) || names(s).some((n) => decoderNames.includes(n)))));
+  if (!connected.size) return 0;
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const s of set) {
+      if (connected.has(s)) continue;
+      const touches = (a, b) => names(b).some((n) => program.scope.getBinding(n)?.referencePaths.some((r) => owner(r) === a));
+      if ([...connected].some((c) => touches(c, s) || touches(s, c))) { connected.add(s); grew = true; }
+    }
+  }
+  for (const s of connected) s.remove();
+  return connected.size;
+}
+
 function collectGroups(ast) {
   const groups = new Map();
   traverse(ast, {
@@ -46,12 +114,19 @@ function collectGroups(ast) {
       const { callee, arguments: args } = p.node;
       if (!t.isIdentifier(callee) || !args.length || args.length > MAX_ARGS) return;
       if (args.some((a) => t.isSpreadElement(a))) return;
+      if (inRotation(p)) return;
       // sonucu kullanılmayan çağrı decoder değildir, yan etki için yapılıyordur
       if (p.parentPath.isExpressionStatement()) return;
-      const b = p.scope.getBinding(callee.name);
+      let b = p.scope.getBinding(callee.name);
       if (!b) return;
+      // var v22 = v1; v22(154) → kök decoder'ın grubuna say (fonksiyon içi alias'lar tek tek eşiğe takılmasın)
+      for (let hops = 0; hops < 8 && b.constant && b.path.isVariableDeclarator() && t.isIdentifier(b.path.node.init); hops++) {
+        const next = b.path.scope.getBinding(b.path.node.init.name);
+        if (!next) break;
+        b = next;
+      }
       let g = groups.get(b);
-      if (!g) groups.set(b, (g = { id: groups.size, name: callee.name, calls: [], dynamic: [] }));
+      if (!g) groups.set(b, (g = { id: groups.size, name: callee.name, binding: b, calls: [], dynamic: [] }));
       const lits = args.map(literalValue);
       if (lits.every((l) => l.ok)) {
         if (lits.some((l) => typeof l.value === 'number')) g.calls.push(p);
@@ -63,7 +138,15 @@ function collectGroups(ast) {
   return [...groups.values()].filter((g) => g.calls.length >= MIN_CALLS);
 }
 
-export async function run(ast, { onLog, bump, sandbox, level }) {
+export async function run(ast, ctx) {
+  await resolveCalls(ast, ctx);
+  const removed = removeInfrastructure(ast, ctx.decoderNames ?? []);
+  if (removed) ctx.onLog(`runtime-decoders: decoder altyapısı kaldırıldı (${removed} deyim)`, 'info');
+  ctx.bump('runtimeDecoder', removed);
+}
+
+async function resolveCalls(ast, ctx) {
+  const { onLog, bump, sandbox, level } = ctx;
   const groups = collectGroups(ast);
   if (!groups.length) return;
   const observe = level >= 3;
@@ -138,6 +221,7 @@ export async function run(ast, { onLog, bump, sandbox, level }) {
       total += n;
       if (n) onLog(`runtime-decoders: ${n}/${sites.length} dinamik çağrı çalışma anı gözlemiyle çözüldü`, 'info');
     }
+    ctx.decoderNames = [...decoders].map((g) => g.binding.identifier.name);
     bump('runtimeDecoder', total);
   } finally {
     await sandbox.close(opened.token);

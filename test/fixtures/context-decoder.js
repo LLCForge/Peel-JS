@@ -12,4 +12,5 @@ function readTitle() { return document.title; }
 function pureLabel() { return "x" + _0xd(1); }
 console[_0xd(2)](_0xd(0), readTitle(), pureLabel());
 // LEVEL: 3
-// EXPECT: console.log("get", readTitle(), "xtitle");
+// EXPECT: console.log("get", readTitle(), pureLabel());
+// EXPECT: return "xtitle";
