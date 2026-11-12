@@ -1,0 +1,324 @@
+# Obfuscator ve deobfuscator araştırması
+
+Bu belge sekiz açık kaynak deponun ne olduğunu, kodu nasıl gizlediğini (ya da deobfuscator ise neyi geri
+çevirdiğini) ve PEEL'in bu çalışmadan sonra hangi pass ile neyi geri çevirdiğini anlatır. Depolar
+`git clone --depth 1` ile PEEL dışındaki ayrı dizinlere indirildi, yalnızca okundu; hiçbir kurulum betiği
+çalıştırılmadı. Örnek üretmek için gereken yayımlanmış npm paketleri (`jfogs`, `jsfuck`, `webpack`,
+`webpack-obfuscator`, `javascript-obfuscator@0.18.8`) `--ignore-scripts` ile ayrı bir karalama dizinine kuruldu
+ve PEEL dışındaki kendi betiklerimizle sürüldü. **Bu depolardan PEEL'e kod kopyalanmadı**; tüm decoder'lar
+çıktıların incelenmesine dayanan bağımsız uygulamalardır. Örneklerdeki önce/sonra parçaları bu belge için
+yazılmıştır.
+
+Örnek çıktılar: `test/corpus/<araç>/` (bir kez üretilip depoya kondu) ve `test/bench.js` ön ayarları
+(javascript-obfuscator ve js-confuser her çalıştırmada yeniden üretilir). Her decoder için
+`test/fixtures/` altında bir fixture vardır.
+
+| # | Depo | Tür | Lisans | Okunan sürüm / commit |
+|---|------|-----|--------|------------------------|
+| 1 | javascript-obfuscator/javascript-obfuscator | obfuscator | BSD-2-Clause | 5.10.1, `4db5ea3` (bench: npm 5.10.0) |
+| 2 | relative/synchrony | deobfuscator | GPL-3.0-only | 2.4.6, `710e9f6` |
+| 3 | javascript-obfuscator/webpack-obfuscator | webpack eklentisi + loader | BSD-2-Clause | 3.6.1, `b45af83` |
+| 4 | ben-sb/obfuscator-io-deobfuscator | deobfuscator | Apache-2.0 (LICENSE dosyası; package.json "ISC" yazıyor) | 1.0.6, `42efc01` |
+| 5 | zswang/jfogs | obfuscator | MIT | 1.0.0-alpha.5, `b3f54f7` |
+| 6 | camwiegert/baffle | DOM metin efekti (kod gizleyici değil) | MIT | 0.3.6, `d505a96` |
+| 7 | MichaelXF/js-confuser | obfuscator | MIT | 2.1.3, `31c5a47` |
+| 8 | Python3WebSpider/JavaScriptObfuscate | javascript-obfuscator demo betikleri | MIT (package.json; LICENSE dosyası yok) | `f7781e1` |
+
+GPL lisanslı synchrony'den (ve diğerlerinden) yalnızca hangi tekniklerin ele alındığı öğrenildi; kod ya da
+yapı aktarılmadı.
+
+---
+
+## 1. javascript-obfuscator (obfuscator.io)
+
+TypeScript ile yazılmış, Babel değil kendi AST dönüştürücüleri (`src/node-transformers/*`) ve şablon tabanlı
+"custom code helper"lar (`src/custom-code-helpers/*`) kullanan obfuscator. `obfuscatePro` ve `vmObfuscation`
+seçenekleri kapalı kaynak bir sunucu API'sine (obfuscator.io Pro) gider; yerel paket bu dönüşümü içermez.
+
+Dönüşüm aşamaları: hazırlık (yorumlar, `eval` içindeki kodu da dönüştürme, korunan adlar), dönüştürme
+(nesne anahtarları, sayılar, split, şablon literal), kontrol akışı düzleştirme, ölü kod ekleme, string dizisi,
+yeniden adlandırma, sadeleştirme, son aşamada kaçış dizileri.
+
+| Seçenek | Ne yapar | Küçük örnek | PEEL karşılığı |
+|---|---|---|---|
+| `stringArray`, `stringArrayThreshold` | String literal'ler tek bir diziye taşınır, yerlerine indeks çağrısı gelir | `"a"` → `_0x1c(0x1f)` | `string-array`, `runtime-decoders` |
+| `stringArrayRotate` | Dizi, bir IIFE içinde `push(shift())` ile checksum tutana kadar döndürülür | `(function(a,n){while(!![]){...parseInt(_0x1c(0x9b))...}})(_0xarr, 0x6b1a5)` | aynı (rotasyon sandbox'ta çalışır) |
+| `stringArrayShuffle` | Dizi sırası karıştırılır | — | aynı |
+| `stringArrayIndexShift` | İndekse sabit bir kaydırma eklenir (`i -= 0xe5`) | — | aynı |
+| `stringArrayIndexesType: hexadecimal-number` | İndeks sayı: `_0x1c(0x1f)` | — | aynı |
+| `stringArrayIndexesType: hexadecimal-numeric-string` | İndeks string: `_0x1c("0x1f")` | `_0x1c("0x9b")` → `"Hello, "` | `runtime-decoders` (bu çalışmada eklendi: `"0x…"` string'leri indeks sayılır) |
+| `stringArrayEncoding: base64` | Dizi elemanları özel alfabeli base64; decoder `decodeURIComponent` ile çözer | `_0x1c(0x3)` → `"alpha"` | `string-array` / `runtime-decoders` |
+| `stringArrayEncoding: rc4` | RC4 + base64, çağrıda anahtar: `_0x1c(0x3, "Fg#k")` | aynı | aynı |
+| `stringArrayEncoding: [none, base64, rc4]` | Birden çok decoder, her string rastgele birine | — | aynı |
+| `stringArrayWrappersCount/Type/ChainedCalls/ParametersMaxCount` | Her kapsamda ara sarmalayıcılar (`var _0x5 = _0x1c` ya da parametre karıştıran `function _0x5(a,b,c){return _0x1c(b - 0x12, c)}`), zincirli olabilir | `_0x5(0x3, 0x7, 0x9)` | `wrappers`, `runtime-decoders` (alias zinciri) |
+| `stringArrayCallsTransform(+Threshold)` | Decoder çağrıları kontrol akışı nesnesine (`_0x4a.abc(...)`) taşınır | — | `proxy`, `runtime-decoders` |
+| `controlFlowFlattening(+Threshold)` | Bloklar `'3|1|0|2'.split('|')` sıralı `switch` döngüsüne; işlemler/literal'ler "storage" nesnesindeki proxy fonksiyonlara (`_0x4a.xYz(a, b)` = `a + b`) | `while(!![]){switch(o[i++]){case '0': ...; continue;}break;}` | `control-flow`, `proxy`, `const-objects` |
+| `deadCodeInjection(+Threshold)` | Gerçek koddan kopyalanmış ölü bloklar opak `if ("abc" === "abc")` dallarına eklenir | `if ('xYz' !== 'xYz') {…kopya…}` | `opaque`, `dead-code` |
+| `debugProtection`, `debugProtectionInterval` | `debugger` döngüsü kuran fonksiyon; interval ile tekrar | `(function(){return false;}).constructor("debu"+"gger").call("action")` | `dead-code` (GUARD_STRINGS, koruma IIFE'leri) |
+| `selfDefending` | "callController" ile tek seferlik çağrılan geri çağrı kodun kendi metnini `(((.+)+)+)+$` ile tarar; biçimlendirilince felakete varan geri izleme | `_0x4b.toString().search("(((.+)+)+)+$")` | `dead-code` (`removeGuardedCallbacks`) |
+| `disableConsoleOutput` | `console.log/warn/...` boş fonksiyonla değiştirilir | `that.console[m] = func` | **dokunulmaz**: gerçek davranıştır (çıktı kapanır). String'leri çözülür, kod okunur kalır |
+| `domainLock`, `domainLockRedirectUrl` | `document.domain/location.hostname` gizli adlarla bulunur, izinli alan değilse yönlendirir | `"[a-z]"` farkı ile saklanmış alan listesi | **dokunulmaz** (ortama bağlı gerçek davranış); string'ler çözülür, kod okunur |
+| `transformObjectKeys` | `{a: 1, b: x}` → `var o = {}; o.a = 1; o.b = x;` | — | `const-objects`, `simplify` |
+| `renameProperties` (safe/unsafe) | Özellik adları `_0x…` adlarına (ör. `this.n` → `this._0x3f2a`) | — | Özgün adlar geri alınamaz (bilgi kaybı); davranış korunur, `rename` okunur adlar verir |
+| `renameGlobals` | Üst seviye adlar da değişir | — | `rename` (bu çalışmada class bildirimini iki kez adlandırma hatası giderildi) |
+| `identifierNamesGenerator` (hexadecimal/mangled/mangled-shuffled/dictionary), `identifiersPrefix`, `identifiersDictionary` | Ad üretim biçimi | `_0x1a2b`, `a`, `peel_0x…` | `rename` yalnızca `_0x…` biçimini yeniden adlandırır; diğerleri olduğu gibi kalır |
+| `numbersToExpressions` | `42` → `-0x1*0x5d3+0x7*0x9b+...` | — | `const-fold` |
+| `splitStrings(+ChunkLength)` | `"abcdef"` → `"abc" + "def"` | — | `const-fold` |
+| `unicodeEscapeSequence` | String'ler `\x41` biçiminde | — | `literals` |
+| `simplify` | Deyimleri virgül/üçlü ifadelere birleştirir | `if(a){b()}` → `a&&b()` | `simplify` |
+| `target: node / browser-no-eval / service-worker` | Global nesneyi bulma şablonu değişir (`Function("return this")` yerine `window`/`global`), no-eval'de `debugger` doğrudan yazılır | — | aynı pass'ler (`literals`'in `return this` kuralı, `dead-code`) |
+| `reservedNames`, `reservedStrings`, `forceTransformStrings`, `exclude`, `ignoreImports` | Dönüşüm kapsamı | — | etkisiz |
+| `seed`, `compact`, `sourceMap*`, `log`, `inputFileName`, `identifierNamesCache` | Üretim ayarları | — | etkisiz |
+| `optionsPreset` (low/medium/high) | Yukarıdakilerin birleşimleri; low ve high `disableConsoleOutput` ve `selfDefending` açar | — | yukarıdakiler |
+| `vmObfuscation` (Pro API) | Sunucu tarafında bayt kodlu VM | — | Yerel olarak üretilemiyor; PEEL'in genel `vm` pass'i dışında ele alınmadı |
+
+Bench ön ayarları: `io-*` (48 ön ayar; tüm seçenekler tek tek, kodlama/sarmalayıcı/indeks varyantları,
+hedefler, ad üreticileri, hazır ayarlar, `io-everything`).
+
+Kalan açık: `io-preset-medium`, `io-preset-high` ve `io-everything` (string dizisi sarmalayıcıları +
+kontrol akışı + selfDefending birlikte) bütünüyle çözülmüyor. Bu birleşimde selfDefending geri çağrısının
+içindeki dizi çağrıları sarmalayıcı nesnesinin arkasında çözülmeden kalıyor; `(((.+)+)+)+$` string'i literal
+olarak görünmediği için koruma tanınmıyor, biçim değiştiren her pass (`simplify`) davranış kontrolünde
+geri alınıyor. Bu çalışmanın kapsamı dışında, mevcut sarmalayıcı/proxy pass'lerinin genişletilmesini gerektirir.
+
+## 2. relative/synchrony (deobfuscator, GPL-3.0)
+
+Acorn + escodegen tabanlı. Sabit bir dönüştürücü sırası çalıştırır:
+`Simplify → MemberExpressionCleaner → LiteralMap → DeadCode → Demangle → StringDecoder → Simplify →
+MemberExpressionCleaner → Desequence → ControlFlow → Desequence → MemberExpressionCleaner → Simplify →
+DeadCode`, sonra isteğe bağlı `Rename`.
+
+| Dönüştürücü | Geri çevirdiği teknik | PEEL karşılığı |
+|---|---|---|
+| Simplify | `!0`/`!![]` → `true`, negatif sayı düzeltme, sabit işlemleri hesaplama, `(function(a,b){return b(a())})(f,h)` → `h(f())` | `const-fold`, `simplify`, `proxy` |
+| MemberExpressionCleaner | `a["b"]` → `a.b` | `literals` |
+| LiteralMap | Salt okunur değişkenlerin literal ile değiştirilmesi | `const-fold`, `const-arrays`, `const-objects` |
+| DeadCode | `if (true/false)` dallarını katlama, yanlış testte dalları çevirme, ölü değişkenler | `dead-code`, `opaque`, `unused` |
+| Demangle | Decoder proxy'lerini string decoder şemasına uydurma, `arr[idx - off]` kaydırmasını çıkarma, base64/rc4 alfabesini bulma | `string-array`, `runtime-decoders` (PEEL decoder'ı statik eşleme yerine sandbox'ta çalıştırır) |
+| StringDecoder | String dizisi + rotasyon IIFE'si (push/shift döngüsünü checksum'a kadar yeniden oynatır), base64/rc4 çözümü, alias'ların izlenmesi | aynı |
+| Desequence | `a(), b(), c();` → ayrı deyimler | `dead-code` (sequence bölme), `simplify` |
+| ControlFlow | `'1|0|2'.split('|')` switch düzleştirmesi ve storage nesnesi proxy'leri | `control-flow`, `proxy`, `const-objects` |
+| jsconfuser/calculator, jsconfuser/controlflow | Eski (1.x) js-confuser hesap makinesi fonksiyonu ve CFF | `proxy`/`const-fold`, `unflatten`, `state-var` |
+| ArrayMap (kapalı) | `[null, …]` ile başlayan literal dizi eşlemeleri | `const-arrays` |
+| Rename | Okunur adlar | `rename` |
+
+PEEL'in synchrony'den farkı: her dönüşüm sandbox'ta davranış karşılaştırmasından geçer, decoder'lar şablon
+eşleşmesine değil çalıştırmaya dayanır.
+
+## 3. webpack-obfuscator (BSD-2-Clause)
+
+İki kullanım biçimi:
+
+- **Plugin**: `processAssets` (`PROCESS_ASSETS_STAGE_DEV_TOOLING`) aşamasında her çıktı dosyasını bütün halinde
+  javascript-obfuscator'dan geçirir; her dosyaya `identifiersPrefix: "a0"`, `"a1"`… verir (aynı sayfadaki
+  paketlerin adları çakışmasın). Kaynak haritası iki aşamalı olarak aktarılır.
+- **Loader**: her modülü ayrı ayrı gizler (`ignoreRequireImports: true`); her modülün **kendi** string dizisi,
+  rotasyonu ve decoder'ı olur, bunlar modül fonksiyonunun içinde kalır.
+
+Paketin geri kalanı webpack'in kendi yapısıdır: modül tablosu (`{944(o){…}}` ya da `"./src/a.js"(m, e, r){…}`),
+`__webpack_require__` (küçültülmüş: `function e(n){…t[n]={exports:{}}…o[n](s,s.exports,e)…}`) ve `eval`
+devtool'unda her modülün `eval("{…//# sourceURL=…}")` içinde string olarak saklanması.
+
+| Teknik | Örnek | PEEL karşılığı |
+|---|---|---|
+| Plugin: tüm paket tek string dizisiyle | `a0_0x5e1d()` | `string-array`, `runtime-decoders` (+ `rename` `a0_0x…` adları için webpack pass'inde tanınır) |
+| Loader: modül başına string dizisi | modül fonksiyonunda `function s(){var t=[…]}`, `function a(t,n){return t-=220,s()[t]}` | `runtime-decoders`: kodlamasız indeks decoder'ı tanınır, rotasyon yalnızca döngü gövdeli IIFE sayılır (önceden bütün paket IIFE'si rotasyon sanılıp siliniyordu), altyapı fonksiyon gövdelerinden de temizlenir |
+| `eval` devtool | `eval("{__webpack_require__.r(...)…}")` | `eval-inline` (yeni) |
+| Küçültülmüş runtime adları | `e(944)`, `o[n](s, s.exports, e)` | `webpack` (yeni): `__webpack_require__`, `__webpack_modules__`, `module/exports/__webpack_require__` parametreleri ve `/* webpack modül 944 */` |
+
+Bench: `test/corpus/webpack/` (prod-plain, prod-plugin, prod-plugin-high, dev-eval-plain, dev-eval-plugin,
+dev-loader, prod-loader). Modüller ayrı dosyalara bölünmez: PEEL tek çıktı üretir; modül sınırları yorumla
+işaretlenir, adlar geri verilir.
+
+## 4. ben-sb/obfuscator-io-deobfuscator (Apache-2.0)
+
+Babel + `@codemod/matchers`. "Sandbox kullanmaz" ilkesiyle her şeyi statik eşleştirir; dönüşümler 50 tura kadar
+tekrarlanır: `UnusedVariableRemover, ConstantPropagator, ReassignmentRemover, DeadBranchRemover, ObjectPacker,
+ProxyFunctionInliner, ExpressionSimplifier, SequenceSplitter, ControlFlowRecoverer, PropertySimplifier,
+AntiTamperRemover, ObjectSimplifier, StringRevealer`.
+
+| Dönüşüm | Teknik | PEEL karşılığı |
+|---|---|---|
+| StringRevealer | basic/base64/rc4 decoder, rotasyon (yeniden oynatarak), sarmalayıcılar | `string-array`, `runtime-decoders`, `wrappers` |
+| ObjectPacker / ObjectSimplifier / ProxyObject | `transformObjectKeys` ve CFF storage nesneleri | `const-objects`, `proxy` |
+| ProxyFunctionInliner | `function _0x2(a,b){return a+b}` proxy'leri | `proxy`, `wrappers` |
+| ControlFlowRecoverer | `'2|0|1'.split('|')` switch | `control-flow` |
+| DeadBranchRemover | `deadCodeInjection` opak dalları | `opaque`, `dead-code` |
+| AntiTamperRemover | selfDefending, debugProtection **ve disableConsoleOutput** fonksiyonlarını siler | selfDefending/debugProtection: `dead-code`. disableConsoleOutput'u PEEL **bilerek silmez** (konsolu gerçekten kapatır; silmek davranışı değiştirir) |
+| ExpressionSimplifier, SequenceSplitter, PropertySimplifier, ConstantPropagator, ReassignmentRemover, UnusedVariableRemover | sadeleştirme | `const-fold`, `simplify`, `unused` |
+
+domainLock'u ele almaz. PEEL'de de domainLock kodu kalır, yalnızca okunur hale gelir.
+
+## 5. zswang/jfogs (MIT)
+
+Esprima ile ayrıştırıp kaynak metni aralıklarla yeniden yazar. Programdaki her literal (string, sayı, regex,
+true/false/null) ve her `a.b` özellik adı benzersiz değerlere ayrılıp bir IIFE parametresine (`$fog$0`, …)
+dönüştürülür; değerler çağrı argümanı olur. Başa bir koruma eklenir: son parametre `"‮"` (sağdan sola
+işareti) değilse fonksiyon hiçbir şey yapmaz.
+
+```js
+// önce
+console.log("Hi", 42);
+// jfogs (varsayılan)
+(function ($fog$2, $fog$0, $fog$1, $fog$3) {
+  if ("‮" !== $fog$2) { return; }
+  console[$fog$0]($fog$1, $fog$3);
+})("‮", "log", "Hi", 42);
+```
+
+Kipler (`type`):
+
+- **varsayılan**: değerler olduğu gibi.
+- **reverse**: string argümanlar ters yazılır; gövde başındaki döngü `arguments` üzerinden onları geri çevirir
+  (`a[i] = a[i].split("").reverse().join("")`), ikinci döngü parametre sırasını uçtan uca takas eder.
+  Katı olmayan kipte `arguments[i]` parametreye bağlı olduğu için parametreler yerinde değişir.
+- **zero**: her string karakteri 7 (Unicode varsa 8, UTF-8 baytları üzerinden) bitlik ikilik koda, bitler
+  sıfır genişlikli karakterlere (`‌` = 0, `‍` = 1) çevrilir; döngü `replace(/./g)` ve
+  `replace(/.{7}/g, parseInt(x, 2))` ile çözer, Unicode'da UTF-8 çözümü de yapar.
+- **breakout**: üst seviye adlar dış değişkene kopyalanır (`var $fog$N = {}; … $fog$N.f = f; … var f = $fog$N.f;`).
+
+PEEL: **`iife-args`** (yeni). Sabit argümanlı IIFE'nin önsözü (koruma, `var a = arguments`, `arguments`
+döngüleri) sandbox'ta aynı katılık kipinde çalıştırılır, parametrelerin son değerleri alınır; primitive olanlar
+kullanım yerlerine yazılır, nesne değerler (regex, `String`, `parseInt`) orijinal argümanıyla parametre olarak
+kalır ya da kullanılmıyorsa silinir. Önsözsüz sabit argümanlı IIFE'lerde sandbox gerekmez.
+Kalan: dış IIFE (`(function () { … })()`) korunur, çünkü açmak üst seviye bildirimleri global yapar.
+
+Bench: `test/corpus/jfogs/` (default, reverse, zero, her biri Unicode'lu ve breakout varyantları).
+
+## 6. camwiegert/baffle (MIT)
+
+**Kod gizleyici değildir.** DOM öğelerinin `textContent`'ini rastgele karakterlerle (`characters` seçeneği)
+değiştirip zamanla asıl metni "açığa çıkaran" görsel bir efekt kütüphanesidir (`start()`, `reveal(ms)`,
+`text()`). JavaScript kaynağını dönüştürmez; geri çevrilecek bir kodlama yoktur. PEEL'e decoder eklenmedi.
+
+## 7. MichaelXF/js-confuser 2.1.3 (MIT)
+
+Babel tabanlı. Dönüşümler `src/order.ts` sırasıyla çalışır: Preparation → ObjectExtraction → Flatten → Lock →
+RGF → Dispatcher → DeadCode → Calculator → GlobalConcealing → OpaquePredicates → StringSplitting →
+StringConcealing → VariableMasking → DuplicateLiteralsRemoval → ControlFlowFlattening → MovedDeclarations →
+RenameLabels → Minify → AstScrambler → RenameVariables → Finalizer (StringEncoding, hexadecimalNumbers) → Pack →
+Integrity (en son).
+
+| Seçenek | Ne yapar | Küçük örnek | PEEL karşılığı |
+|---|---|---|---|
+| preparation (her zaman) | `o.x` → `o["x"]`, `{x:1}` → `{["x"]:1}`, tek deyimleri bloklara | — | `literals`, `simplify` |
+| `objectExtraction` | Sabit nesneyi ayrı değişkenlere böler: `var o={a:1}` → `var o_a=1` | — | davranış aynı, okunur |
+| `flatten` | Fonksiyon gövdesi program düzeyine taşınır, dış değişkenlere getter/setter/`typeof`/çağrı yöntemli "düz nesne" ile erişilir; kabuk `function f(...A){var O={…};return F(O,A)}` | `F(O, [name])` | **`flat-fns`** (yeni) |
+| `lock.selfDefending` | Her fonksiyona `new RegExp("\n").test(f)` ise `while(true){}` | — | **`locks`** (yeni) |
+| `lock.antiDebug` | `debugger;` deyimleri | — | `dead-code` |
+| `lock.integrity` | Fonksiyon kopyası `G`'nin `toString()` özeti (cyrb53) hesaplanır; `if (h === 6542284030023826) {…} else {karşı önlem}` | — | **`locks`** (yeni): özet testi özgün dalla değiştirilir, `function F(){return G(...arguments)}` kabuğu `G`'nin gövdesine döner |
+| `lock.tamperProtection` | Yerel fonksiyon denetimi (`{ [native code] }`) ve katı kip tespiti | — | gerçek davranış, dokunulmaz (okunur) |
+| `lock.domainLock` | `if (!new RegExp("example.com").test(location.href)) while(true){}` | — | gerçek davranış, dokunulmaz |
+| `lock.startDate/endDate` | `Date.now()` karşılaştırması | — | gerçek davranış, dokunulmaz |
+| `lock.countermeasures`, `customLocks`, `defaultMaxCount` | Karşı önlem fonksiyonu adı, özel kilitler | — | karşı önlem kodu kalır |
+| `rgf` | Fonksiyon gövdeleri string olarak bir diziye konur, `eval` ile üretilir; kabuk `R[k].apply(this,[R,arguments])` | `E('function X(){var[R,A]=arguments;…}X;')` | **`rgf`** (yeni) |
+| `dispatcher` | Fonksiyonlar tek dağıtıcının nesnesine, argümanlar global payload dizisiyle; referans/`new` bayrakları | `(P=["PEEL"], D("k1"))` | **`dispatcher`** (yeni) |
+| `deadCode` | Şablonlardan (`deadCodeTemplates`) ölü fonksiyonlar ve opak dallar | — | `dead-code`, `opaque`, `unused` |
+| `calculator` | İkili işlemler `calc(op, a, b)` switch fonksiyonuna | — | `proxy`, `runtime-functions` |
+| `globalConcealing` | Global adlar `getGlobal("dZGlvoH")` ile | — | `runtime-decoders` (global adı döner) |
+| `opaquePredicates` | `if (PREDICATE() && test)` | — | `opaque`, `const-fold` |
+| `stringSplitting` | `"abc"` → `"a"+"bc"` | — | `const-fold` |
+| `stringConcealing`, `customStringEncodings` | Base91 türevi rastgele alfabe + LZ-string sıkıştırma; decoder kapsam nesnelerinde | — | `runtime-decoders`, `runtime-functions` |
+| `stringEncoding` | `\x`/`\u` kaçışları | — | `literals` |
+| `variableMasking` (1.x'teki "stack") | Parametre ve yerel değişkenler tek rest dizisinin elemanlarına | `function f(...M){return M[0]+M.a}` | **`var-mask`** (yeni) |
+| `duplicateLiteralsRemoval` | Tekrarlanan literal'ler diziye | — | `const-arrays` |
+| `controlFlowFlattening` | Gövde parçalara bölünüp `while`+`switch` durum makinesine; `with` kapsamları, durum değişkenleri | — | `unflatten`, `state-var`, `vm`, `control-flow` |
+| `movedDeclarations` | Değişkenler kullanılmayan parametrelere taşınır | — | `unused`, `simplify` |
+| `renameLabels` | Etiketler kısaltılır/silinir | — | etkisiz |
+| `minify` | Ölü kod, gruplama, `!0`, `void 0` | — | `literals`, `simplify` |
+| `astScrambler` | Deyimleri virgül ifadelerine katlar | — | `dead-code` (sequence bölme) |
+| `renameVariables`, `renameGlobals`, `identifierGenerator` (hexadecimal/randomized/zeroWidth/mangled/number/chinese) | Ad üretimi | — | özgün adlar kayıp; `rename` yalnızca `_0x…` biçimini adlandırır |
+| `hexadecimalNumbers`, `compact` | Sayı biçimi | — | `literals` |
+| `preserveFunctionLength` | `Object.defineProperty(fn, "length", …)` yardımcısı | — | `dead-code` (length sarmalayıcısı); `rgf`/`flat-fns`/`var-mask` açtığı fonksiyonun length'i zaten parametre sayısı olur |
+| `pack` | Tüm program `new Function` / IIFE içine, globaller bir nesne üzerinden | — | `unpack`, kalan IIFE kabuğu korunur |
+| preset `low/medium/high` | Birleşimler | — | yukarıdakiler |
+
+Bench ön ayarları: `jc-*` (44 ön ayar; her dönüşüm tek tek, her kilit ayrı, her ad üreticisi, hazır ayarlar
+ve `jc-node`). Hepsi davranış olarak doğru ve 7/7 iğne buluyor.
+
+Kalan açıklar:
+
+- `controlFlowFlattening` tek başına çıktıyı küçültmüyor (`jc-cff`: 34 KB → 45 KB). Durum makinesi büyük
+  ölçüde açılıyor ama kopyalanan bloklar duruyor; bu alan diğer pass'lerin (`unflatten`) kapsamında.
+- `stringConcealing`'in sıkıştırma yardımcısı (LZ-string benzeri `bufferToString` şablonu) düşük/orta
+  hazır ayarlarda, decoder'ın kendisi CFF ile düzleştirildiğinde yer yer kalıyor (çağrılar çözülse de
+  yardımcı kodun kendisi silinemiyor).
+- `rgf`/`flat-fns`/`var-mask`/integrity kabuğu açılınca fonksiyonun `length` değeri özgün kaynaktaki parametre
+  sayısına döner (gizlenmiş kodda 0'dı). Bu, PEEL'in mevcut length-sarmalayıcısı kuralıyla aynı kabuldür.
+- dispatcher ile adları kaybolan fonksiyonlar `fn_<anahtar>` olarak adlandırılır.
+
+## 8. Python3WebSpider/JavaScriptObfuscate
+
+"Python3 web scraping" kitabının (Germey) örnek deposu. İçinde **yalnızca javascript-obfuscator 0.18.8**
+kullanan 13 demo betiği ve bir `main.js` vardır; JSFuck, AAEncode, JJEncode ya da eval paketleyici
+**içermez**. Demolar ve ayarları:
+
+| Demo | Ayarlar |
+|---|---|
+| demo_compact | `compact: false` |
+| demo_control_flow_flattening, main | `compact: false, controlFlowFlattening: true` |
+| demo_dead_code_injection | `deadCodeInjection: true, deadCodeInjectionThreshold: 1` |
+| demo_debug_protection | `debugProtection: true` |
+| demo_disable_console_output | `disableConsoleOutput: true` |
+| demo_domain_lock | `domainLock: ['cuiqingcai.com']` |
+| demo_identifier_names_generator | `identifierNamesGenerator: 'mangled'` |
+| demo_identifiers_prefix | `identifiersPrefix: 'germey'` |
+| demo_rename_globals | `renameGlobals: true` |
+| demo_self_defending | `selfDefending: true` |
+| demo_string_array | `stringArray, rotateStringArray, stringArrayEncoding: true (base64), stringArrayThreshold: 1` |
+| demo_target | `target: 'browser-no-eval'` |
+| demo_transform_object_keys | `transformObjectKeys: true` |
+| demo_unicode_escape_sequence | `unicodeEscapeSequence: true` |
+
+0.18 sürümünün 5.x'ten farkları ve PEEL karşılığı:
+
+- İndeksler string: `_0x5d7c('0x1f')`, rc4'te `_0x5d7c('0x1f', 'Fg#k')` → `runtime-decoders` (`"0x…"` indeks).
+- Decoder kendi içinde bir selfDefending denetimi (çerez/`RegExp` + `removeCookie`) taşır; dizi ve decoder
+  birlikte silindiği için ayrıca ele almaya gerek kalmaz.
+- selfDefending geri çağrısı farklı şablondur: `\w+ *\(\) *{\w+ *['|"].+['|"];? *}` ile sıkıştırılmış fonksiyon
+  metnini, `(\\[x|u](\w){2,4})+` ile kaçış dizilerini test eder; tutmazsa sonsuz özyineleme
+  (`indеxOf`, Kiril "е"). → `dead-code` GUARD_STRINGS'e eklendi.
+- Rotasyon `while (--n) arr.push(arr.shift())` sayaçlı biçimdedir → `string-array`.
+
+Görevde beklenen JSFuck/AAEncode/JJEncode ve eval paketleyicileri bu depoda olmasa da PEEL'in
+`predecoders` pass'i bunları iddia ettiği için gerçek örneklerle sınandı ve düzeltildi:
+
+- **JSFuck** (jsfuck 0.4.0): Function'a `[]["flat"]["constructor"]` ile ulaşır; `wrapWithEval` ve
+  `runInParentScope` kipleri `Function("return eval")()` zinciri kurar. Önceki kanca sahte (boş) fonksiyon
+  döndürdüğü için zincir kopuyordu. Ayrıca QuickJS'te argümansız `"".fontcolor()` hata veriyordu (jsfuck `"`
+  karakterini buradan alır) → sandbox'ta tarayıcı davranışına eşitlendi. Çalıştırılmayan ifade kipi
+  (`encode(s, false)`) bir string üretir → string literal'e çevrilir.
+- **AAEncode**: `(ﾟДﾟ)['_'] = (o^_^o)['constructor']['constructor']` (Function), sekizlik kaçışlarla yazılmış
+  kaynak `Function('return "\\143…"')()` ile çözülüp `Function(kaynak)('_')` çalıştırılır. Önceden ilk
+  yakalanan `return "…"` gövdesi program sanılıyordu (davranış sessizce değişiyordu).
+- **JJEncode**: `$=~[];$={___:++$,…}` sözlüğü, `$.$($.$($.$$+"\""+…+"\"")())()`; global değişken adı
+  seçilebilir (`_peel=~[];…`) → tanıma genişletildi.
+- Tek `return` deyiminden oluşan ara gövdeler artık aday sayılmaz; yük zaman aşımına uğrasa da yakalananlar
+  korunur.
+
+Bench: `test/corpus/javascriptobfuscate/` (16 örnek) ve `test/corpus/encoders/` (jsfuck, jsfuck-eval,
+jsfuck-parent, aaencode, aaencode-unicode, jjencode, jjencode-gv).
+
+---
+
+## Bu çalışmada eklenen / değişen pass'ler
+
+| Pass | Dosya | Seviye | Ne yapar |
+|---|---|---|---|
+| `locks` | `src/passes/82-locks.js` | 2 | js-confuser selfDefending IIFE'si ve integrity özet testi (AST pass'lerinin en başında; özet metne bağlı) |
+| `iife-args` | `src/passes/26-iife-args.js` | 2 | jfogs parametre taşıma IIFE'si, çözücü önsöz sandbox'ta |
+| `eval-inline` | `src/passes/37-eval-inline.js` | 2 | Fonksiyonun tek deyimi olan sabit `eval("…")` |
+| `rgf` | `src/passes/38-rgf.js` | 2 | js-confuser RGF tablosu ve kabukları |
+| `var-mask` | `src/passes/46-var-mask.js` | 2 | js-confuser variableMasking |
+| `flat-fns` | `src/passes/47-flat-fns.js` | 2 | js-confuser flatten |
+| `dispatcher` | `src/passes/48-dispatcher.js` | 2 | js-confuser dispatcher |
+| `webpack` | `src/passes/93-webpack.js` | 2 | webpack modül tablosu ve runtime adları |
+| `predecoders` | `src/passes/20-predecoders.js` | 1 | JSFuck/AAEncode/JJEncode düzeltmeleri |
+| `runtime-decoders` | `src/passes/35-runtime-decoders.js` | 2 | hex string indeks, kodlamasız indeks decoder'ı, gövde içi altyapı |
+| `dead-code` | `src/passes/80-dead-code.js` | 2 | 0.x selfDefending kalıpları |
+| `unused` | `src/passes/90-unused.js` | 3 | for başlığındaki kullanılmayan alias |
+| `rename` | `src/passes/95-rename.js` | 4 | class bildiriminin çift adlandırılması hatası |
+
+Fixture'lar: `jfogs-default`, `jfogs-reverse`, `jfogs-zero`, `jsfuck-eval`, `aaencode`, `jjencode`,
+`eval-inline`, `webpack-bundle`, `webpack-loader`, `io-index-string`, `io018-self-defending`, `jc-integrity`,
+`jc-lock-selfdefending`, `jc-rgf`, `jc-variable-masking`, `jc-flatten`, `jc-dispatcher`.
