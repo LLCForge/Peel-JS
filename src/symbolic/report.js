@@ -9,7 +9,7 @@ import { stats as solverStats } from './solver.js';
 import { concolic } from './concolic.js';
 import { dynamicReport } from './dynamic.js';
 import { staticReport } from '../opt/analysis.js';
-import { findOpaque } from '../passes/62-opaque-smt.js';
+import { proveOpaque } from '../passes/62-opaque-smt.js';
 import { proofText } from '../opt/irbridge.js';
 
 // Sembolik / statik / dinamik analizlerin rapor nesnesi (analyze.js → report.symbolic)
@@ -68,16 +68,19 @@ function symbolicFunctions(ast, deadline) {
   return { functions: out, post, sampleTrace, summaryTable: { entries: table.table.size, hits: table.hits, misses: table.misses } };
 }
 
-function opaqueProofs(code, label) {
+// Madde 30: her yüklemi hangi arka ucun kanıtladığı (z3 + yerleşik / yerleşik / yalnız z3 → katlanmaz) raporlanır
+async function opaqueProofs(code, label) {
   let ast;
   try { ast = parse(code); } catch { return []; }
+  const fns = [];
+  traverse(ast, { Function(p) { if (t.isBlockStatement(p.node.body)) fns.push(p); } });
   const out = [];
-  traverse(ast, {
-    Function(p) {
-      if (out.length >= 30 || !t.isBlockStatement(p.node.body)) return;
-      for (const it of findOpaque(p)) out.push({ where: label, line: it.line, cond: it.cond, value: it.value, method: it.proof.method, proof: proofText(it.proof) });
-    },
-  });
+  for (const p of fns) {
+    if (out.length >= 30) break;
+    for (const it of await proveOpaque(p)) {
+      out.push({ where: label, line: it.line, cond: it.cond, value: it.value, method: it.proof.method, proof: it.proofText, backend: it.backend, folds: it.fold });
+    }
+  }
   return out;
 }
 
@@ -95,7 +98,7 @@ export async function symbolicReport({ text, output, sandbox, timeMs = 6000 }) {
     try { report[key] = await fn(); } catch (e) { report[key] = { error: e.message }; }
   };
   await safe('static', () => staticReport(ast));
-  await safe('opaque', () => [...opaqueProofs(text ?? '', 'girdi'), ...opaqueProofs(output, 'çıktı')].slice(0, 40));
+  await safe('opaque', async () => [...(await opaqueProofs(text ?? '', 'girdi')), ...(await opaqueProofs(output, 'çıktı'))].slice(0, 40));
   await safe('symbolic', () => symbolicFunctions(parse(output), t0 + timeMs / 3));
   if (sandbox) {
     await safe('concolic', async () => {

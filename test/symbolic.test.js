@@ -190,4 +190,16 @@ const sandbox = sandboxApi(async (msg) => host.handle(msg));
   assert.ok(rep.solver.calls > 0);
 }
 
+
+// ── madde 27: VM çözücü bağdaştırıcısı (concolic çoklu yol keşfi) ──
+{
+  const { createVmSolver } = await import('../src/symbolic/vm-solver.js');
+  const code = 'var l = navigator.language; var s = 0; if (l === "tr-TR") s = 7; if (l.length > 40 && l.length < 10) s = 9; console.log(s);';
+  const branches = [{ key: '0:0', start: code.indexOf('l === "tr-TR"') }, { key: '0:1', start: code.indexOf('l.length > 40') }];
+  const plans = await createVmSolver(sandbox).planBranches({ log: [['0:0', false], ['0:1', false]], branches, code });
+  const p0 = plans.find((p) => p.key === '0:0');
+  assert.equal(p0.status, 'feasible');
+  assert.equal(p0.inputs['navigator.language'], 'tr-TR');
+  assert.equal(plans.find((p) => p.key === '0:1').status, 'infeasible');
+}
 console.log('symbolic.test: ok');

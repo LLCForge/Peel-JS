@@ -1,5 +1,7 @@
 import * as t from '@babel/types';
 import { traverse, gen } from '../util/ast.js';
+import { parse } from '../core/parse.js';
+import { applyInputs } from '../symbolic/concolic.js';
 import { exploreMachine, collectSumFns } from './76-unflatten.js';
 import { caseSummaries, observedEdges, machineReport, debugSteps } from '../core/vm/sm.js';
 
@@ -108,8 +110,10 @@ function branchPoints(sw) {
 }
 
 // Ek çalıştırma planı: çözücü varsa ondan, yoksa ilk sonucu tersine çeviren varsayılan strateji
-export async function concolicPlan(log, branches, solver = null, max = MAX_FORCED) {
-  if (solver?.planBranches) return (await solver.planBranches({ log, branches })).slice(0, max);
+// Plan öğesi iki biçimde olabilir: zorlama haritası { "m:j": [n, değer] } ya da çözücü planı
+// { force, inputs?, status: 'feasible'|'infeasible'|'unknown', key, value, proof? } (src/symbolic/vm-solver.js)
+export async function concolicPlan(log, branches, solver = null, max = MAX_FORCED, code = null) {
+  if (solver?.planBranches) return (await solver.planBranches({ log, branches, code })).slice(0, max);
   const first = new Map();
   for (const [k, v] of log) if (!first.has(k)) first.set(k, v);
   return [...first].slice(0, max).map(([k, v]) => ({ [k]: [1, !v] }));
@@ -137,7 +141,8 @@ function transitions(events, id) {
   return events.filter(([vmId]) => vmId === id).map(([, v]) => v);
 }
 
-export async function run(ast, { onLog, bump, sandbox, findings, solver = null }) {
+// Makine tespiti (saf AST işlevi): araçlama öncesi kod yeniden parse edilince aynı sıra ve dal konumları elde edilir
+function detectVms(ast) {
   const vms = [];
   traverse(ast, {
     Loop(p) {
@@ -150,7 +155,18 @@ export async function run(ast, { onLog, bump, sandbox, findings, solver = null }
       vms.push({ path: p, sw: found.sw, st, fn: fn?.node.id?.name ?? (fn ? '(anonim)' : '(program)'), label: p.parentPath.isLabeledStatement() ? p.parentPath.node.label.name : null });
     },
   });
+  return vms;
+}
+
+export async function run(ast, { onLog, bump, sandbox, findings, solver = null }) {
+  const vms = detectVms(ast);
   if (!vms.length) return;
+  // çözücü için araçlanmamış kod ve dal test konumları (concolic dal kimlikleri bu kodun konumlarıdır)
+  const plain = gen(ast);
+  const starts = new Map();
+  try {
+    detectVms(parse(plain)).forEach((v, i) => branchPoints(v.sw).forEach((ifs, j) => starts.set(`${i}:${j}`, ifs.test.start)));
+  } catch { /* konum yoksa çözücü dalları eşleyemez: zorlama planı */ }
 
   // araçlama: discriminant işaretleyici, case içi if'lerde dal kancası, nesnede tutulan durum için Proxy
   const undo = [];
@@ -187,8 +203,10 @@ export async function run(ast, { onLog, bump, sandbox, findings, solver = null }
   const instrumented = gen(ast);
   undo.reverse().forEach((u) => u());
 
-  const runOnce = async (force, timeoutMs) => {
-    const r = await sandbox.run(`${PRELUDE(force)}\ntry {\n${instrumented}\n} catch (e) {}\n__res.push({ __peelSm: 1, br: __peelBrLog, pw: __peelPw });`, { timeoutMs });
+  const runOnce = async (force, timeoutMs, inputs = null) => {
+    // çözücü girdisi: ortam okumaları bulunan değerlerle değiştirilmiş araçlı kod
+    const code = inputs ? applyInputs(instrumented, inputs) : instrumented;
+    const r = await sandbox.run(`${PRELUDE(force)}\ntry {\n${code}\n} catch (e) {}\n__res.push({ __peelSm: 1, br: __peelBrLog, pw: __peelPw });`, { timeoutMs });
     const res = r.res ?? [];
     const tail = res.find((x) => x && x.__peelSm) ?? { br: [], pw: [] };
     return { events: res.filter((x) => Array.isArray(x)), br: tail.br, pw: tail.pw };
@@ -196,11 +214,16 @@ export async function run(ast, { onLog, bump, sandbox, findings, solver = null }
   const base = await runOnce({}, 6000);
 
   // Madde 27: her case içi dalın ilk görülen sonucunu tersine çevirerek ek çalıştırmalar (dal zorlama)
-  const branches = vms.flatMap((v, i) => v.branches.map((ifs, j) => ({ key: `${i}:${j}`, machine: i, test: gen(ifs.test).slice(0, 200) })));
+  const branches = vms.flatMap((v, i) => v.branches.map((ifs, j) => ({ key: `${i}:${j}`, machine: i, test: gen(ifs.test).slice(0, 200), start: starts.get(`${i}:${j}`) ?? null })));
   const forcedRuns = [];
-  for (const force of await concolicPlan(base.br, branches, solver)) {
-    const r = await runOnce(force, 2000);
-    for (const [k, [, value]] of Object.entries(force)) forcedRuns.push({ key: k, value, events: r.events });
+  const feasibility = []; // çözücü kararları: { key, value, status, inputs?, proof? }
+  for (const item of await concolicPlan(base.br, branches, solver, MAX_FORCED, plain)) {
+    const plan = item.force && item.status ? item : { force: item, status: 'unknown' };
+    if (plan.status !== 'unknown' || plan.inputs) feasibility.push({ key: plan.key, value: plan.value, status: plan.status, inputs: plan.inputs ?? null, proof: plan.proof?.method ?? null });
+    if (plan.status === 'infeasible') continue;
+    const r = await runOnce(plan.force, 2000, plan.inputs ?? null);
+    if (plan.inputs) forcedRuns.push({ key: plan.key, value: plan.value, events: r.events, status: 'feasible', inputs: plan.inputs });
+    else for (const [k, [, value]] of Object.entries(plan.force)) forcedRuns.push({ key: k, value, events: r.events, status: 'unknown' });
   }
 
   const sumFns = collectSumFns(ast);
@@ -214,7 +237,8 @@ export async function run(ast, { onLog, bump, sandbox, findings, solver = null }
       if (!fr.key.startsWith(`${i}:`)) continue;
       for (const e of observedEdges(transitions(fr.events, i))) {
         if (baseKeys.has(`${e.from}→${e.to}`) || forced.some((x) => x.from === e.from && x.to === e.to)) continue;
-        forced.push({ ...e, cond: `zorla ${fr.key.split(':')[1]}. dal = ${fr.value}` });
+        const how = fr.status === 'feasible' ? `çözülmüş girdi: ${Object.entries(fr.inputs).map(([k, x]) => `${k}=${JSON.stringify(x)}`).join(', ')}` : `zorla ${fr.key.split(':')[1]}. dal = ${fr.value}, doğrulanmamış`;
+        forced.push({ ...e, status: fr.status, cond: how });
       }
     }
     // statik keşif: tüm durum adları sabit başlangıçlı yerel değişkense
@@ -242,6 +266,8 @@ export async function run(ast, { onLog, bump, sandbox, findings, solver = null }
     report.kind = 'switch makinesi';
     report.steps = debugSteps(seq, cases);
     report.proxied = v.proxied ?? [];
+    // madde 27: alınmayan dalların çözücü kararları (yalnızca bu makine)
+    report.branchFeasibility = feasibility.filter((x) => x.key?.startsWith(`${i}:`));
     findings?.sm?.push(report);
 
     const lines = [`${MARK} | ${v.sw.cases.length} durum | switch (${gen(v.sw.discriminant)})`];
@@ -262,9 +288,18 @@ export async function run(ast, { onLog, bump, sandbox, findings, solver = null }
     } else if (!staticGraph?.edges.length) {
       lines.push('  çalıştırmada bu makineye girilmedi');
     }
-    if (forced.length) {
+    const solved = forced.filter((e) => e.status === 'feasible');
+    const pushed = forced.filter((e) => e.status !== 'feasible');
+    if (solved.length) {
+      lines.push('  çözücüyle bulunan girdilerle ek geçişler (doğrulandı):');
+      for (const e of solved.slice(0, 40)) lines.push(fmt(e));
+    }
+    if (pushed.length) {
       lines.push('  zorlanmış dallarla bulunan ek geçişler:');
-      for (const e of forced.slice(0, 40)) lines.push(fmt(e));
+      for (const e of pushed.slice(0, 40)) lines.push(fmt(e));
+    }
+    for (const fz of report.branchFeasibility) {
+      lines.push(`  dal ${fz.key.split(':')[1]} = ${fz.value}: ${fz.status === 'feasible' ? `ulaşılabilir (girdi: ${JSON.stringify(fz.inputs)})` : fz.status === 'infeasible' ? `olanaksız (kanıt: ${fz.proof}, gözlenen yol öneklerinde)` : 'bilinmiyor'}`);
     }
     if (report.unreachable.length) lines.push(`  ulaşılmayan case'ler (${report.complete ? 'kanıtlandı' : 'gözlenmedi'}): ${report.unreachable.map((u) => u.label).join(', ')}`);
     if (report.terminators.length) lines.push(`  uçlar: ${[...new Set(report.terminators.map((x) => `${x.from}: ${x.kind}`))].slice(0, 20).join('; ')}`);

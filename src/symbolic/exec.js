@@ -58,6 +58,7 @@ export class State {
     s.value = this.value;
     s._approx = this._approx;
     s.depth = this.depth;
+    s.concretized = this.concretized;
     s.out = this.out.slice();
     s.effects = this.effects.slice();
     return s;
@@ -207,7 +208,8 @@ export class Exec {
         let concrete;
         try { concrete = Boolean(evaluate(c, this.o.guide.model)); } catch { concrete = taken; }
         if (concrete !== taken) { this.diverged = `dal ${id}: model ${concrete}, gerçek ${taken}`; s.status = 'diverge'; return [[s, taken]]; }
-        this.branchLog.push({ id, line: node.loc?.start.line ?? 0, cond: c, taken, pcLen: s.pc.length });
+        // exact: bu noktaya kadar girdi dışı modellenmeyen değer somutlaştırılmadı (UNSAT yol öneki için geçerli kanıt)
+        this.branchLog.push({ id, line: node.loc?.start.line ?? 0, cond: c, taken, pcLen: s.pc.length, exact: !s.concretized });
         s.pc.push(taken ? c : mk('!', c));
       }
       this.traceAdd(s, node, 'dal', { taken });
@@ -337,13 +339,16 @@ export class Exec {
     this.cursor++;
     return ev;
   }
-  recorded(s, ctx, node) {
+  // used=false: kayıt yalnızca eşzamanlama için tüketilir, modellenen değer kullanılır (somutlaştırma sayılmaz)
+  recorded(s, ctx, node, used = true) {
     const ev = this.consume(ctx, 'v', node.start);
     if (!ev) { s.status = 'diverge'; return UNDEF; }
     if (ev.sym) {
       const ty = typeof ev.v === 'number' ? (Number.isInteger(ev.v) && (ev.v | 0) === ev.v ? 'int32' : 'num') : typeof ev.v === 'string' ? 'str' : typeof ev.v === 'boolean' ? 'bool' : ev.v === null ? 'null' : 'undef';
       return V(ev.sym, this.o.guide.types?.[ev.sym] ?? ty, ty === 'str' ? { cap: Math.min(64, Math.max(12, String(ev.v).length + 4)) } : {});
     }
+    // girdi olmayan kayıtlı değer: somutlaştırma (yol koşulu bundan sonra alt yaklaşıklık)
+    if (used) s.concretized = true;
     if (ev.o) return ext(`dış#${node.start}`);
     return C(ev.v);
   }
@@ -1028,7 +1033,7 @@ export class Exec {
     const recorded = this.isRecorded(node);
     const take = (v) => {
       if (recorded) {
-        const r = this.recorded(s, ctx, node);
+        const r = this.recorded(s, ctx, node, v == null);
         // modellenen değer öncelikli; modellenmeyen kısımlar kayıttan gelir
         return [[s, v ?? r]];
       }
@@ -1188,7 +1193,7 @@ export class Exec {
     const recorded = this.isRecorded(n);
     const result = (st, v) => {
       if (recorded) {
-        const r = this.recorded(st, ctx, n);
+        const r = this.recorded(st, ctx, n, v == null);
         return [[st, v ?? r]];
       }
       return [[st, v ?? this.unknown(st, n, ctx, 'çağrı')]];
@@ -1198,7 +1203,7 @@ export class Exec {
       if (recorded) {
         // concolic: program fonksiyonu yeniden oynatılır, ardından çağrının kendi kaydı tüketilir
         const pairs = this.call(s, fn, args, recv, ctx, n);
-        return this.ev1(pairs, (st, v) => { this.recorded(st, ctx, n); return [[st, v]]; });
+        return this.ev1(pairs, (st, v) => { this.recorded(st, ctx, n, false); return [[st, v]]; });
       }
       return this.call(s, fn, args, recv, ctx, n);
     }

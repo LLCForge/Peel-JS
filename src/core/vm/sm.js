@@ -140,7 +140,8 @@ export function machineReport({ id, fn, line, discriminant, stateNames, cases, s
   };
   staticGraph?.edges.forEach((e) => add(e, 'statik'));
   observed.forEach((e) => add(e, 'gözlendi'));
-  forced.forEach((e) => add(e, 'zorlanmış yol'));
+  // madde 27: çözücüyle bulunan girdiyle gözlenen kenar doğrulanmıştır; çözülemeyip zorlanan dal doğrulanmamış
+  forced.forEach((e) => add(e, e.status === 'feasible' ? 'çözücüyle doğrulanmış yol' : 'zorlanmış yol (doğrulanmamış)'));
   // gözlenen kenarın statik karşılığı koşulluysa koşulu taşı
   const all = [...edges.values()];
   const nodes = new Set(all.flatMap((e) => [e.from, e.to]));
