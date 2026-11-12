@@ -85,7 +85,9 @@ export function analyzeVm(vm, values, { used = new Set(), steps = null, origin =
     result.disasm = dis.list.map((x) => ({ ...x, raw: rawAt(x.reads[0]), mnemonic: isa.mnemonic.get(x.op) ?? x.mnemonic }));
     result.opcodeMap = [...new Map(result.disasm.map((x) => [x.op, x.raw]))].map(([op, raw]) => ({ op, raw }));
     result.gaps = dis.gaps;
-    result.listing = formatDisasm({ ...dis, list: result.disasm }, (x) => constComment(x, consts));
+    // sabit havuzu açıklaması yalnızca işlenenini sabit havuzunda kullanan handler'lar için
+    const constOps = new Set(handlers.filter((h) => vm.roles.consts && h.semText.includes(`${vm.roles.consts}[#`)).map((h) => String(h.key)));
+    result.listing = formatDisasm({ ...dis, list: result.disasm }, (x) => (constOps.has(String(x.op)) ? constComment(x, consts) : null));
     result.assembly = toAssembly(dis, code, isa);
     result.isa = [...isa.mnemonic].map(([op, mn]) => ({ op, mnemonic: mn, operands: isa.operands.get(op) ?? null }));
     result.alphabet = [...new Set(dis.list.map((x) => x.op))].sort((a, b) => (a > b ? 1 : -1));

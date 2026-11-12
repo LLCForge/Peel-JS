@@ -118,6 +118,8 @@ const DICT = {
     'stat.proxy': 'proxy', 'stat.constFold': 'katlama', 'stat.deadCode': 'ölü kod', 'stat.opaque': 'sabit test',
     'stat.stateVar': 'durum değişkeni', 'stat.vm': 'VM', 'stat.controlFlow': 'akış', 'stat.unused': 'kullanılmayan',
     'stat.rename': 'isim',
+    'report.vm': 'VM ve durum makineleri',
+    'stat.vmLift': 'bytecode VM', 'stat.antiTiming': 'zamanlama kontrolü',
   },
   en: {
     'brand.sub': 'JS DEOBFUSCATOR',
@@ -237,6 +239,8 @@ const DICT = {
     'stat.proxy': 'proxies', 'stat.constFold': 'folds', 'stat.deadCode': 'dead code', 'stat.opaque': 'opaque tests',
     'stat.stateVar': 'state vars', 'stat.vm': 'VMs', 'stat.controlFlow': 'flows', 'stat.unused': 'unused',
     'stat.rename': 'renames',
+    'report.vm': 'VMs and state machines',
+    'stat.vmLift': 'bytecode VMs', 'stat.antiTiming': 'timing checks',
   },
 };
 

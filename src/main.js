@@ -161,7 +161,7 @@ async function run() {
     } else {
       setStatus(res.code.trim() === src.trim() ? 'status.unchanged' : 'status.done', { s }, 'ok');
     }
-    lastReport = await analyze({ input: src, text: res.text, output: res.code, events: res.events, sandbox: sandboxOk ? sandbox : null });
+    lastReport = await analyze({ input: src, text: res.text, output: res.code, events: res.events, sandbox: sandboxOk ? sandbox : null, findings: res.findings });
     lastReport.stats = res.stats;
     renderReport(views.report, lastReport, exportReport, reportActions);
   } catch (e) {

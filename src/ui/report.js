@@ -1,4 +1,5 @@
 import { t, td } from '../i18n.js';
+import { renderVmReport } from './vm/index.js';
 
 const MAX_ROWS = 60;
 
@@ -103,6 +104,12 @@ function threat(th, runtime, actions) {
       btn('action.masked', actions.masked)));
 }
 
+function vmSection(data) {
+  const box = el('div');
+  renderVmReport(box, data);
+  return box;
+}
+
 export function renderReport(root, report, onExport, actions = {}) {
   root.textContent = '';
   if (!report) {
@@ -133,6 +140,7 @@ export function renderReport(root, report, onExport, actions = {}) {
       ? table([t('report.enc.value'), t('report.enc.kind'), t('report.enc.decoded')],
         report.encodings.map((e) => [e.value, e.best.key ? `${e.best.encoding} (${e.best.key})` : e.best.encoding, e.best.text]), ['mono', 'mono', 'mono'])
       : muted('report.encodings.none')),
+    report.vm ? section('report.vm', vmSection(report.vm)) : null,
     section('report.passes', passTimes(report.passTimes)),
     section('report.rollbacks', report.rollbacks.length
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])
