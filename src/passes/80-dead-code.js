@@ -321,7 +321,10 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
       // `W;` gibi tek başına bağlı bir isim ya da literal: değerlendirmenin gözlenebilir etkisi yok
       // (bağsız isim ReferenceError fırlatabileceği için dokunulmaz; "use strict" gibi direktifler zaten ayrı düğüm)
       const inert = (t.isIdentifier(e) && p.scope.getBinding(e.name) && !p.findParent((x) => x.isWithStatement())) ||
-        (literalValue(e).ok && !t.isStringLiteral(e)) || inertObject(e) || factoryIife(e);
+        (literalValue(e).ok && !t.isStringLiteral(e)) || inertObject(e) || factoryIife(e) ||
+        // !x;  typeof x;  void x;  (movedDeclarations kalıntısı) — bağlı ad: dönüşüm çağırmaz
+        (t.isUnaryExpression(e) && ['!', 'typeof', 'void'].includes(e.operator) && t.isIdentifier(e.argument) &&
+          Boolean(p.scope.getBinding(e.argument.name)) && !p.findParent((x) => x.isWithStatement()));
       if (inert && Array.isArray(p.container)) {
         p.remove();
         n++;

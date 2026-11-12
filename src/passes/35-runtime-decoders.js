@@ -253,7 +253,83 @@ function isIndexDecoder(f) {
     new RegExp(`\\(\\)\\[${x}\\]|[\\w$]+\\[${x}\\]`).test(src);
 }
 
+// Kapalı decoder: gövdesi yalnızca kendi yerellerine, güvenli global'lere ve hiç değişmeyen literal başlangıçlı
+// bağlara (string tablosu, sayı dizisi) bakan fonksiyon bildirimi (js-confuser CFF string şifresi: xor(key, start, len)).
+// Çağrıları hiç çalışmayan daldaysa (decoder çalışma anında yakalanamaz) bile bağımsız bir sandbox'ta, yalnızca
+// fonksiyon ve bağımlılıklarıyla çalıştırılarak çözülür: sonuç yalnız argümanlara ve sabitlere bağlıdır.
+const CLOSED_GLOBALS = new Set(['String', 'Math', 'Number', 'parseInt', 'parseFloat', 'Array', 'Object', 'JSON', 'undefined', 'NaN', 'Infinity', 'isNaN']);
+const MAX_CLOSED_CALLS = 20000;
+
+function closedDecoder(fnPath) {
+  const fn = fnPath.node;
+  if (!fn.id || fn.async || fn.generator || !fn.params.every((x) => t.isIdentifier(x)) || !DECODER_BODY.test(gen(fn.body))) return null;
+  const deps = new Map();
+  let ok = true;
+  fnPath.traverse({
+    ThisExpression(q) { if (q.getFunctionParent() === fnPath) { ok = false; q.stop(); } },
+    Identifier(q) {
+      if (!q.isReferencedIdentifier() || q.node.name === 'arguments') { if (q.node.name === 'arguments' && q.isReferencedIdentifier()) ok = false; return; }
+      const b = q.scope.getBinding(q.node.name);
+      if (!b) { if (!CLOSED_GLOBALS.has(q.node.name)) { ok = false; q.stop(); } return; }
+      if (b.path === fnPath || b.path.findParent((x) => x === fnPath)) return;
+      const init = b.path.isVariableDeclarator() ? b.path.node.init : null;
+      if (!b.constant || !init || !(t.isStringLiteral(init) || t.isNumericLiteral(init) || isLiteralArray(init))) { ok = false; q.stop(); return; }
+      // bağımlılık yalnızca okunmalı (yazma ya da değiştiren yöntem çağrısı çağrı sırasını anlamlı kılardı)
+      const par = q.parentPath;
+      const mutating = par.isMemberExpression({ object: q.node }) && (
+        par.parentPath.isAssignmentExpression({ left: par.node }) || par.parentPath.isUpdateExpression() ||
+        (par.parentPath.isCallExpression({ callee: par.node }) && ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin']
+          .includes(par.node.computed ? par.node.property.value : par.node.property.name)));
+      if (mutating) { ok = false; q.stop(); return; }
+      deps.set(q.node.name, init);
+    },
+  });
+  // fonksiyon kendi bağını yeniden atamamalı
+  const self = fnPath.parentPath.scope.getBinding(fn.id.name);
+  if (!ok || !self?.constant) return null;
+  return { deps, self };
+}
+const isLiteralArray = (n) => t.isArrayExpression(n) && n.elements.every((e) => e && (t.isNumericLiteral(e) || t.isStringLiteral(e) ||
+  (t.isUnaryExpression(e, { operator: '-' }) && t.isNumericLiteral(e.argument))));
+
+async function closedDecoders(ast, { sandbox, onLog, bump }) {
+  const jobs = [];
+  traverse(ast, {
+    FunctionDeclaration(fp) {
+      const info = closedDecoder(fp);
+      if (!info) return;
+      const calls = info.self.referencePaths.map((r) => r.parentPath).filter((c, i) => c.isCallExpression({ callee: info.self.referencePaths[i].node }) &&
+        c.node.arguments.length && c.node.arguments.every((a) => literalValue(a).ok) && !c.parentPath.isExpressionStatement());
+      if (!calls.length || calls.length > MAX_CLOSED_CALLS) return;
+      jobs.push({ fp, info, calls });
+    },
+  });
+  let total = 0;
+  for (const j of jobs) {
+    const decl = [...j.info.deps].map(([k, v]) => `var ${k} = ${gen(v)};`).join('\n');
+    const keys = [...new Set(j.calls.map((c) => argsKey(c)))];
+    const code = `${decl}\n${gen(j.fp.node)}\nvar __o = {};\n${keys.map((k, i) => `try { __o[${i}] = ${j.fp.node.id.name}.apply(undefined, ${k}); } catch (e) {}`).join('\n')}\n__res.push(JSON.stringify(__o));`;
+    const r = await sandbox.run(code, { timeoutMs: 6000 });
+    let out = null;
+    try { out = JSON.parse(r.res?.[0] ?? 'null'); } catch { out = null; }
+    if (!out) continue;
+    let n = 0;
+    for (const c of j.calls) {
+      const v = out[keys.indexOf(argsKey(c))];
+      if (typeof v !== 'string' || !attached(c)) continue;
+      c.replaceWith(t.stringLiteral(v));
+      n++;
+    }
+    if (n) onLog(`runtime-decoders: kapalı decoder ${j.fp.node.id.name} ile ${n} çağrı bağımsız çalıştırılarak çözüldü`, 'info');
+    total += n;
+  }
+  bump('runtimeDecoder', total);
+  return total;
+}
+
 export async function run(ast, ctx) {
+  // önce kapalı decoder'lar: hiç çalışmayan dallardaki çağrılar da çözülür
+  if (await closedDecoders(ast, ctx)) return;
   await resolveCalls(ast, ctx);
   let removed = removeInfrastructure(ast, ctx.decoderNames ?? []);
   // fonksiyon gövdelerindeki altyapı: bu turda çözülen decoder'ların gövdeleri ve doğrudan bir rotasyon

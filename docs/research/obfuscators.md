@@ -265,6 +265,22 @@ durumu sayesinde yardımcının makineleri de açılır; `confuser-runtime` (yen
 IIFE'sini (yalnızca yerel atama, `new Array(n)`, `String.fromCharCode` okuması), okunmayan yerleşik takma
 adlarını (`S = G.String || String`) ve getGlobal'ı siler. 186 KB'lık örnek 1 KB'a iner. Fixture: `jc-cff-strings`.
 
+**Üçüncü tur (hazır ayarlar):** `jc-flatten` 2 KB → 0.6 KB (dispatcher girdisinin iç içe parametre kalıbı),
+`jc-opaque` 12 KB → 0.6 KB (blok içi ölü fonksiyon bildirimleri; Annex B'yi koruyarak ölü dal katlama),
+`jc-low` 9–17 KB → 0.6–0.7 KB (tek atamalı değişken yayılımı, movedDeclarations'ın parametreye taşıdığı
+dispatcher nesnesi ve girdi yerelleri, `!x;` kalıntıları, program düzeyi string yardımcısı),
+`jc-medium` 203 KB → 10 KB. Kapalı decoder'lar (CFF string şifresi `xor(key, start, len)`) hiç çalışmayan
+dallarda bile bağımsız sandbox'ta çözülür; durum dizisi argüman dizisinden açılan makineler de kopyalanır.
+Fixture'lar: `jc-flatten-dispatcher`, `jc-opaque-deadcode`, `jc-low-small`, `jc-dispatcher-moved`.
+
+**Açık kalan: `jc-high`** (352 KB → 150 KB, davranış doğru, 7/7). Yüksek ayarda dispatcher'ın kendisi de CFF ile
+düzleştirilip bir kapsam nesnesi özelliğine (`scope.K.p = function (...a) { return M(seq, {…}, rt, a); }`)
+konuyor ve payload da kapsam nesnesinde tutuluyor; `new scope.K.p("ad", bayrak, ret)[anahtar]` çağrıları
+dispatcher olarak tanınmıyor, string decompress yardımcısının makineleri bu kapsam zinciri üzerinden canlı
+kaldığı için silinemiyor. `jc-high-rich` çekimine göre dalgalanıyor (bir çekimde 3/7 iğne): kapsam nesnesindeki
+bir string→string fonksiyonun çağrıları decoder sanılıyor, davranış kontrolü değişikliği geri alıyor (çıktı doğru
+ama okunur değil). Gereken: dispatcher tanımanın kapsam özelliği + payload yolu biçimine genişletilmesi.
+
 Doğası gereği geri alınamayanlar (bkz. yol haritası işaretleri):
 
 - **Özgün adlar** (`renameVariables`, `identifierGenerator`, javascript-obfuscator `renameProperties` ve ad

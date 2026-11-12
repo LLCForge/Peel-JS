@@ -205,8 +205,29 @@ function splitScopes(ast) {
   let n = 0;
   traverse(ast, {
     // kullanılmayan kapsam nesnesinin kalıntısı: ({ K: {}, L: root.K });  — takma ad kökü bir kapsam kökü olmalı
+    // var A = root.K;  (ssa-opt'un skaler değiştirmesi takma ad nesnesini değişkene çıkarır): A yalnızca üye
+    // erişimiyle kullanılıyorsa her A yerine root.K yazılır, bildirim silinir (root ve root.K hiç değişmez)
+    VariableDeclarator(p) {
+      const { id, init } = p.node;
+      if (!t.isIdentifier(id) || !t.isMemberExpression(init) || !t.isIdentifier(init.object) || keyOf(init) === null) return;
+      const rb = p.scope.getBinding(init.object.name);
+      if (!rb || !(rb.constant || destructuredDefault(rb)) || !rootObject(rb)) return;
+      const ab = p.scope.getBinding(id.name);
+      if (!ab?.constant || !ab.referencePaths.every((r) => r.parentPath.isMemberExpression({ object: r.node }))) return;
+      // A'nın kullanıldığı yerde root adı başka bir bağa gitmemeli
+      if (!ab.referencePaths.every((r) => r.scope.getBinding(init.object.name) === rb)) return;
+      for (const r of ab.referencePaths) r.replaceWith(t.cloneNode(init, true));
+      p.remove();
+      n++;
+    },
     ExpressionStatement(p) {
       const e = p.node.expression;
+      // root.K;  — skaler değiştirme (ssa-opt) sonrası kalan takma ad okuması: kapsam nesnesinde yan etkisiz
+      if (t.isMemberExpression(e) && t.isIdentifier(e.object) && keyOf(e) !== null && Array.isArray(p.container)) {
+        const b = p.scope.getBinding(e.object.name);
+        if ((b?.constant || (b && destructuredDefault(b))) && rootObject(b)) { p.remove(); n++; }
+        return;
+      }
       if (!scopeShaped(e) || !Array.isArray(p.container)) return;
       const rootsOk = e.properties.every((x) => !t.isMemberExpression(x.value) || (() => {
         const b = p.scope.getBinding(x.value.object.name);
@@ -365,22 +386,45 @@ function deadStores(ast) {
     }
   }
   if (!stores.length) return 0;
-  // programda okunan (ya da string olarak geçen) tüm özellik adları
-  const read = new Set();
+  // Ölü küme: birbirini çağıran ama dışarıdan hiç okunmayan kapsam özelliği atamaları ve fonksiyon bildirimleri
+  // (çözülen string decoder'ının makineleri). Her aday, dışarıda (başka bir canlı yerde) kullanılıyorsa canlıdır.
+  const uses = new Map(); // özellik adı → okuma yolları
+  const stringNames = new Set();
   traverse(ast, {
     MemberExpression(p) {
       const k = keyOf(p.node);
       if (k === null) return;
       if (p.parentPath.isAssignmentExpression({ left: p.node, operator: '=' }) && stores.some((s) => s.stmt.node.expression === p.parent)) return;
-      read.add(k);
+      if (!uses.has(k)) uses.set(k, []);
+      uses.get(k).push(p);
     },
-    StringLiteral(p) { if (!p.parentPath.isMemberExpression({ property: p.node })) read.add(p.node.value); },
-    'ObjectProperty|ObjectMethod|ClassMethod|ClassProperty'(p) { const k = p.node.key; if (t.isIdentifier(k)) read.add(k.name); },
+    StringLiteral(p) { if (!p.parentPath.isMemberExpression({ property: p.node })) stringNames.add(p.node.value); },
+    'ObjectProperty|ObjectMethod|ClassMethod|ClassProperty'(p) { const k = p.node.key; if (t.isIdentifier(k)) stringNames.add(k.name); },
   });
+  const cands = stores.filter((s) => !stringNames.has(s.name)).map((s) => ({ kind: 'store', path: s.stmt, body: s.stmt.get('expression.right'), refs: uses.get(s.name) ?? [] }));
+  // iç içe fonksiyon bildirimleri (program düzeyi global olabilir: dokunulmaz)
+  traverse(ast, {
+    FunctionDeclaration(fp) {
+      if (!fp.node.id || fp.parentPath.isProgram()) return;
+      const b = fp.parentPath.scope.getBinding(fp.node.id.name);
+      if (!b || b.constantViolations.some((v) => v.node !== fp.node)) return;
+      cands.push({ kind: 'fn', path: fp, body: fp, refs: b.referencePaths });
+    },
+  });
+  const dead = new Set(cands);
+  const insideDead = (r) => [...dead].some((c) => r === c.body || r.findParent((x) => x === c.body));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const c of [...dead]) {
+      if (c.refs.some((r) => !insideDead(r))) { dead.delete(c); changed = true; }
+    }
+  }
   let n = 0;
-  for (const s of stores) {
-    if (read.has(s.name) || !s.stmt.node) continue;
-    s.stmt.remove();
+  for (const c of dead) {
+    if (!c.path.node) continue;
+    // yalnızca kapsam özelliği ataması içeren kümeler silinir; düz fonksiyon kümeleri unused'a kalır
+    if (c.kind === 'fn' && ![...dead].some((x) => x.kind === 'store')) continue;
+    c.path.remove();
     n++;
   }
   return n;

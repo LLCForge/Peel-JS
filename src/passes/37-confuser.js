@@ -72,6 +72,16 @@ function readDispatcher(fnPath) {
   let payload = null;
   let lengthHelper = null;
   for (const s of body) {
+    // movedDeclarations: var fns = {…} yerine kullanılmayan bir parametreye atama: P = {…}
+    const movedFns = t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression, { operator: '=' }) &&
+      t.isIdentifier(s.expression.left) && t.isObjectExpression(s.expression.right) &&
+      fn.params.slice(3).some((x) => t.isIdentifier(x, { name: s.expression.left.name }) || (t.isAssignmentPattern(x) && t.isIdentifier(x.left, { name: s.expression.left.name })));
+    if (movedFns) {
+      const obj = s.expression.right;
+      if (!obj.properties.every((p) => t.isObjectProperty(p) && strKey(p.key, p.computed) !== null && t.isFunctionExpression(p.value))) return null;
+      fns = new Map(obj.properties.map((p) => [strKey(p.key, p.computed), p.value]));
+      fnsName = s.expression.left.name;
+    }
     if (t.isVariableDeclaration(s) && s.declarations.length === 1 && t.isObjectExpression(s.declarations[0].init) &&
         t.isIdentifier(s.declarations[0].id)) {
       const obj = s.declarations[0].init;
@@ -110,8 +120,12 @@ function readDispatcher(fnPath) {
 // fns girdisi: function () { var [a, b] = payload; ... }  → { params, body } (yoksa null)
 function readEntry(entryPath, payload, dispatcherPath) {
   const fnNode = entryPath.node;
-  if (fnNode.params.length || fnNode.async || fnNode.generator || usesThisOrArguments(fnNode)) return null;
-  const body = fnNode.body.body;
+  if (fnNode.async || fnNode.generator || usesThisOrArguments(fnNode)) return null;
+  // movedDeclarations: yereller kullanılmayan parametrelere taşınmış olabilir (fns[name]() argümansız çağrılır):
+  // yeniden yerel var olurlar
+  if (!fnNode.params.every((x) => t.isIdentifier(x))) return null;
+  const moved = fnNode.params.length ? [t.variableDeclaration('var', fnNode.params.map((x) => t.variableDeclarator(t.identifier(x.name))))] : [];
+  const body = fnNode.body.body.filter((x) => !(t.isExpressionStatement(x) && t.isUnaryExpression(x.expression, { operator: '!' }) && t.isIdentifier(x.expression.argument)));
   let params = [];
   let rest = body;
   const first = body[0];
@@ -123,6 +137,7 @@ function readEntry(entryPath, payload, dispatcherPath) {
     params = els;
     rest = body.slice(1);
   }
+  rest = [...moved, ...rest];
   // payload başka yerde okunmamalı; dispatcher'ın yerel adlarına (fns, output, name...) bakmamalı
   let bad = false;
   t.traverseFast(t.blockStatement(rest), (n) => { if (t.isIdentifier(n, { name: payload })) bad = true; });
