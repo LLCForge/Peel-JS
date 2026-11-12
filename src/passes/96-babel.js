@@ -5,7 +5,8 @@ import { scan, runsAfter, isStrict, strictSafe, callOnlyProperty } from '../nami
 import { provablyPrimitive } from './97-modern-syntax.js';
 import { reverseExtras } from '../naming/babel-extra.js';
 
-// 79: Babel/regenerator kalıntılarını geri çevirme.
+// 79: Babel/regenerator kalıntılarını geri çevirme. İlk iki madde reverseRegenerator'dadır (79-regenerator pass'i
+// level 2'de çağırır); bu pass okunabilirlik aşamasında yardımcı ve sınıf kalıntılarını çevirir.
 //  - regenerator durum makinesi → function*  (try/catch/finally, döngü, if/else, yield*): klasik
 //    regeneratorRuntime/_regeneratorRuntime().mark/wrap ve Babel 7.27+ kompakt _regenerator().m/w biçimi
 //  - _asyncToGenerator(function* …) → async function (IIFE, "_foo.apply(this, arguments)" ikilisi, _ref sarmalayıcısı)
@@ -80,53 +81,8 @@ function helperKind(name, code, program) {
 
 export async function run(ast, { onLog, bump, naming = {} }) {
   if (naming.babel === false) return;
-  const stats = { generators: 0, asyncs: 0, classes: 0, helpers: 0 };
-
-  // ── 1) regenerator → function* ──
-  // yield* hedefi: programda tek tanımlı generator (ya da regenerator ile işaretli) fonksiyon çağrısı, dizi ya da string literali
-  const declCount = new Map();
-  const seenScopes = new WeakSet();
-  const generatorNames = new Set();
-  traverse(ast, {
-    Scopable(p) {
-      if (seenScopes.has(p.scope)) return;
-      seenScopes.add(p.scope);
-      for (const n of Object.keys(p.scope.bindings)) declCount.set(n, (declCount.get(n) ?? 0) + 1);
-    },
-    FunctionDeclaration(p) {
-      const last = p.node.body.body.at(-1);
-      if (p.node.generator || (t.isReturnStatement(last) && wrapDialect(last.argument))) generatorNames.add(p.node.id.name);
-    },
-  });
-  const delegateOk = (n) => t.isArrayExpression(n) || t.isStringLiteral(n) ||
-    (t.isCallExpression(n) && t.isIdentifier(n.callee) && generatorNames.has(n.callee.name) && declCount.get(n.callee.name) === 1);
-  traverse(ast, {
-    CallExpression(p) {
-      const fn = markedFunction(p);
-      if (!fn) return;
-      const out = toGenerator(fn.node, fn.wrapCall, delegateOk);
-      if (!out) return;
-      p.replaceWith(out);
-      stats.generators++;
-    },
-    FunctionDeclaration(p) {
-      // var _marked = R.mark(gen); function gen() { return R.wrap(function gen$(ctx) {…}, _marked); }
-      const last = p.node.body.body.at(-1);
-      if (!t.isReturnStatement(last) || !wrapDialect(last.argument)) return;
-      const marker = last.argument.arguments[1];
-      if (!t.isIdentifier(marker)) return;
-      const mb = p.scope.getBinding(marker.name);
-      if (!mb || !mb.constant || !mb.path.isVariableDeclarator() || mb.referencePaths.length !== 1) return;
-      const init = mb.path.node.init;
-      if (markDialect(init) !== wrapDialect(last.argument) || !t.isIdentifier(init.arguments[0], { name: p.node.id.name })) return;
-      const out = toGenerator(p.node, last.argument, delegateOk);
-      if (!out) return;
-      p.replaceWith(t.functionDeclaration(p.node.id, out.params, out.body, true, false));
-      const decl = mb.path.parentPath;
-      if (decl.node.declarations.length === 1) decl.remove(); else mb.path.remove();
-      stats.generators++;
-    },
-  });
+  // regenerator makineleri ve _asyncToGenerator: 79-regenerator (aynı yardımcılar, level 2)
+  const stats = { classes: 0, helpers: 0 };
 
   const { helpers, helperNodes } = collectHelpers(ast);
   const helperOf = (p) => {
@@ -160,8 +116,6 @@ export async function run(ast, { onLog, bump, naming = {} }) {
           rep = t.objectExpression([...args[0].properties, lit ? t.objectProperty(t.identifier(args[1].value), args[2]) : t.objectProperty(args[1], args[2], true)]);
         } else if ((kind === 'objectSpread' || kind === 'objectSpread2') && args.length && t.isObjectExpression(args[0]) && freshTarget(args[0])) {
           rep = spreadObject(args, kind);
-        } else if (kind === 'asyncToGenerator') {
-          if (asyncCall(p, stats)) return;
         }
         if (!rep) return;
         p.replaceWith(rep);
@@ -220,16 +174,80 @@ export async function run(ast, { onLog, bump, naming = {} }) {
     },
   });
 
-  const total = stats.generators + stats.asyncs + stats.classes + stats.helpers;
-  if (total) onLog(`babel: ${stats.generators} generator, ${stats.asyncs} async, ${stats.classes} sınıf, ${stats.helpers} yardımcı çağrısı geri çevrildi`, 'info');
+  const total = stats.classes + stats.helpers;
+  if (total) onLog(`babel: ${stats.classes} sınıf, ${stats.helpers} yardımcı çağrısı geri çevrildi`, 'info');
   bump('babel', total);
+}
+
+/**
+ * regenerator durum makineleri → function* ve _asyncToGenerator(function* …) → async function.
+ * 79-regenerator pass'i çağırır; stats.generators / stats.asyncs artırılır.
+ */
+export function reverseRegenerator(ast, stats) {
+  // yield* hedefi: programda tek tanımlı generator (ya da regenerator ile işaretli) fonksiyon çağrısı, dizi ya da string literali
+  const declCount = new Map();
+  const seenScopes = new WeakSet();
+  const generatorNames = new Set();
+  traverse(ast, {
+    Scopable(p) {
+      if (seenScopes.has(p.scope)) return;
+      seenScopes.add(p.scope);
+      for (const n of Object.keys(p.scope.bindings)) declCount.set(n, (declCount.get(n) ?? 0) + 1);
+    },
+    FunctionDeclaration(p) {
+      const last = p.node.body.body.at(-1);
+      if (p.node.generator || (t.isReturnStatement(last) && wrapDialect(last.argument))) generatorNames.add(p.node.id.name);
+    },
+  });
+  const delegateOk = (n) => t.isArrayExpression(n) || t.isStringLiteral(n) ||
+    (t.isCallExpression(n) && t.isIdentifier(n.callee) && generatorNames.has(n.callee.name) && declCount.get(n.callee.name) === 1);
+  traverse(ast, {
+    CallExpression(p) {
+      const fn = markedFunction(p);
+      if (!fn) return;
+      const out = toGenerator(fn.node, fn.wrapCall, delegateOk);
+      if (!out) return;
+      p.replaceWith(out);
+      stats.generators++;
+    },
+    FunctionDeclaration(p) {
+      // var _marked = R.mark(gen); function gen() { return R.wrap(function gen$(ctx) {…}, _marked); }
+      const last = p.node.body.body.at(-1);
+      if (!t.isReturnStatement(last) || !wrapDialect(last.argument)) return;
+      const marker = last.argument.arguments[1];
+      if (!t.isIdentifier(marker)) return;
+      const mb = p.scope.getBinding(marker.name);
+      if (!mb || !mb.constant || !mb.path.isVariableDeclarator() || mb.referencePaths.length !== 1) return;
+      const init = mb.path.node.init;
+      if (markDialect(init) !== wrapDialect(last.argument) || !t.isIdentifier(init.arguments[0], { name: p.node.id.name })) return;
+      const out = toGenerator(p.node, last.argument, delegateOk);
+      if (!out) return;
+      p.replaceWith(t.functionDeclaration(p.node.id, out.params, out.body, true, false));
+      const decl = mb.path.parentPath;
+      if (decl.node.declarations.length === 1) decl.remove(); else mb.path.remove();
+      stats.generators++;
+    },
+  });
+
+  // _asyncToGenerator(gen): yardımcı gövdesiyle tanınır (Promise + apply); ad tek başına kanıt değildir
+  const { helpers, helperNodes } = collectHelpers(ast);
+  traverse(ast, {
+    CallExpression: {
+      exit(p) {
+        if (!t.isIdentifier(p.node.callee) || p.node.arguments.some((a) => t.isSpreadElement(a))) return;
+        const b = p.scope.getBinding(p.node.callee.name);
+        if (!b || helpers.get(b.path.node) !== 'asyncToGenerator' || p.findParent((x) => helperNodes.has(x.node))) return;
+        asyncCall(p, stats);
+      },
+    },
+  });
 }
 
 // ── regenerator ─────────────────────────────────────────
 
 // Çalışma zamanı nesnesi: regeneratorRuntime / _regeneratorRuntime() (klasik) ya da _regenerator() (kompakt)
 const runtimeKind = (obj) => {
-  if (t.isIdentifier(obj) && /^regeneratorRuntime$/.test(obj.name)) return 'classic';
+  if (t.isIdentifier(obj) && /^_?regeneratorRuntime\d*$/.test(obj.name)) return 'classic';
   if (t.isMemberExpression(obj) && !obj.computed && t.isIdentifier(obj.property, { name: 'regeneratorRuntime' })) return 'classic';
   if (t.isCallExpression(obj) && !obj.arguments.length && t.isIdentifier(obj.callee)) {
     if (/^_?regeneratorRuntime\d*$/.test(obj.callee.name)) return 'classic';
@@ -285,8 +303,28 @@ function toGenerator(outer, wrapCall, delegateOk) {
   if (!res) return null;
   const pre = outer.body.body.slice(0, -1).map((s) => t.cloneNode(s, true));
   const decls = res.temps.length ? [t.variableDeclaration('var', res.temps.map((n) => t.variableDeclarator(t.identifier(n))))] : [];
-  const body = foldSent(t.blockStatement([...pre, ...decls, ...res.body]));
+  let body = t.blockStatement([...pre, ...decls, ...res.body]);
+  // _sent ve yield* geçicileri (_t1 = yield* g; x = _t1;) tüketen atamaya katlanır
+  for (const name of new Set(['_sent', ...res.temps])) body = foldSent(body, name);
+  renameCatchTemps(body);
   return t.functionExpression(outer.id, outer.params, body, true, false);
+}
+
+// catch (_t0) { … } → catch (_err0) { … }: geçici yalnızca bu catch bloğunda geçiyorsa
+function renameCatchTemps(block) {
+  const count = new Map();
+  t.traverseFast(block, (n) => { if (t.isIdentifier(n) && /^_t\d+$/.test(n.name)) count.set(n.name, (count.get(n.name) ?? 0) + 1); });
+  t.traverseFast(block, (n) => {
+    if (!t.isCatchClause(n) || !t.isIdentifier(n.param) || !/^_t\d+$/.test(n.param.name)) return;
+    const name = n.param.name;
+    const fresh = `_err${name.slice(2)}`;
+    let inside = 0;
+    let clash = false;
+    t.traverseFast(n, (x) => { if (t.isIdentifier(x, { name })) inside++; });
+    t.traverseFast(block, (x) => { if (t.isIdentifier(x, { name: fresh })) clash = true; });
+    if (clash || inside !== count.get(name)) return;
+    t.traverseFast(n, (x) => { if (t.isIdentifier(x, { name })) x.name = fresh; });
+  });
 }
 
 function containsThis(node) {
@@ -300,12 +338,12 @@ function containsArguments(node) {
   return found;
 }
 
-// _sent = yield X; a = _sent;  →  a = yield X;  (_sent başka yerde okunmuyorsa)
-function foldSent(block) {
+// _sent = yield X; a = _sent;  →  a = yield X;  (_sent başka yerde okunmuyorsa; aynısı yield* geçicileri için)
+function foldSent(block, temp = '_sent') {
   let reads = 0;
   t.traverseFast(block, (n) => {
-    if (t.isIdentifier(n, { name: '_sent' })) reads++;
-    if (t.isVariableDeclarator(n) && t.isIdentifier(n.id, { name: '_sent' })) reads--;
+    if (t.isIdentifier(n, { name: temp })) reads++;
+    if (t.isVariableDeclarator(n) && t.isIdentifier(n.id, { name: temp })) reads--;
   });
   const assigns = [];
   const pairs = [];
@@ -313,11 +351,11 @@ function foldSent(block) {
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
       const e = t.isExpressionStatement(s) ? s.expression : null;
-      if (e && t.isAssignmentExpression(e, { operator: '=' }) && t.isIdentifier(e.left, { name: '_sent' })) {
+      if (e && t.isAssignmentExpression(e, { operator: '=' }) && t.isIdentifier(e.left, { name: temp })) {
         assigns.push(s);
         const next = list[i + 1];
         const ne = t.isExpressionStatement(next) ? next.expression : null;
-        if (ne && t.isAssignmentExpression(ne, { operator: '=' }) && t.isIdentifier(ne.right, { name: '_sent' }) && t.isIdentifier(ne.left)) {
+        if (ne && t.isAssignmentExpression(ne, { operator: '=' }) && t.isIdentifier(ne.right, { name: temp }) && t.isIdentifier(ne.left)) {
           pairs.push([list, i]);
         }
       }
@@ -340,7 +378,7 @@ function foldSent(block) {
   }
   // var _sent bildirimini kaldır
   for (const s of block.body) {
-    if (t.isVariableDeclaration(s)) s.declarations = s.declarations.filter((d) => !t.isIdentifier(d.id, { name: '_sent' }));
+    if (t.isVariableDeclaration(s)) s.declarations = s.declarations.filter((d) => !t.isIdentifier(d.id, { name: temp }));
   }
   block.body = block.body.filter((s) => !(t.isVariableDeclaration(s) && !s.declarations.length));
   return block;
@@ -389,7 +427,10 @@ const fnLength = (params) => {
 // Sonuç fonksiyon yalnızca çağrılıyor ya da yerleşik bir API'ye callback veriliyor mu? (new/prototype/length okunmaz)
 function callOnlyBinding(b) {
   if (!b || !b.constant) return false;
-  return b.referencePaths.every((r) => {
+  return callOnlyRefs(b.referencePaths);
+}
+function callOnlyRefs(refs) {
+  return refs.every((r) => {
     const par = r.parentPath;
     if (par.isCallExpression({ callee: r.node })) return true;
     if (par.isMemberExpression({ object: r.node }) && !par.node.computed && ['call', 'apply'].includes(par.node.property.name) &&
@@ -428,20 +469,20 @@ function asyncCall(p, stats) {
   }
 
   // (b) function _foo() { _foo = H(gen); return _foo.apply(this, arguments); }  +  function foo(_x) { return _foo.apply(this, arguments); }
-  if (par.isAssignmentExpression({ right: p.node }) && t.isIdentifier(par.node.left) && par.parentPath.isExpressionStatement()) {
+  b: if (par.isAssignmentExpression({ right: p.node }) && t.isIdentifier(par.node.left) && par.parentPath.isExpressionStatement()) {
     const inner = par.parentPath.parentPath.parentPath; // BlockStatement → FunctionDeclaration
     const name = par.node.left.name;
     if (!inner?.isFunctionDeclaration() || inner.node.id.name !== name || inner.node.body.body.length !== 2 ||
-      !isApplyThisArguments(inner.node.body.body[1].argument, name)) return false;
+      !isApplyThisArguments(inner.node.body.body[1].argument, name)) break b;
     const b = inner.scope.parent.getBinding(name);
-    if (!b) return false;
+    if (!b) break b;
     const outside = b.referencePaths.filter((r) => !r.findParent((x) => x.node === inner.node));
-    if (outside.length !== 1) return false;
+    if (outside.length !== 1) break b;
     const pub = outside[0].findParent((x) => x.isFunctionDeclaration());
-    if (!pub || !returnsApply(pub.node, name) || pub.parentPath.node !== inner.parentPath.node) return false;
-    if (pub.node.params.length !== fnLength(conv.params) || pub.node.async || pub.node.generator) return false;
-    if (!callOnlyBinding(pub.scope.parent.getBinding(pub.node.id.name))) return false;
-    if (refersTo(conv.body, name)) return false;
+    if (!pub || !returnsApply(pub.node, name) || pub.parentPath.node !== inner.parentPath.node) break b;
+    if (pub.node.params.length !== fnLength(conv.params) || pub.node.async || pub.node.generator) break b;
+    if (!callOnlyBinding(pub.scope.parent.getBinding(pub.node.id.name))) break b;
+    if (refersTo(conv.body, name)) break b;
     pub.replaceWith(t.functionDeclaration(pub.node.id, conv.params, conv.body, false, true));
     inner.remove();
     stats.asyncs++;
@@ -449,31 +490,47 @@ function asyncCall(p, stats) {
   }
 
   // (c) function () { var _ref = H(gen); return function NAME(_x) { return _ref.apply(this, arguments); }; }()
-  if (par.isVariableDeclarator({ init: p.node }) && t.isIdentifier(par.node.id)) {
+  c: if (par.isVariableDeclarator({ init: p.node }) && t.isIdentifier(par.node.id)) {
     const decl = par.parentPath;
     const wrapper = decl.parentPath.parentPath; // BlockStatement → FunctionExpression
-    if (!wrapper?.isFunctionExpression() || wrapper.node.params.length || decl.node.declarations.length !== 1) return false;
+    if (!wrapper?.isFunctionExpression() || wrapper.node.params.length || decl.node.declarations.length !== 1) break c;
     const stmts = wrapper.node.body.body;
     const ref = par.node.id.name;
     let pub = null;
     if (stmts.length === 2 && stmts[0] === decl.node && t.isReturnStatement(stmts[1]) && t.isFunctionExpression(stmts[1].argument)) pub = stmts[1].argument;
     else if (stmts.length === 3 && stmts[0] === decl.node && t.isFunctionDeclaration(stmts[1]) && t.isReturnStatement(stmts[2]) &&
       t.isIdentifier(stmts[2].argument, { name: stmts[1].id.name })) pub = stmts[1];
-    if (!pub || !returnsApply(pub, ref) || pub.async || pub.generator || pub.params.length !== fnLength(conv.params)) return false;
+    if (!pub || !returnsApply(pub, ref) || pub.async || pub.generator || pub.params.length !== fnLength(conv.params)) break c;
     const call = wrapper.parentPath;
-    if (!call.isCallExpression({ callee: wrapper.node }) || call.node.arguments.length) return false;
+    if (!call.isCallExpression({ callee: wrapper.node }) || call.node.arguments.length) break c;
     // sonuç sabit bir değişkene gidiyor ve yalnızca çağrılıyor olmalı
     const target = call.parentPath;
-    if (!target.isVariableDeclarator({ init: call.node }) || !t.isIdentifier(target.node.id)) return false;
-    if (!callOnlyBinding(target.scope.getBinding(target.node.id.name))) return false;
+    if (!target.isVariableDeclarator({ init: call.node }) || !t.isIdentifier(target.node.id)) break c;
+    if (!callOnlyBinding(target.scope.getBinding(target.node.id.name))) break c;
     const pubName = pub.id?.name ?? null;
-    if (pubName && refersTo(conv.body, pubName) && pubName !== target.node.id.name) return false;
-    if (refersTo(conv.body, ref)) return false;
+    if (pubName && refersTo(conv.body, pubName) && pubName !== target.node.id.name) break c;
+    if (refersTo(conv.body, ref)) break c;
     call.replaceWith(t.functionExpression(pubName ? t.identifier(pubName) : null, conv.params, conv.body, false, true));
     stats.asyncs++;
     return true;
   }
-  return false;
+
+  // (d) X = H(gen) / var X = H(gen): X yalnızca çağrılıyor (call/apply) → yalnızca H(gen) async function olur.
+  //     new/prototype/length okunmadığından sarmalayıcı ile async fonksiyon ayırt edilemez; dış (yayımlanan) fonksiyona dokunulmaz.
+  const target = par.isAssignmentExpression({ operator: '=', right: p.node }) && t.isIdentifier(par.node.left) && par.parentPath.isExpressionStatement() ? par.node.left.name
+    : par.isVariableDeclarator({ init: p.node }) && t.isIdentifier(par.node.id) ? par.node.id.name : null;
+  if (!target) return false;
+  const b = p.scope.getBinding(target);
+  if (!b || !callOnlyRefs(b.referencePaths)) return false;
+  // tek yazım bu atama (ya da bildirimin kendisi / aynı adlı fonksiyon bildirimi)
+  if (!b.constantViolations.every((v) => v === par || v.isFunctionDeclaration())) return false;
+  if (b.path.isVariableDeclarator() && b.path !== par && b.path.node.init) return false;
+  const id = p.node.arguments[0].id;
+  // gövde kendi adını çağırıyorsa: önce generator, sonra async fonksiyon olurdu
+  if (id && refersTo(conv.body, id.name)) return false;
+  p.replaceWith(makeFn(id ? t.identifier(id.name) : null));
+  stats.asyncs++;
+  return true;
 }
 
 // IIFE'nin sonucunun bağlandığı değişkenin her kullanımı uygun mu?
