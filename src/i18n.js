@@ -1,3 +1,6 @@
+import { UI_TR, UI_EN } from './ui/i18n-ui.js';
+import { EXTRA_LANGS } from './ui/i18n-langs.js';
+
 // Arayüz metinleri. Pass log'ları ve rapordaki teknik etiketler şimdilik Türkçe kalır.
 const DICT = {
   tr: {
@@ -278,36 +281,61 @@ const DATA_EN = {
   davranış: 'behaviour changed',
 };
 
-// Rapor verisindeki etiketi etkin dile çevirir (karşılığı yoksa olduğu gibi)
-export const td = (s) => (lang === 'en' && s && DATA_EN[s]) || s;
+// Arayüz katmanının metinleri ve ek diller (DE/ES/AR) ayrı dosyalarda; burada birleştirilir
+Object.assign(DICT.tr, UI_TR);
+Object.assign(DICT.en, UI_EN);
+for (const [code, dict] of Object.entries(EXTRA_LANGS)) DICT[code] = dict;
+
+// Desteklenen diller: [kod, kendi dilindeki adı]. ar sağdan sola yazılır.
+export const LANGS = [['tr', 'Türkçe'], ['en', 'English'], ['de', 'Deutsch'], ['es', 'Español'], ['ar', 'العربية']];
+const RTL = new Set(['ar']);
+const CODES = LANGS.map(([c]) => c);
+
+// Rapor verisindeki etiketi etkin dile çevirir (karşılığı yoksa olduğu gibi); TR dışı diller İngilizce veri etiketi alır
+export const td = (s) => (lang !== 'tr' && s && DATA_EN[s]) || s;
 
 const KEY = 'peel.lang';
 let lang = (() => {
   try {
     const saved = localStorage.getItem(KEY);
-    if (saved === 'tr' || saved === 'en') return saved;
+    if (CODES.includes(saved)) return saved;
   } catch { /* depolama kapalı */ }
-  return navigator.language?.toLowerCase().startsWith('tr') ? 'tr' : 'en';
+  const nav = navigator.language?.toLowerCase().slice(0, 2);
+  return CODES.includes(nav) ? nav : 'en';
 })();
 
 export const getLang = () => lang;
+export const isRtl = () => RTL.has(lang);
 
+// Eksik anahtar: TR dışı dillerde önce İngilizceye, sonra Türkçeye düşer
 export function t(key, vars = {}) {
-  const s = DICT[lang][key] ?? DICT.tr[key] ?? key;
+  const s = DICT[lang]?.[key] ?? (lang !== 'tr' ? DICT.en[key] : undefined) ?? DICT.tr[key] ?? key;
   return s.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
 }
 
-// data-i18n (metin), data-i18n-placeholder, data-i18n-label (aria-label) özniteliklerini doldurur
+// data-i18n (metin), data-i18n-placeholder, data-i18n-label (aria-label), data-i18n-title özniteliklerini doldurur
 export function applyI18n(root = document) {
   document.documentElement.lang = lang;
+  document.documentElement.dir = RTL.has(lang) ? 'rtl' : 'ltr';
   for (const el of root.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
   for (const el of root.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder);
   for (const el of root.querySelectorAll('[data-i18n-label]')) el.setAttribute('aria-label', t(el.dataset.i18nLabel));
+  for (const el of root.querySelectorAll('[data-i18n-title]')) el.title = t(el.dataset.i18nTitle);
 }
 
-export function toggleLang() {
-  lang = lang === 'tr' ? 'en' : 'tr';
+const listeners = new Set();
+export const onLang = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+
+export function setLang(code) {
+  if (!CODES.includes(code)) return lang;
+  lang = code;
   try { localStorage.setItem(KEY, lang); } catch { /* depolama kapalı */ }
   applyI18n();
+  for (const fn of listeners) fn(lang);
   return lang;
+}
+
+// Sıradaki dile geç (dil düğmesi)
+export function toggleLang() {
+  return setLang(CODES[(CODES.indexOf(lang) + 1) % CODES.length]);
 }
