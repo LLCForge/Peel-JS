@@ -111,6 +111,7 @@ function sroa(fn) {
 function constants(fx, fn) {
   let n = 0;
   const { val, edges } = fx.sccp;
+  if (!fx.sccp.converged) return 0;
   for (const [id, ver] of fx.useVer) {
     if (fx.implicitUses.has(id)) continue;
     const ip = fx.useInstr.get(id)?.path;

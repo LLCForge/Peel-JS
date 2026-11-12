@@ -294,7 +294,14 @@ export function absint(fx) {
       }
     }
   }
-  fx.abs = { val, facts, useAbs, evalAbs: useAbsK };
+  // yakınsamadıysa sonuçlar eksik olabilir: tüm sorgular en genel değeri döndürür
+  if (changed) {
+    const all = absAll();
+    for (const k of val.keys()) val.set(k, all);
+    fx.abs = { val, facts, useAbs: () => absAll(), evalAbs: () => absAll(), converged: false };
+    return fx.abs;
+  }
+  fx.abs = { val, facts, useAbs, evalAbs: useAbsK, converged: true };
   return fx.abs;
 }
 
@@ -378,7 +385,8 @@ function binAbs(op, l, r) {
     case '%': {
       if (!L || !R) return num(-Infinity, Infinity, false, big);
       const m = Math.max(Math.abs(r.lo), Math.abs(r.hi));
-      return num(l.lo >= 0 ? 0 : -m, l.hi <= 0 ? 0 : m, l.int && r.int);
+      // bölen 0 olabilirse sonuç NaN olabilir: tamsayı değil
+      return num(l.lo >= 0 ? 0 : -m, l.hi <= 0 ? 0 : m, l.int && r.int && (r.lo > 0 || r.hi < 0));
     }
     case '&': return num(r.ty === T.number && r.lo >= 0 && r.hi <= I32[1] ? 0 : I32[0], r.ty === T.number && r.lo >= 0 && r.hi <= I32[1] ? r.hi : I32[1], true, big);
     case '|': case '^': case '<<': case '>>': return num(I32[0], I32[1], true, big);
