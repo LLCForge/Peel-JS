@@ -188,6 +188,8 @@ function rootObject(binding) {
     // varsayılan yalnızca argüman verilmeyince kullanılır: fonksiyon o konuma hiç argüman almamalı
     const fn = ap.parentPath;
     const idx = fn.node.params.indexOf(ap.node);
+    // js-confuser makine imzası: (states, scope = {…}, runtime, args) — kapsam ikinci parametre
+    if (idx !== 1 || fn.node.params.length < 3) return null;
     const fb = fn.isFunctionDeclaration() ? fn.parentPath.scope.getBinding(fn.node.id.name) : null;
     if (!fb?.constant || !fb.referencePaths.every((r) => r.parentPath.isCallExpression({ callee: r.node }) && r.parentPath.node.arguments.length <= idx &&
       !r.parentPath.node.arguments.some((a) => t.isSpreadElement(a)))) return null;
@@ -521,6 +523,13 @@ function propagateOnce(ast, level) {
 }
 
 export async function run(ast, { onLog, bump, level = 3 }) {
+  // eval/with adları dinamik okur: kapsam ve parametre dönüşümleri kanıtlanamaz
+  let dynamic = false;
+  traverse(ast, {
+    WithStatement(p) { dynamic = true; p.stop(); },
+    CallExpression(p) { if (t.isIdentifier(p.node.callee, { name: 'eval' }) && !p.scope.getBinding('eval')) { dynamic = true; p.stop(); } },
+  });
+  if (dynamic) return;
   const a = inlineClones(ast);
   if (a) {
     onLog(`cff-scope: ${a} makine kopyası kabuğuna taşındı`, 'info');

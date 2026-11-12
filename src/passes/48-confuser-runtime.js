@@ -53,6 +53,11 @@ export async function run(ast, { onLog, bump, level = 2 }) {
       }
     },
   });
+  // yalnızca js-confuser yardımcısının izi (getGlobal) varken: başka koddaki (Babel yardımcıları vb.) "okunmayan
+  // değişkene fonksiyon ataması" gibi kalıplar bu pass'in konusu değil
+  let marker = globalish.size > 0;
+  if (!marker) traverse(ast, { Function(q) { if (isGetGlobal(q.node)) { marker = true; q.stop(); } } });
+  if (!marker) return;
   const isGlobalish = (scope, id) => t.isIdentifier(id) && globalish.has(scope.getBinding(id.name));
   traverse(ast, {
     Scopable(sp) {
