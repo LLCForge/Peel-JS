@@ -10,4 +10,4 @@ function main() {
 }
 main();
 // EXPECT: "Hello?", "world"
-// EXPECT: return w1(0, "", 5) + dec();
+// EXPECT: return w1("", 5) + dec();

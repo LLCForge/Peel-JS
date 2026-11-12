@@ -4,7 +4,7 @@ import { parse } from '../core/parse.js';
 
 // 92 / E240: okunabilirlik ölçümleri ve 0–100 skoru; 93: fonksiyon başına karmaşıklık (ısı haritası verisi).
 
-const GENERATED = /^(_0x[0-9a-f]+|_?[a-z]\d*|[A-Za-z_$]{1,2}\d*|fn\d+|arg\d+|v\d+|c\d+|_?\$+[\w$]*)$/i;
+export const GENERATED = /^(_0x[0-9a-f]+|_?[a-z]\d*|[A-Za-z_$]{1,2}\d*|fn\d+|arg\d+|v\d+|c\d+|_?\$+[\w$]*)$/i;
 const DECISIONS = new Set(['IfStatement', 'ConditionalExpression', 'ForStatement', 'ForInStatement', 'ForOfStatement',
   'WhileStatement', 'DoWhileStatement', 'CatchClause', 'SwitchCase']);
 

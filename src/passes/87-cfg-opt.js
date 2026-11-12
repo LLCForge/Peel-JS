@@ -135,12 +135,25 @@ function predicateCond(p) {
 const single = (s) => (t.isBlockStatement(s) ? (s.body.length === 1 ? s.body[0] : null) : s);
 const assignOf = (s) => (t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression, { operator: '=' }) && t.isIdentifier(s.expression.left) ? s.expression : null);
 
+// iç içe koşul/virgül ifadesi üretilmez: restructure (E54) ve simplify onları if zincirine geri açar (salınım)
+const flat = (...xs) => xs.every((x) => !t.isConditionalExpression(x) && !t.isSequenceExpression(x));
+
+// if/else-if ya da guard zincirinin halkası: tek halkayı koşul ifadesine çevirmek zinciri karma biçime sokar
+function inChain(p) {
+  if (p.key === 'alternate' && p.parentPath.isIfStatement()) return true;
+  if (p.parentPath.isBlockStatement() && p.parentPath.node.body.length === 1 && p.parentPath.key === 'alternate' && p.parentPath.parentPath.isIfStatement()) return true;
+  if (!Array.isArray(p.container) || p.key === 0) return false;
+  const prev = p.container[p.key - 1];
+  return t.isIfStatement(prev) && !prev.alternate && t.isReturnStatement(single(prev.consequent));
+}
+
 function convertIf(p) {
+  if (inChain(p)) return null;
   const { test, consequent, alternate } = p.node;
   const a = single(consequent);
   const b = alternate ? single(alternate) : null;
   // if (c) x = A; else x = B;  →  x = c ? A : B   (x düz değişken: başvuru çözümü gözlenemez)
-  if (a && b && assignOf(a) && assignOf(b) && assignOf(a).left.name === assignOf(b).left.name) {
+  if (a && b && assignOf(a) && assignOf(b) && assignOf(a).left.name === assignOf(b).left.name && flat(assignOf(a).right, assignOf(b).right)) {
     const A = assignOf(a).right;
     const B = assignOf(b).right;
     const bools = t.isBooleanLiteral(A) && t.isBooleanLiteral(B) && A.value !== B.value;
@@ -148,7 +161,7 @@ function convertIf(p) {
     return bools ? 'pred' : 'ifconv';
   }
   // if (c) return A; else return B;  →  return c ? A : B
-  if (a && b && t.isReturnStatement(a) && t.isReturnStatement(b) && a.argument && b.argument) {
+  if (a && b && t.isReturnStatement(a) && t.isReturnStatement(b) && a.argument && b.argument && flat(a.argument, b.argument)) {
     const bools = t.isBooleanLiteral(a.argument) && t.isBooleanLiteral(b.argument) && a.argument.value !== b.argument.value;
     p.replaceWith(t.returnStatement(bools ? toBool(test, a.argument.value) : t.conditionalExpression(test, a.argument, b.argument)));
     return bools ? 'pred' : 'ifconv';
@@ -156,7 +169,7 @@ function convertIf(p) {
   // if (c) return A; return B;  →  return c ? A : B
   if (a && !alternate && t.isReturnStatement(a) && a.argument && Array.isArray(p.container)) {
     const next = p.getSibling(p.key + 1);
-    if (next.node && next.isReturnStatement() && next.node.argument) {
+    if (next.node && next.isReturnStatement() && next.node.argument && flat(a.argument, next.node.argument)) {
       const B = next.node.argument;
       const bools = t.isBooleanLiteral(a.argument) && t.isBooleanLiteral(B) && a.argument.value !== B.value;
       next.remove();

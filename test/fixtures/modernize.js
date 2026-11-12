@@ -18,7 +18,7 @@ report([1, 2, 3]);
 // EXPECT: for (let i = 0;
 // EXPECT: const { min, max } = config;
 // EXPECT: { min, max }
-// EXPECT: let unit = "adet";
-// EXPECT: `Rapor ${label} (${min + max})`
+// EXPECT: "adet",
+// EXPECT: `Rapor toplam (${min + max})`
 // GONE: alias
 // GONE: var

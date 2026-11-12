@@ -21,6 +21,22 @@ function skipPosition(p) {
   return false;
 }
 
+const memberName = (m) => (t.isMemberExpression(m) ? (!m.computed && t.isIdentifier(m.property) ? m.property.name : t.isStringLiteral(m.property) ? m.property.value : null) : null);
+// A.push(A.shift()): string dizisi rotasyonu. Döngünün içindeki decoder çağrılarının değeri dizinin o anki
+// (yarı döndürülmüş) durumuna bağlıdır; bağlamdaki son durumla katlamak rotasyon checksum'ını bozar.
+const rotationSeen = new WeakMap();
+function rotationLoop(loop) {
+  if (rotationSeen.has(loop.node)) return rotationSeen.get(loop.node);
+  let hit = false;
+  t.traverseFast(loop.node, (n) => {
+    if (hit || !t.isCallExpression(n) || memberName(n.callee) !== 'push' || n.arguments.length !== 1) return;
+    const a = n.arguments[0];
+    hit = t.isCallExpression(a) && memberName(a.callee) === 'shift' && gen(a.callee.object) === gen(n.callee.object);
+  });
+  rotationSeen.set(loop.node, hit);
+  return hit;
+}
+
 export async function run(ast, { onLog, bump, sandbox, ctx }) {
   const jobs = [];
   traverse(ast, {
@@ -32,7 +48,7 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
       const src = gen(p.node);
       if (src.length > MAX_SRC) return;
       if (isPureExpr(p)) jobs.push({ path: p, src, inCtx: false });
-      else if (ctx && isPureExpr(p, { programFns: true })) jobs.push({ path: p, src, inCtx: true });
+      else if (ctx && isPureExpr(p, { programFns: true }) && !p.findParent((x) => x.isLoop() && rotationLoop(x))) jobs.push({ path: p, src, inCtx: true });
     },
   });
   if (!jobs.length) return;
