@@ -42,8 +42,14 @@ const argsKey = (call) => JSON.stringify(call.node.arguments.map((a) => literalV
 // obfuscator.io rotasyon döngüsü: decoder'ı checksum için çağırıp diziyi push(shift()) ile döndürür.
 // Bu çağrıları son değerleriyle değiştirmek döngüyü erken bitirir ve diziyi döndürülmemiş bırakır.
 const ROTATION = /\.push\([^;]*\.shift\(\)\)|\["push"\]\([^;]*\["shift"\]\(\)\)/;
+// gövde metni fonksiyon başına bir kez üretilir: her çağrıda yeniden üretmek büyük dosyada O(çağrı × boyut)
+const rotationCache = new WeakMap();
+function isRotationFn(node) {
+  if (!rotationCache.has(node)) rotationCache.set(node, ROTATION.test(gen(node.body)));
+  return rotationCache.get(node);
+}
 function inRotation(p) {
-  return Boolean(p.findParent((x) => x.isFunction() && ROTATION.test(gen(x.node.body))));
+  return Boolean(p.findParent((x) => x.isFunction() && isRotationFn(x.node)));
 }
 
 // Üst seviyedeki decoder altyapısı (string tablosu getter'ı, rotasyon IIFE'si, decoder ve alias'ları):
@@ -61,14 +67,15 @@ function removeInfrastructure(ast, decoderNames) {
   const isRotation = (s) => s.isExpressionStatement() && (() => {
     let e = s.node.expression;
     if (t.isUnaryExpression(e)) e = e.argument;
-    return t.isCallExpression(e) && t.isFunction(e.callee) && ROTATION.test(gen(e.callee.body));
+    return t.isCallExpression(e) && t.isFunction(e.callee) && isRotationFn(e.callee);
   })();
   const candidate = (s) => s.isFunctionDeclaration() || isRotation(s) || (s.isVariableDeclaration() &&
     s.node.declarations.every((d) => !d.init || t.isIdentifier(d.init) || t.isFunction(d.init)));
 
   const set = new Set(program.get('body').filter(candidate));
-  const inSet = (p) => [...set].some((s) => p === s || p.findParent((x) => x === s));
-  const owner = (p) => [...set].find((s) => p === s || p.findParent((x) => x === s));
+  const top = (p) => (p.parentPath?.isProgram() ? p : p.findParent((x) => x.parentPath?.isProgram()));
+  const inSet = (p) => set.has(top(p));
+  const owner = (p) => { const s = top(p); return set.has(s) ? s : undefined; };
 
   for (let changed = true; changed;) {
     changed = false;
@@ -129,13 +136,34 @@ function collectGroups(ast) {
       if (!g) groups.set(b, (g = { id: groups.size, name: callee.name, binding: b, calls: [], dynamic: [] }));
       const lits = args.map(literalValue);
       if (lits.every((l) => l.ok)) {
-        if (lits.some((l) => typeof l.value === 'number')) g.calls.push(p);
+        // sayı argümanlı çağrılar decoder adayı; yalnızca string argümanlılar (decode("ZOjM4E")) gövde decoder'a benziyorsa
+        if (lits.some((l) => typeof l.value === 'number')) g.numeric = (g.numeric ?? 0) + 1;
+        g.calls.push(p);
       } else {
         g.dynamic.push(p);
       }
     },
   });
-  return [...groups.values()].filter((g) => g.calls.length >= MIN_CALLS);
+  // js-confuser CFF: decoder anahtarı durum değişkenine bağlı, hiçbir çağrı literal değil (yalnızca dinamik)
+  return [...groups.values()].filter((g) => {
+    if ((g.calls.length > 0 || g.dynamic.length > 0) && looksLikeDecoder(g.binding)) return true;
+    if ((g.numeric ?? 0) < MIN_CALLS) return false;
+    g.calls = g.calls.filter((c) => c.node.arguments.some((a) => typeof literalValue(a).value === 'number'));
+    return true;
+  });
+}
+
+// js-confuser her fonksiyona kendi decoder kopyasını koyar (tek çağrılık). Eşiği yalnızca gövdesi
+// string çözen fonksiyonlarda indir: aksi halde pad(5) gibi sıradan fonksiyonlar da sabitlenirdi.
+const DECODER_BODY = /fromCharCode|fromCodePoint|charCodeAt|\batob\b|\.slice\(|\.substr(ing)?\(|decodeURIComponent/;
+function looksLikeDecoder(b) {
+  const fns = [];
+  if (t.isFunction(b.path.node)) fns.push(b.path.node);
+  if (b.path.isVariableDeclarator() && t.isFunction(b.path.node.init)) fns.push(b.path.node.init);
+  for (const v of b.constantViolations) {
+    if (v.isAssignmentExpression() && t.isFunction(v.node.right)) fns.push(v.node.right);
+  }
+  return fns.some((f) => DECODER_BODY.test(gen(f.body)));
 }
 
 export async function run(ast, ctx) {

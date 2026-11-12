@@ -1,4 +1,4 @@
-const MAX_LEN = 200_000;
+const MAX_LEN = 1_000_000;
 const MAX_LINES = 2000;
 
 // Kodu sandbox'ta çalıştırıp console çıktısını davranış parmak izi olarak alır.

@@ -2,6 +2,7 @@ import * as normalize from '../passes/00-normalize.js';
 import * as unpack from '../passes/10-unpack-wrapper.js';
 import * as predecoders from '../passes/20-predecoders.js';
 import * as literals from '../passes/25-literals.js';
+import * as constArrays from '../passes/27-const-arrays.js';
 import * as stringArray from '../passes/30-string-array.js';
 import * as runtimeDecoders from '../passes/35-runtime-decoders.js';
 import * as proxy from '../passes/40-proxy.js';
@@ -22,6 +23,7 @@ export const PASSES = [
   { id: 'unpack',       level: 1, kind: 'text', needs: null,      mod: unpack },
   { id: 'predecoders',  level: 1, kind: 'text', needs: 'sandbox', mod: predecoders },
   { id: 'literals',     level: 1, kind: 'ast',  needs: null,      mod: literals },
+  { id: 'const-arrays', level: 1, kind: 'ast',  needs: null,      mod: constArrays },
   { id: 'string-array', level: 2, kind: 'ast',  needs: 'sandbox', mod: stringArray },
   { id: 'runtime-decoders', level: 2, kind: 'ast', needs: 'sandbox', mod: runtimeDecoders },
   { id: 'proxy',        level: 2, kind: 'ast',  needs: null,      mod: proxy },

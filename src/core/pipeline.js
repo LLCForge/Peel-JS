@@ -7,7 +7,7 @@ import { snapshot, same } from './behavior.js';
 
 const MAX_ROUNDS = 25;
 const CONTEXT_MAX_LEN = 2_000_000;
-const DEEP_MAX_LEN = 120_000;
+const DEEP_MAX_LEN = 1_000_000; // QuickJS'te 1 MB'lık programı çalıştırmak saniyenin altında
 
 /**
  * @param {string} input

@@ -17,7 +17,7 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 - [ ] 9. js-confuser dispatcher fonksiyonları
 - [~] 10. js-confuser global gizleme tabloları — `V("…")` switch proxy'leri çözülüyor
 - [ ] 11. Integrity/hash kontrollerini etkisizleştirip raporlama
-- [ ] 12. Tekrarlanan literalleri geri birleştirme
+- [x] 12. Tekrarlanan literalleri geri birleştirme (js-confuser sabit literal dizisi)
 - [x] 13. Sayısal artıkları katlama
 - [~] 14. Template literal'lara gizlenmiş string'ler — ifadesiz olanlar katlanıyor
 - [x] 15. toString tabanlı tamper kontrolünü kaldırma
@@ -264,7 +264,7 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [ ] E43. js-confuser dispatcher
 - [~] E44. Global gizleme tablosu — çağrılar çözülüyor, tablo silinmiyor
 - [x] E45. Bölünmüş string birleştirme
-- [ ] E46. Tekrarlanan literal toplama
+- [x] E46. Tekrarlanan literal toplama (sabit indeksli okumalar yerine yazılıyor)
 - [x] E47. Sayısal artefakt katlama
 - [x] E48. `toString` tamper tespiti ve silme (obfuscator.io selfDefending dahil)
 - [ ] E49. Regex `.source/.flags/.length` katlama
@@ -282,7 +282,7 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 
 ## E-B. String kodlama ve çözme (E61–E95)
 
-- [~] E61. Base64 varyantları — koddaki decoder sandbox'ta çalışınca
+- [~] E61. Base64 varyantları — koddaki decoder sandbox'ta çalışınca; js-confuser base91 dahil
 - [ ] E62. Base32/Base58/Base85
 - [x] E63. Hex string
 - [x] E64. Unicode kaçışları
