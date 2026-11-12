@@ -107,11 +107,13 @@ export function summarizeFunction(path, inf = createInferer()) {
   if (f.console && parts.length === 0) parts.push('konsola yazar');
   if (f.calls.size) parts.push(`çağırdıkları: ${list(f.calls, 4)}`);
   const sig = inf.fn(path);
-  if (!parts.length) {
+  // generic: gövdeden çıkarılabilen bir bilgi yok, özet yalnızca kalıp cümle
+  const generic = !parts.length;
+  if (generic) {
     parts.push(sig.returns === 'void' ? 'yan etkisiz ya da basit bir işlem yapar' : 'bir değer hesaplar');
   }
   const text = parts.join('; ');
-  return { text: text[0].toUpperCase() + text.slice(1), sig, facts: f };
+  return { text: text[0].toUpperCase() + text.slice(1), sig, facts: f, generic };
 }
 
 /** 81: programın tek paragraflık özeti */
