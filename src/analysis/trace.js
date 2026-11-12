@@ -68,7 +68,7 @@ export function restoreCheckpoint(cp) {
  * @param {boolean} o.keepComments  pass'lerin kaybettiği yorumları eşlenen düğümlere geri tak
  * @param {number}  o.lightAbove    bu boyutun üstündeki kodda yalnızca hash/gerekçe tutulur (AST işlemleri atlanır)
  */
-export function createTrace({ keepComments = false, lightAbove = 600_000 } = {}) {
+export function createTrace({ keepComments = false, lightAbove = 250_000 } = {}) {
   const records = [];
   const rationale = [];
   const patches = [];

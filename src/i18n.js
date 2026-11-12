@@ -118,6 +118,7 @@ const DICT = {
     'stat.proxy': 'proxy', 'stat.constFold': 'katlama', 'stat.deadCode': 'ölü kod', 'stat.opaque': 'sabit test',
     'stat.stateVar': 'durum değişkeni', 'stat.vm': 'VM', 'stat.controlFlow': 'akış', 'stat.unused': 'kullanılmayan',
     'stat.rename': 'isim',
+    'report.semantics': 'Semantik analiz',
   },
   en: {
     'brand.sub': 'JS DEOBFUSCATOR',
@@ -237,6 +238,7 @@ const DICT = {
     'stat.proxy': 'proxies', 'stat.constFold': 'folds', 'stat.deadCode': 'dead code', 'stat.opaque': 'opaque tests',
     'stat.stateVar': 'state vars', 'stat.vm': 'VMs', 'stat.controlFlow': 'flows', 'stat.unused': 'unused',
     'stat.rename': 'renames',
+    'report.semantics': 'Semantic analysis',
   },
 };
 

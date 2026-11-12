@@ -3,6 +3,7 @@ import { parse } from './parse.js';
 import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
 import { encodingReport } from './encodings.js';
+import { analysisReport } from '../analysis/report.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
@@ -171,7 +172,7 @@ async function runtimeScan(sandbox, text, config) {
   };
 }
 
-export async function analyze({ input, text, output, events = [], sandbox = null, config = null }) {
+export async function analyze({ input, text, output, events = [], sandbox = null, config = null, trace = null }) {
   const before = staticScan(text ?? input);
   const after = staticScan(output);
   const runtime = await runtimeScan(sandbox, text ?? input, config);
@@ -179,6 +180,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
   for (const e of events) passTimes[e.id] = (passTimes[e.id] ?? 0) + e.ms;
   const found = iocs(after.strings, output);
   const classes = classify({ code: output, runtime, iocs: found, apis: after.apis });
+  // E-U/E-V: semantik modeller, veri akışı ve analiz altyapısı (trace verilmişse pass kayıtları)
+  const semantics = await analysisReport({ text: text ?? input, output, sandbox, config, trace });
   return {
     fingerprint: fingerprint(input),
     iocs: found,
@@ -209,5 +212,6 @@ export async function analyze({ input, text, output, events = [], sandbox = null
       functions: after.functions,
       outputHash: fnv1a(output),
     },
+    semantics,
   };
 }

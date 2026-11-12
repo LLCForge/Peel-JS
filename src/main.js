@@ -11,6 +11,7 @@ import { createTimeline } from './ui/timeline.js';
 import { t, applyI18n, toggleLang } from './i18n.js';
 import { SAMPLE } from './sample.js';
 import { maskSecrets } from './core/threat.js';
+import { createTrace } from './analysis/trace.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -133,8 +134,11 @@ async function run() {
   resetResults();
   setStatus('status.running', {}, 'busy');
   const t0 = performance.now();
+  // pass kayıtları, yama günlüğü, köken ve yorum koruma (E-V); rapordaki semantik bölüm bunu okur
+  const trace = createTrace({ keepComments: true });
   try {
     const res = await deobfuscate(src, {
+      trace,
       level: LEVEL,
       sandbox: sandboxOk ? sandbox : null,
       deep: sandboxOk,
@@ -161,7 +165,7 @@ async function run() {
     } else {
       setStatus(res.code.trim() === src.trim() ? 'status.unchanged' : 'status.done', { s }, 'ok');
     }
-    lastReport = await analyze({ input: src, text: res.text, output: res.code, events: res.events, sandbox: sandboxOk ? sandbox : null });
+    lastReport = await analyze({ input: src, text: res.text, output: res.code, events: res.events, sandbox: sandboxOk ? sandbox : null, trace });
     lastReport.stats = res.stats;
     renderReport(views.report, lastReport, exportReport, reportActions);
   } catch (e) {

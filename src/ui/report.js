@@ -1,4 +1,5 @@
 import { t, td } from '../i18n.js';
+import { render as renderSemantics } from './analysis/semantics.js';
 
 const MAX_ROWS = 60;
 
@@ -103,6 +104,12 @@ function threat(th, runtime, actions) {
       btn('action.masked', actions.masked)));
 }
 
+function semanticsBody(data) {
+  const box = el('div', { class: 'rep-semantics' });
+  renderSemantics(box, data);
+  return box;
+}
+
 export function renderReport(root, report, onExport, actions = {}) {
   root.textContent = '';
   if (!report) {
@@ -137,6 +144,7 @@ export function renderReport(root, report, onExport, actions = {}) {
     section('report.rollbacks', report.rollbacks.length
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])
       : muted('report.rollbacks.none')),
+    report.semantics ? section('report.semantics', semanticsBody(report.semantics)) : null,
     exportBtn,
   ));
 }

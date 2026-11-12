@@ -6,6 +6,7 @@ import { getQuickJS } from 'quickjs-emscripten';
 import { deobfuscate } from '../src/core/pipeline.js';
 import { analyze } from '../src/core/analyze.js';
 import { createHost, sandboxApi } from '../src/sandbox/core.js';
+import { createTrace } from '../src/analysis/trace.js';
 
 const HELP = `PEEL: obfuscated JavaScript deobfuscator
 
@@ -48,7 +49,8 @@ const sandbox = sandboxApi(async (msg) => host.handle(msg));
 const log = (m, lv) => { if (!opts.quiet) console.error(`[${lv}] ${m}`); };
 
 const t0 = performance.now();
-const result = await deobfuscate(input, { level: 4, sandbox, deep: true, onLog: log });
+const trace = createTrace({ keepComments: true });
+const result = await deobfuscate(input, { level: 4, sandbox, deep: true, onLog: log, trace });
 if (result.error) {
   console.error(`Parse error: ${result.error}`);
   process.exit(1);
@@ -58,7 +60,7 @@ if (opts.out) writeFileSync(opts.out, result.code);
 else process.stdout.write(result.code);
 
 if (opts.report) {
-  const report = await analyze({ input, text: result.text, output: result.code, events: result.events, sandbox });
+  const report = await analyze({ input, text: result.text, output: result.code, events: result.events, sandbox, trace });
   writeFileSync(opts.report, JSON.stringify({ stats: result.stats, ...report }, null, 2));
 }
 log(`done in ${((performance.now() - t0) / 1000).toFixed(2)}s`, 'ok');
