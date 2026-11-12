@@ -111,11 +111,6 @@ function placeAt(root, path, stmts) {
   else parent[k] = t.blockStatement(stmts);
 }
 
-function replaceInPlace(vm, stmts) {
-  if (Array.isArray(vm.stmtPath.container)) vm.stmtPath.replaceWithMultiple(stmts);
-  else vm.stmtPath.replaceWith(t.blockStatement(stmts));
-}
-
 // Register dizisini (R = [] ve yalnızca R[sabit] kullanımı) ayrı değişkenlere böl: R[2] → _r2
 function scalarizeRegisters(fnNode, name, used) {
   const body = t.isProgram(fnNode) ? fnNode.body : fnNode.body?.body;
@@ -247,8 +242,8 @@ export async function run(ast, ctx) {
   }
 
   const used = collectNames(ast);
+  const program = ast.program;
   let lifted = 0;
-  const touched = [];
   for (const vm of vms) {
     const depth = liftDepth(vm.loopPath) + 1;
     const sites = vm.capture.sites;
@@ -278,9 +273,9 @@ export async function run(ast, ctx) {
       if (p.site) groups.get(key).sites.push(p.site);
     }
 
+    const edits = [];
+    const found = [];
     let firstAnalysis = null;
-    let anyOk = false;
-    let gi = 0;
     for (const g of groups.values()) {
       const origin = {
         bytecode: g.values.arrays.has(vm.roles.code) ? (g.values.captured ? 'çalışma anında yakalandı' : 'statik') : 'bilinmiyor',
@@ -290,51 +285,145 @@ export async function run(ast, ctx) {
       };
       const a = analyzeVm(vm, g.values, { used, steps, origin });
       firstAnalysis = firstAnalysis ?? a;
-      ctx.findings?.vm?.push(serializable(a, { lifted: a.ok, raw: rawHash(vm), rawSource: gen(vm.fnPath.isProgram() ? vm.stmtPath.node : vm.fnPath.node).slice(0, 20000) }));
+      const finding = serializable(a, { lifted: false, verified: null, raw: rawHash(vm), rawSource: gen(vm.fnPath.isProgram() ? vm.stmtPath.node : vm.fnPath.node).slice(0, 20000) });
+      found.push(finding);
       if (!a.ok) continue;
-      const comment = `${LIFT} | VM #${vm.id} | ${vm.style} | ${a.disasm.length} komut → ${a.blocksOut} blok | bytecode: ${origin.bytecode} | ham gövde: ${rawHash(vm)} | derinlik=${depth}`;
-      t.addComment(a.lifted[0], 'leading', comment, false);
-      if (!sites) {
-        replaceInPlace(vm, a.lifted);
-        touched.push({ fn: vm.fnPath.node, regs: vm.roles.regs, table: vm.table });
-      } else {
-        const fnNode = vm.fnPath.node;
-        const kp = keyPath(fnNode, vm.stmtPath.node);
-        const clone = t.cloneNode(fnNode, true);
-        let name;
-        let k = gi;
-        do { name = `${fnNode.id.name}_vm${k++}`; } while (used.has(name));
-        used.add(name);
-        clone.id = t.identifier(name);
-        clone.leadingComments = null;
-        clone.trailingComments = null;
-        placeAt(clone, kp, a.lifted);
-        vm.fnPath.insertAfter(clone);
-        for (const s of g.sites) s.path.node.callee = t.identifier(name);
-        touched.push({ fn: clone, regs: vm.roles.regs, table: vm.table });
+      t.addComment(a.lifted[0], 'leading', `${LIFT} | VM #${vm.id} | ${vm.style} | ${a.disasm.length} komut → ${a.blocksOut} blok | bytecode: ${origin.bytecode} | ham gövde: ${rawHash(vm)} | derinlik=${depth}`, false);
+      edits.push({ a, sites: g.sites, origin, finding });
+    }
+    if (!edits.length) {
+      ctx.findings?.vm?.push(...found);
+      if (firstAnalysis) {
+        annotate(vm, firstAnalysis);
+        onLog(`vm-lift: VM #${vm.id} çevrilemedi (${firstAnalysis.reason}); handler'lar açıklandı`, 'warn');
       }
-      anyOk = true;
-      gi++;
-      lifted++;
-      onLog(`vm-lift: VM #${vm.id} (${vm.style}, ${a.disasm.length} komut, bytecode ${origin.bytecode}) düz koda çevrildi`, 'info');
+      continue;
     }
-    if (!anyOk && firstAnalysis) {
-      annotate(vm, firstAnalysis);
-      onLog(`vm-lift: VM #${vm.id} çevrilemedi (${firstAnalysis.reason}); handler'lar açıklandı`, 'warn');
+    const plan = makePlan(program, vm, edits, used, Boolean(sites));
+    // E200/E659: VM'e özgü doğrulama — orijinal ve çevrilmiş program çalıştırılır, her VM çağrısının dönüş
+    // değeri ve konsol çıktısı karşılaştırılır; fark varsa değişiklik uygulanmaz
+    const verdict = sandbox ? await verifyPlan(sandbox, program, plan) : { ok: true, verified: null };
+    for (const e of edits) e.finding.verified = verdict.verified;
+    if (!verdict.ok) {
+      for (const e of edits) e.finding.reason = `doğrulama başarısız: ${verdict.reason}`;
+      ctx.findings?.vm?.push(...found);
+      annotate(vm, { ...firstAnalysis, reason: `doğrulama başarısız: ${verdict.reason}` });
+      onLog(`vm-lift: VM #${vm.id} çevrildi ama doğrulanamadı (${verdict.reason}), uygulanmadı`, 'warn');
+      continue;
     }
-    if (anyOk && sites) {
-      // orijinal yorumlayıcıya başka başvuru kalmadıysa kaldır
-      const fn = vm.fnPath;
-      fn.parentPath.scope.crawl();
-      const b = fn.parentPath.scope.getBinding(fn.node.id.name);
-      if (b && !b.referencePaths.some((r) => !r.findParent((x) => x === fn))) fn.remove();
+    for (const e of edits) e.finding.lifted = true;
+    ctx.findings?.vm?.push(...found);
+    applyPlan(program, plan);
+    lifted += edits.length;
+    for (const e of edits) {
+      onLog(`vm-lift: VM #${vm.id} (${vm.style}, ${e.a.disasm.length} komut, bytecode ${e.origin.bytecode}) düz koda çevrildi${verdict.verified ? ', çağrı dönüşleri doğrulandı' : ''}`, 'info');
     }
-  }
-  for (const tch of touched) {
-    if (tch.table) dropUnusedTable(tch.fn, tch.table);
-    scalarizeRegisters(tch.fn, tch.regs, used);
   }
   if (lifted) bump('vmLift', lifted);
+}
+
+// ── düzenleme planı: düğüm kimliğiyle bulunan anahtar yolları ──
+
+function follow(root, kp) {
+  let n = root;
+  for (const [k, i] of kp) n = i === null ? n[k] : n[k][i];
+  return n;
+}
+
+function makePlan(program, vm, edits, used, siteMode) {
+  const fnNode = vm.fnPath.isProgram() ? null : vm.fnPath.node;
+  const fnKp = fnNode ? keyPath(program, fnNode) : null;
+  const plan = { siteMode, regs: vm.roles.regs, table: vm.table, fnKp, fnName: fnNode?.id?.name ?? null, used };
+  if (!siteMode) {
+    plan.kp = keyPath(program, vm.stmtPath.node);
+    plan.stmts = edits[0].a.lifted;
+    return plan;
+  }
+  plan.clones = edits.map((e, gi) => {
+    let name;
+    let k = gi;
+    do { name = `${fnNode.id.name}_vm${k++}`; } while (used.has(name));
+    used.add(name);
+    const clone = t.cloneNode(fnNode, true);
+    clone.id = t.identifier(name);
+    clone.leadingComments = null;
+    clone.trailingComments = null;
+    placeAt(clone, keyPath(fnNode, vm.stmtPath.node), e.a.lifted);
+    return { name, node: clone, siteKps: e.sites.map((s) => keyPath(program, s.path.node)) };
+  });
+  return plan;
+}
+
+// root: gerçek program ya da doğrulama için kopyası
+function applyPlan(root, plan) {
+  const cleanup = (fn) => {
+    if (plan.table) dropUnusedTable(fn, plan.table);
+    scalarizeRegisters(fn, plan.regs, plan.used);
+  };
+  if (!plan.siteMode) {
+    placeAt(root, plan.kp, plan.stmts.map((x) => t.cloneNode(x, true)));
+    cleanup(plan.fnKp ? follow(root, plan.fnKp) : root);
+    return;
+  }
+  for (const c of plan.clones) for (const kp of c.siteKps) follow(root, kp).callee = t.identifier(c.name);
+  const [k, i] = plan.fnKp[plan.fnKp.length - 1];
+  const owner = follow(root, plan.fnKp.slice(0, -1));
+  const clones = plan.clones.map((c) => t.cloneNode(c.node, true));
+  owner[k].splice(i + 1, 0, ...clones);
+  clones.forEach(cleanup);
+  // orijinal yorumlayıcıya başka başvuru kalmadıysa kaldır
+  const fnNode = owner[k][i];
+  let refs = 0;
+  walk(root, (n) => { if (t.isIdentifier(n, { name: plan.fnName }) && n !== fnNode.id) refs++; });
+  let inner = 0;
+  walk(fnNode.body, (n) => { if (t.isIdentifier(n, { name: plan.fnName })) inner++; });
+  if (refs === inner) owner[k].splice(i, 1);
+}
+
+const RV_PRELUDE = `var __peelRvLog = [];
+function __peelRv(i, v) {
+  var s;
+  try {
+    s = v === null || (typeof v !== "object" && typeof v !== "function") ? typeof v + ":" + String(v)
+      : typeof v === "function" ? "function" : Array.isArray(v) ? "array:" + JSON.stringify(v) : "object:" + JSON.stringify(v);
+  } catch (e) { s = typeof v; }
+  __peelRvLog.push(i + "=" + s);
+  return v;
+}`;
+
+// VM fonksiyonunun (ya da kopyalarının) doğrudan çağrılarını __peelRv ile sar
+function wrapCalls(root, names) {
+  let i = 0;
+  const done = new WeakSet();
+  walk(root, (n) => {
+    if (!t.isCallExpression(n) || done.has(n) || !t.isIdentifier(n.callee) || !names.has(n.callee.name)) return;
+    const inner = t.callExpression(n.callee, n.arguments);
+    done.add(inner);
+    n.callee = t.identifier('__peelRv');
+    n.arguments = [t.numericLiteral(i++), inner];
+  });
+}
+
+async function verifyPlan(sandbox, program, plan) {
+  const orig = t.cloneNode(program, true);
+  const cand = t.cloneNode(program, true);
+  applyPlan(cand, { ...plan, used: new Set(plan.used) });
+  if (plan.fnName) {
+    wrapCalls(orig, new Set([plan.fnName]));
+    wrapCalls(cand, new Set([plan.fnName, ...(plan.clones ?? []).map((c) => c.name)]));
+  }
+  const runOne = async (prog) => {
+    const r = await sandbox.run(`${RV_PRELUDE}\ntry {\n${gen(prog)}\n} catch (e) { __out.push("!THROW " + (e && e.message)); }\n__res.push(__peelRvLog);`, { timeoutMs: 6000 });
+    return { ok: r.ok, out: r.out ?? [], rv: r.res?.[0] ?? [] };
+  };
+  const a = await runOne(orig);
+  const b = await runOne(cand);
+  // orijinal tamamlanmıyorsa karşılaştırma yapılamaz: genel derin doğrulamaya bırakılır
+  if (!a.ok) return { ok: true, verified: null, reason: 'orijinal program sandbox\'ta tamamlanmadı' };
+  if (!b.ok) return { ok: false, verified: false, reason: 'çevrilmiş program tamamlanmadı' };
+  if (JSON.stringify(a.out) !== JSON.stringify(b.out)) return { ok: false, verified: false, reason: 'konsol çıktısı farklı' };
+  if (JSON.stringify(a.rv) !== JSON.stringify(b.rv)) return { ok: false, verified: false, reason: 'VM dönüş değerleri farklı' };
+  return { ok: true, verified: true, calls: a.rv.length };
 }
 
 function sourceOf(vm, site) {
