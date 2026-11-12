@@ -70,16 +70,30 @@ yeniden adlandırma, sadeleştirme, son aşamada kaçış dizileri.
 | `reservedNames`, `reservedStrings`, `forceTransformStrings`, `exclude`, `ignoreImports` | Dönüşüm kapsamı | — | etkisiz |
 | `seed`, `compact`, `sourceMap*`, `log`, `inputFileName`, `identifierNamesCache` | Üretim ayarları | — | etkisiz |
 | `optionsPreset` (low/medium/high) | Yukarıdakilerin birleşimleri; low ve high `disableConsoleOutput` ve `selfDefending` açar | — | yukarıdakiler |
-| `vmObfuscation` (Pro API) | Sunucu tarafında bayt kodlu VM | — | Yerel olarak üretilemiyor; PEEL'in genel `vm` pass'i dışında ele alınmadı |
+| `vmObfuscation` (Pro API) | Sunucu tarafında bayt kodlu VM | — | **Doğası gereği kapsam dışı**: dönüşüm yalnızca obfuscator.io sunucusunda (ücretli API) çalışır, yerel paket içermez; örnek üretilemediği için hedeflenmiş decoder yazılamaz. Genel bytecode VM'leri `vm-lift`/`vm` ile ele alınır |
 
 Bench ön ayarları: `io-*` (48 ön ayar; tüm seçenekler tek tek, kodlama/sarmalayıcı/indeks varyantları,
 hedefler, ad üreticileri, hazır ayarlar, `io-everything`).
 
-Kalan açık: `io-preset-medium`, `io-preset-high` ve `io-everything` (string dizisi sarmalayıcıları +
-kontrol akışı + selfDefending birlikte) bütünüyle çözülmüyor. Bu birleşimde selfDefending geri çağrısının
-içindeki dizi çağrıları sarmalayıcı nesnesinin arkasında çözülmeden kalıyor; `(((.+)+)+)+$` string'i literal
-olarak görünmediği için koruma tanınmıyor, biçim değiştiren her pass (`simplify`) davranış kontrolünde
-geri alınıyor. Bu çalışmanın kapsamı dışında, mevcut sarmalayıcı/proxy pass'lerinin genişletilmesini gerektirir.
+**Sarmalayıcı + kontrol akışı + selfDefending birleşimi** (`io-preset-medium/high`, `io-everything`) ikinci
+turda tamamen çözüldü (high 76 KB → 2.4 KB, everything 72 KB → 2.2 KB, davranış aynı). Neden çözülmüyordu:
+
+1. QuickJS'in yığın sınırı (1 MB) Node/tarayıcı yığınından büyüktü; debugProtection'ın sonsuz özyinelemesi
+   QuickJS "stack overflow" yerine host yığınını taşırıp bağlamı düşürüyordu → derin doğrulama kapanıyor,
+   rc4 decoder'ları denetimsiz yanlış çözülüyordu. Sınır 320 KB yapıldı. Ayrıca `(((.+)+)+)+$` araması
+   QuickJS'in özyinelemeli regex motorunda host yığınını taşırıyordu; sandbox'ta kalıbın anlamı kesin
+   hesaplanır (son satırın başı).
+2. Koruma string'i ve callController çağrısı CFF depo nesnesinin arkasındaydı (`o.k`, `o.c(C, this, cb)`,
+   `o.r(g)`): `dead-code` artık hiç değişmeyen nesne literal'inin özelliğini değer olarak çözer.
+3. Depo nesnesi aynı `var` bildirimindeki sonraki tanımlayıcılarca kullanılıyordu (`var o = {…}, v = o.f(…)`),
+   ölü enjekte dallarda olmayan anahtar okunuyordu (`o.length`) ve değer olarak kaçıyordu (`f(o)`):
+   `const-objects` üçünü de ele alır (seviye 3+'ta kaçış derin doğrulamayla denetlenir).
+4. Program düzeyi decoder yalnızca hiç çalışmayan koruma dalından çağrılıyordu: `runtime-decoders` onu
+   global adıyla bağlar; sarmalayıcı bildirimli rotasyon IIFE'si de rotasyon sayılır.
+5. `vm-lift`, `'2|0|1'.split('|')` dağıtıcısını VM sanıp bildirimleri kaybederek açıyordu: sırası statik
+   (ya da depo nesnesindeki string'den) bilinen dağıtıcılar `control-flow`'a bırakılır.
+
+Fixture'lar: `io-selfdef-cff-wrappers`, `io-selfdef-cff-deadcode`.
 
 ## 2. relative/synchrony (deobfuscator, GPL-3.0)
 
@@ -236,16 +250,32 @@ Integrity (en son).
 Bench ön ayarları: `jc-*` (44 ön ayar; her dönüşüm tek tek, her kilit ayrı, her ad üreticisi, hazır ayarlar
 ve `jc-node`). Hepsi davranış olarak doğru ve 7/7 iğne buluyor.
 
-Kalan açıklar:
+**controlFlowFlattening** (ikinci tur): `jc-cff` 30 KB → 1.3–3 KB, `jc-cff-rich` 35 KB → 2–4 KB. Neden büyüyordu:
+`unflatten` etiketli döngüdeki `break outer`'ı makineye atlama sayıp bir çağrı yerini açamıyordu; açılan
+kopyalarla birlikte özgün makine de kalıyordu (dörtte üç kopya + özgün). Etiket deyimin kendi içindeyse atlama
+sayılmaz. Hiç çalışmayan çağrı yerlerinin (const-fold'un katladığı fonksiyonlar) başlangıç durum dizisi
+argümanı yan etkisizse (sayılar + sabit dizi dilimleri) program sonunda değerlendirilir. Okunurluk için
+`cff-scope` (yeni): tek çağrılı makine kopyası kabuğuna taşınır, kapsam nesnesi özellikleri
+(`scope.K.x`) yerel değişkenlere bölünür, okunmayan kapsam özelliğine atanmış ölü fonksiyonlar ve giriş
+makinesinin kullanılmayan durum parametreleri silinir. Fixture'lar: `jc-cff-scope`, `jc-cff-labels`.
 
-- `controlFlowFlattening` tek başına çıktıyı küçültmüyor (`jc-cff`: 34 KB → 45 KB). Durum makinesi büyük
-  ölçüde açılıyor ama kopyalanan bloklar duruyor; bu alan diğer pass'lerin (`unflatten`) kapsamında.
-- `stringConcealing`'in sıkıştırma yardımcısı (LZ-string benzeri `bufferToString` şablonu) düşük/orta
-  hazır ayarlarda, decoder'ın kendisi CFF ile düzleştirildiğinde yer yer kalıyor (çağrılar çözülse de
-  yardımcı kodun kendisi silinemiyor).
-- `rgf`/`flat-fns`/`confuser` (variableMasking)/integrity kabuğu açılınca fonksiyonun `length` değeri özgün kaynaktaki parametre
-  sayısına döner (gizlenmiş kodda 0'dı). Bu, PEEL'in mevcut length-sarmalayıcısı kuralıyla aynı kabuldür.
-- dispatcher ile adları kaybolan fonksiyonlar `fn_<anahtar>` olarak adlandırılır.
+**stringConcealing + CFF** (ikinci tur): yardımcı (getGlobal + UTF-8 `bufferToString` çözücüsü, kendisi de CFF
+ile düzleştirilmiş) çağrılar çözüldükten sonra ölü kalıyordu. Çalışmayan çağrı yerlerinin statik başlangıç
+durumu sayesinde yardımcının makineleri de açılır; `confuser-runtime` (yeni) sonucu kullanılmayan yardımcı
+IIFE'sini (yalnızca yerel atama, `new Array(n)`, `String.fromCharCode` okuması), okunmayan yerleşik takma
+adlarını (`S = G.String || String`) ve getGlobal'ı siler. 186 KB'lık örnek 1 KB'a iner. Fixture: `jc-cff-strings`.
+
+Doğası gereği geri alınamayanlar (bkz. yol haritası işaretleri):
+
+- **Özgün adlar** (`renameVariables`, `identifierGenerator`, javascript-obfuscator `renameProperties` ve ad
+  üreticileri): çıktıda yalnızca üretilmiş adlar vardır, özgünü hiçbir yerde saklanmaz. dispatcher ile adı
+  kaybolan fonksiyonlar `fn_<anahtar>` olur.
+- **Function.length**: `rgf`/`flat-fns`/`confuser` (variableMasking)/integrity kabuğu açılınca fonksiyonun
+  `length` değeri özgün kaynaktaki parametre sayısına döner (gizlenmiş kodda 0'dı, preserveFunctionLength
+  ayrıca yazıyordu). Kabuktaki 0 değerini korumak gizlemeyi geri getirmek olurdu; PEEL'in length-sarmalayıcısı
+  kuralıyla aynı kabul.
+- js-confuser 2.1.3'ün CFF'si bazı rastgele çekimlerde sınıf özel alanını bozuyor (`#secret` yerine rastgele
+  string basılıyor): gizlenmiş programın kendi davranışıdır, PEEL aynen korur (`jc-cff-rich` bu çekimde 6/7).
 
 ## 8. Python3WebSpider/JavaScriptObfuscate
 
@@ -311,6 +341,9 @@ jsfuck-parent, aaencode, aaencode-unicode, jjencode, jjencode-gv).
 | `rgf` | `src/passes/39-rgf.js` | 2 | js-confuser RGF tablosu ve kabukları |
 | `confuser` | `src/passes/37-confuser.js` | 2 | main'in dispatcher/rest-parametre/__generator pass'i; variableMasking mantığı bu çalışmadan |
 | `flat-fns` | `src/passes/47-flat-fns.js` | 2 | js-confuser flatten |
+| `cff-scope` | `src/passes/46-cff-scope.js` | 3 | js-confuser CFF makine kopyaları ve kapsam nesneleri |
+| `confuser-runtime` | `src/passes/48-confuser-runtime.js` | 2 | js-confuser stringConcealing ölü yardımcısı |
+| `const-objects`, `unflatten`, `control-flow`, `vm-lift` | 28, 76, 70, 77 | — | ikinci turdaki genişletmeler (yukarıda) |
 | `webpack` | `src/passes/93-webpack.js` | 2 | webpack modül tablosu ve runtime adları |
 | `predecoders` | `src/passes/20-predecoders.js` | 1 | JSFuck/AAEncode/JJEncode düzeltmeleri |
 | `runtime-decoders` | `src/passes/35-runtime-decoders.js` | 2 | hex string indeks, kodlamasız indeks decoder'ı, gövde içi altyapı |

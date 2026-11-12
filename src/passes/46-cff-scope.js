@@ -41,12 +41,41 @@ function isSeqSlice(call, program) {
   const r = fn.body.body[0].argument;
   if (!t.isCallExpression(r) || !t.isMemberExpression(r.callee) || r.callee.computed || !t.isIdentifier(r.callee.property, { name: 'slice' }) ||
       !t.isIdentifier(r.callee.object)) return false;
-  const sb = program.scope.getBinding(r.callee.object.name);
+  const sb = b.path.scope.getBinding(r.callee.object.name);
   return Boolean(sb?.constant && sb.path.isVariableDeclarator() && t.isArrayExpression(sb.path.node.init) &&
     sb.referencePaths.every((x) => x.parentPath.isMemberExpression({ object: x.node }) && !x.parentPath.node.computed &&
       t.isIdentifier(x.parentPath.node.property, { name: 'slice' }) && x.parentPath.parentPath.isCallExpression()));
 }
-function pureArg(n, program) {
+// Durum dizisinin değeri statik olarak: [n, -n, ...slice(a, b)] → sayı dizisi (SEQ literal sayı dizisiyse), yoksa null
+export function staticStates(n, where) {
+  if (!t.isArrayExpression(n) || !pureArg(n, where)) return null;
+  const num = (e) => (t.isNumericLiteral(e) ? e.value : t.isUnaryExpression(e, { operator: '-' }) && t.isNumericLiteral(e.argument) ? -e.argument.value : null);
+  const out = [];
+  for (const e of n.elements) {
+    if (t.isSpreadElement(e)) {
+      const fb = where.scope.getBinding(e.argument.callee.name);
+      const r = fb.path.node.body.body[0].argument;
+      const sb = fb.path.scope.getBinding(r.callee.object.name);
+      const seq = sb.path.node.init.elements.map(num);
+      if (seq.some((x) => x === null)) return null;
+      // slice(min, max) → parametre sırası fonksiyonun kendi parametrelerine göre
+      const ps = fb.path.node.params.map((x) => x.name);
+      const args = Object.fromEntries(ps.map((p, i) => [p, e.argument.arguments[i]?.value]));
+      const at = (x) => (t.isIdentifier(x) ? args[x.name] : t.isNumericLiteral(x) ? x.value : undefined);
+      const lo = at(r.arguments[0]);
+      const hi = r.arguments.length > 1 ? at(r.arguments[1]) : seq.length;
+      if (typeof lo !== 'number' || typeof hi !== 'number' || r.arguments.length > 2) return null;
+      out.push(...seq.slice(lo, hi));
+    } else {
+      const v = num(e);
+      if (v === null) return null;
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+export function pureArg(n, program) {
   if (t.isLiteral(n) && !t.isTemplateLiteral(n)) return true;
   if (t.isUnaryExpression(n, { operator: '-' }) || t.isUnaryExpression(n, { operator: 'void' })) return pureArg(n.argument, program);
   if (t.isArrayExpression(n)) return n.elements.every((e) => e && (t.isSpreadElement(e) ? isSeqSlice(e.argument, program) : pureArg(e, program)));
@@ -103,7 +132,7 @@ function inlineClones(ast) {
     m.params.forEach((x, i) => {
       const name = t.isAssignmentPattern(x) ? x.left.name : x.name;
       const arg = args[i];
-      if (!mPath.scope.getBinding(name)?.referenced && (!arg || pureArg(arg, program))) return;
+      if (!mPath.scope.getBinding(name)?.referenced && (!arg || pureArg(arg, call))) return;
       decls.push(t.variableDeclarator(t.identifier(name), arg ?? t.unaryExpression('void', t.numericLiteral(0))));
     });
     shell.node.body.body = [...(decls.length ? [t.variableDeclaration('var', decls)] : []), ...m.body.body];
@@ -384,7 +413,7 @@ function tidyEntries(ast) {
       const els = asg.node.left.elements;
       if (!els.every((e) => e === null || (t.isIdentifier(e) && !fp.scope.getBinding(e.name)?.referenced))) return;
       const calls = callSitesOfAssignedFn(fp);
-      if (!calls || !calls.every((c) => c.arguments.every((a) => !t.isSpreadElement(a) && pureArg(a, program)))) return;
+      if (!calls || !calls.every((c) => c.arguments.every((a) => !t.isSpreadElement(a) && pureArg(a, fp.parentPath)))) return;
       asg.parentPath.remove();
       node.params = [];
       for (const c of calls) c.arguments = [];
@@ -395,12 +424,12 @@ function tidyEntries(ast) {
       if (!node.params.length || node.params.some((x) => !(t.isIdentifier(x) || (t.isAssignmentPattern(x) && t.isIdentifier(x.left))))) return;
       const names = node.params.map((x) => (t.isIdentifier(x) ? x.name : x.left.name));
       if (names.some((nm) => fp.scope.getBinding(nm)?.referenced)) return;
-      if (node.params.some((x) => t.isAssignmentPattern(x) && !pureArg(x.right, program))) return;
+      if (node.params.some((x) => t.isAssignmentPattern(x) && !pureArg(x.right, fp))) return;
       if (usesThisOrArguments(node)) return;
       const b = fp.parentPath.scope.getBinding(node.id.name);
       if (!b?.constant || !b.referencePaths.length) return;
       const calls = b.referencePaths.map((r) => r.parentPath);
-      if (!calls.every((c, i) => c.isCallExpression({ callee: b.referencePaths[i].node }) && c.node.arguments.every((a) => !t.isSpreadElement(a) && pureArg(a, program)))) return;
+      if (!calls.every((c, i) => c.isCallExpression({ callee: b.referencePaths[i].node }) && c.node.arguments.every((a) => !t.isSpreadElement(a) && pureArg(a, c)))) return;
       node.params = [];
       for (const c of calls) c.node.arguments = [];
       n++;

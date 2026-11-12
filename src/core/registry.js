@@ -13,6 +13,7 @@ import * as evalInline from '../passes/38-eval-inline.js';
 import * as rgf from '../passes/39-rgf.js';
 import * as flatFns from '../passes/47-flat-fns.js';
 import * as cffScope from '../passes/46-cff-scope.js';
+import * as confuserRuntime from '../passes/48-confuser-runtime.js';
 import * as proxy from '../passes/40-proxy.js';
 import * as constFold from '../passes/50-const-fold.js';
 import * as opaque from '../passes/60-opaque.js';
@@ -70,6 +71,7 @@ export const PASSES = [
   { id: 'flat-fns',     level: 2, kind: 'ast',  needs: null,      mod: flatFns },
   { id: 'const-fold',   level: 1, kind: 'ast',  needs: 'sandbox', mod: constFold },
   { id: 'dead-code',    level: 2, kind: 'ast',  needs: null,      mod: deadCode },
+  { id: 'confuser-runtime', level: 2, kind: 'ast', needs: null,   mod: confuserRuntime },
   { id: 'opaque',       level: 2, kind: 'ast',  needs: null,      mod: opaque },
   { id: 'opaque-smt',   level: 2, kind: 'ast',  needs: null,      mod: opaqueSmt },
   { id: 'ssa-opt',      level: 3, kind: 'ast',  needs: null,      mod: ssaOpt },

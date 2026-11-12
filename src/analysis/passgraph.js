@@ -38,6 +38,7 @@ export const PASS_DEPS = {
   rgf: { after: ['runtime-decoders'], why: 'RGF tablosundaki kod string\'leri çözülmüş olmalı' },
   'flat-fns': { after: ['confuser'], why: 'dispatcher açılınca flatten kabuğu doğrudan çağrıya döner' },
   webpack: { after: ['unused'], why: 'adlar ölü bağlamalar silindikten sonra geri verilir' },
+  'confuser-runtime': { after: ['dead-code'], why: 'yardımcı ancak string çağrıları çözülüp ölü dallar silinince kullanılmaz olur' },
   'cff-scope': { after: ['unflatten'], why: 'kapsam nesneleri durum makinesi açıldıktan sonra yerel değişkenlere bölünür' },
 };
 

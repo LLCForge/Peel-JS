@@ -5,4 +5,5 @@ function main(scope = { a: {} }) {
   console.log((1, scope.a[key(2)])());
 }
 main();
-// EXPECT: scope.a.secret = function
+// EXPECT: return "found";
+// EXPECT: console.log(secret

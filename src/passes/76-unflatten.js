@@ -3,6 +3,7 @@ import { traverse, gen } from '../util/ast.js';
 import { literalOf } from '../util/literal.js';
 import { isLiteralTree } from '../util/pure.js';
 import { keyPath, placeAt } from '../util/keypath.js';
+import { staticStates } from './46-cff-scope.js';
 import { caseSummaries, machineReport } from '../core/vm/sm.js';
 
 // Durum makinesini düz koda çevirir.
@@ -881,11 +882,13 @@ async function arrayMachines(ast, sumFns, { sandbox, onLog }) {
 
   // başlangıç dizilerini gözle: main(X) → main(__peelInit(k, X))
   const saved = [];
+  const tgSiteOf = new Map();
   let site = 0;
   for (const tg of targets) {
     tg.sites = tg.calls.map((c) => {
       const k = site++;
       saved.push([c.node, c.node.arguments[tg.pi]]);
+      tgSiteOf.set(c.node, { k, c });
       c.node.arguments[tg.pi] = t.callExpression(t.identifier('__peelInit'), [t.numericLiteral(k), c.node.arguments[tg.pi]]);
       return k;
     });
@@ -903,6 +906,14 @@ function __peelInit(k, v) {
 }`;
   const r = await sandbox.run(`${prelude}\ntry {\n${code}\n} catch (e) {}\n__res.push(__peelInits);`, { timeoutMs: 8000 });
   const inits = r.res?.[0] ?? {};
+  // çalışmada hiç çağrılmayan yerler (ölü kalmış ya da koşula bağlı fonksiyonlar): argüman sayılar ve hiç
+  // değişmeyen sabit dizinin dilimlerinden oluşuyorsa başlangıç durumu statik hesaplanır
+  for (const [node, arg] of saved) {
+    const { k, c } = tgSiteOf.get(node) ?? {};
+    if (k === undefined || k in inits) continue;
+    const arr = staticStates(arg, c);
+    if (arr) inits[k] = JSON.stringify(arr);
+  }
 
   const used = new Set();
   traverse(ast, { Identifier(q) { used.add(q.node.name); } });
