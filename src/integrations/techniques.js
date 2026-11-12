@@ -1,7 +1,7 @@
 // Gizleme teknikleri ansiklopedisi (J193). Her girdi: ne olduğu, neden kullanıldığı, küçük bir gerçek örnek,
 // PEEL'in hangi pass'le çözdüğü ve ham girdide tespit desenleri. Eğitim modu (J191), "neden gizlenmiş" (J199)
 // ve sürümler arası "yeni teknik" uyarısı (G148) bu tabloyu kullanır.
-// expect: örneğin çözümünde bulunması gereken parça (test/techniques.test.js her örneği gerçekten çözer).
+// detect: RegExp ya da (kod) => boolean. expect: örneğin çözümünde bulunması gereken parça (test/techniques.test.js her örneği gerçekten çözer).
 
 export const TECHNIQUES = [
   {
@@ -243,7 +243,8 @@ console.log("iş");`,
     example: null,
     expect: null,
     passes: ['vm'],
-    detect: [/while\s*\(\s*(true|!!\[\]|1)\s*\)\s*\{\s*switch\s*\(\s*\w+\[\s*\w+\+\+\s*\]\s*\)/, /PEEL VM/],
+    // akış düzleştirmeden ayırmak için: sonsuz döngü + çok sayıda sayısal opcode case'i
+    detect: [/PEEL VM/, (s) => /while\s*\(\s*(true|!!\[\]|1)\s*\)/.test(s) && (s.match(/\bcase\s+(0x[0-9a-f]+|\d+)\s*:/gi)?.length ?? 0) >= 30],
   },
   {
     id: 'rest-length',
@@ -310,7 +311,7 @@ export function detectTechniques(code) {
   const sample = code.length > SAMPLE_LIMIT ? code.slice(0, SAMPLE_LIMIT) : code;
   const out = [];
   for (const tq of TECHNIQUES) {
-    const hits = tq.detect.filter((re) => re.test(sample)).length;
+    const hits = tq.detect.filter((d) => (typeof d === 'function' ? d(sample) : d.test(sample))).length;
     if (hits) out.push({ id: tq.id, name: tq.name.en, nameTr: tq.name.tr, hits });
   }
   return out;

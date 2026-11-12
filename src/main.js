@@ -11,6 +11,7 @@ import { createTimeline } from './ui/timeline.js';
 import { t, applyI18n, toggleLang } from './i18n.js';
 import { SAMPLE } from './sample.js';
 import { maskSecrets } from './core/threat.js';
+import { mountIntegrations } from './ui/integrations/index.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -141,7 +142,8 @@ async function run() {
       signal: controller.signal,
       onLog: log,
       onPass: markPass,
-      onSnapshot: (s) => timeline.push(s),
+      onSnapshot: (s) => { timeline.push(s); tools.snapshot(s); },
+      plugins: tools.plugins(),
     });
     setOutput(res.code);
     timeline.finish();
@@ -164,6 +166,7 @@ async function run() {
     lastReport = await analyze({ input: src, text: res.text, output: res.code, events: res.events, sandbox: sandboxOk ? sandbox : null });
     lastReport.stats = res.stats;
     renderReport(views.report, lastReport, exportReport, reportActions);
+    tools.onResult({ input: src, output: res.code, report: lastReport, stats: res.stats });
   } catch (e) {
     log(e.message, 'err');
     if (controller.signal.aborted) setStatus('status.stopped', {}, 'err');
@@ -286,4 +289,16 @@ sandbox.health().then((ok) => {
   if (ok) return;
   log('Sandbox unavailable', 'warn');
   setStatus('status.nosandbox', {}, 'err');
+});
+
+// Entegrasyon araçları (karşılaştırma, geçmiş, paylaşım, öğrenme, kurallar/eklentiler, PWA)
+const tools = mountIntegrations({
+  getInput: () => els.input.value,
+  setInput: (text) => { els.input.value = text; els.input.dispatchEvent(new Event('input')); },
+  getOutput: () => els.output.value,
+  setOutput,
+  getSandbox: () => (sandboxOk ? sandbox : null),
+  deobfuscate,
+  log,
+  notify: (msg, kind) => { status.textContent = msg; status.className = kind === 'ok' ? 'ok' : 'err'; },
 });

@@ -206,7 +206,7 @@ export function toSarif(report: AnalysisReport, o?: { output?: string; uri?: str
 // J191–J200
 export interface Technique {
   id: string; name: { tr: string; en: string }; summary: { tr: string; en: string }; why: { tr: string; en: string };
-  example: string | null; expect: string | null; passes: string[]; detect: RegExp[];
+  example: string | null; expect: string | null; passes: string[]; detect: Array<RegExp | ((code: string) => boolean)>;
 }
 export const TECHNIQUES: Technique[];
 export function detectTechniques(code: string): Array<{ id: string; name: string; nameTr: string; hits: number }>;
