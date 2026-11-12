@@ -138,6 +138,8 @@ export function intervalTruth(x, memo = new Map()) {
 }
 const hasMod = (x) => x.k === 'op' && (x.op === '%' || x.op === 'charCodeAt' || x.a.some(hasMod));
 
+const sameType = (p, q) => { const a = types(p); const b = types(q); return a.size === 1 && b.size === 1 && [...a][0] === [...b][0]; };
+
 // ── bit-blasting kodlayıcı ─────────────────────────────
 class Encoder {
   constructor({ W, mode, ivMemo }) {
@@ -380,6 +382,14 @@ class Encoder {
   encOp(x) {
     const { op, a } = x;
     const W = this.W;
+    // karışık tipli ite argümanı (ör. dizi seçimi: ite(i===k, sayı, undefined)) işlemin içine dağıtılır
+    if (op !== 'ite') {
+      const k = a.findIndex((e) => e.k === 'op' && e.op === 'ite' && !sameType(e.a[1], e.a[2]));
+      if (k >= 0) {
+        const branch = (b) => mk(op, ...a.map((e, j) => (j === k ? b : e)));
+        return this.enc(mk('ite', a[k].a[0], branch(a[k].a[1]), branch(a[k].a[2])));
+      }
+    }
     const N = (i) => this.num(a[i]);
     const S = (i) => { const e = this.enc(a[i]); if (e.t !== 's') unsupported('string bekleniyordu'); return e; };
     const constStr = (i) => (a[i].k === 'c' && typeof a[i].v === 'string' ? a[i].v : unsupported('sabit olmayan string argümanı'));

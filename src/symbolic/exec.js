@@ -2,7 +2,8 @@ import * as t from '@babel/types';
 import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
 import { C, V, UNDEF, TRUE, FALSE, mk, fresh, truthOf, types, onlyType, evaluate, substitute, vars as termVars, same, show, size } from './ir.js';
-import { solve, intervalTruth } from './solver.js';
+import { intervalTruth } from './solver.js';
+import { ConstraintStore } from './store.js';
 
 // Sembolik yürütücü (E583–E585, E596–E610).
 // Değerler: IR terimi | {k:'ref', id} yığın nesnesi | {k:'fn', node, chain} program fonksiyonu |
@@ -155,12 +156,14 @@ export class Exec {
   }
 
   // ── çatallanma, budama, birleştirme ───────────────────
+  // E600: yol budama — kısıt deposu (E582) önbellekli ve bağımsızlık bölmeli tatmin sorgusu
   feasible(pc) {
     if (!this.o.prune) return true;
     if (this.solverCalls >= this.o.solverCalls) return true;
     this.solverCalls++;
-    const r = solve(pc, { mode: 'find', timeMs: 300, maxConflicts: 5000 });
-    return r.status !== 'unsat';
+    const store = new ConstraintStore({ timeMs: 300, eager: false });
+    for (const c of pc) if (store.assert(c) === 'conflict') return false;
+    return store.feasible();
   }
 
   /** Koşula göre [durum, sonuç] çiftleri (E583 çatallanma, E600/E601 budama) */

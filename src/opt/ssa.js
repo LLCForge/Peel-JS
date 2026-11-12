@@ -475,6 +475,19 @@ export function versionAfterInstr(ins, varKey) { return ins.after?.get(varKey) ?
 export function eliminateRedundantPhis(fx) {
   const alias = new Map();
   const resolve = (v) => { while (alias.has(v)) v = alias.get(v); return v; };
+  // x = x öz-kopyası yeni değer üretmez: φ karşılaştırmasında kaynağına çözülür (yalnızca aynı değişken:
+  // kullanımlar her zaman kendi adlarının sürümüne bağlı kalmalı)
+  const valueOf = (v) => {
+    for (let i = 0; i < 64; i++) {
+      v = resolve(v);
+      const site = v.kind === 'def' ? v.site : null;
+      const rhs = site && (t.isAssignmentExpression(site, { operator: '=' }) ? site.right : t.isVariableDeclarator(site) ? site.init : null);
+      const src = rhs && t.isIdentifier(rhs) ? fx.useVer.get(rhs) : null;
+      if (!src || src.var !== v.var) return v;
+      v = src;
+    }
+    return v;
+  };
   let changed = true;
   let removed = 0;
   while (changed) {
@@ -482,7 +495,7 @@ export function eliminateRedundantPhis(fx) {
     for (const b of fx.blocks) {
       for (const [v, phi] of b.phis) {
         const self = resolve(phi.version);
-        const ops = new Set([...phi.args.values()].map(resolve).filter((x) => x !== self));
+        const ops = new Set([...phi.args.values()].map(valueOf).filter((x) => x !== self));
         if (ops.size === 1) {
           const [only] = ops;
           alias.set(phi.version, only);

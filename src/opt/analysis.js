@@ -33,7 +33,8 @@ export function buildConstraints(ast) {
   const varNode = (p, name) => {
     const b = p.scope.getBinding(name);
     if (!b) return id(`g:${name}`, { kind: 'global', name });
-    if (!bindingKey.has(b)) bindingKey.set(b, id(`v${bindingKey.size}:${name}`, { kind: 'var', name, line: lineOf(b.identifier) }));
+    // betik düzeyindeki bildirimler global nesnenin özelliğidir: kaçış açısından global
+    if (!bindingKey.has(b)) bindingKey.set(b, id(`v${bindingKey.size}:${name}`, { kind: b.scope.path.isProgram() ? 'global' : 'var', name, line: lineOf(b.identifier) }));
     return bindingKey.get(b);
   };
   const alloc = (n, label) => {
