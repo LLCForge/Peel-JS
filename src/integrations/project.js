@@ -1,6 +1,4 @@
-import { parse } from '../core/parse.js';
-import { raw, pretty } from '../core/emit.js';
-import { traverse } from '../util/ast.js';
+import { applyNameMap } from '../naming/names.js';
 
 // H164: .peel proje biçimi. Bir analiz oturumunu tek JSON dosyasında taşır: dosyalar (girdi/çıktı),
 // seçenekler, kullanıcı yeniden adlandırmaları, dönüşüm kuralları, sürüm etiketleri ve notlar.
@@ -95,25 +93,13 @@ export function upsertFile(p, file) {
 }
 
 /**
- * Kullanıcı yeniden adlandırmalarını koda uygular: o adı taşıyan her bağlama (hangi kapsamda olursa olsun)
- * hedef ada çevrilir; hedef ad o kapsamda zaten varsa atlanır.
+ * Kullanıcı yeniden adlandırmalarını koda uygular. Tek uygulama: anlamlandırma modülünün scope-güvenli
+ * yeniden adlandırıcısı (with/eval/window.x kapsamları korunur, çakışan hedef ad atlanır).
  * @returns {Promise<{code: string, applied: number, skipped: string[]}>}
  */
 export async function applyRenames(code, renames) {
   const map = renamesOf(renames, 'renames');
   if (!Object.keys(map).length) return { code, applied: 0, skipped: [] };
-  const ast = parse(code);
-  let applied = 0;
-  const skipped = new Set();
-  traverse(ast, {
-    Scopable(p) {
-      for (const [from, to] of Object.entries(map)) {
-        if (!Object.hasOwn(p.scope.bindings, from)) continue;
-        if (p.scope.hasBinding(to) || p.scope.hasGlobal(to)) { skipped.add(from); continue; }
-        p.scope.rename(from, to);
-        applied++;
-      }
-    },
-  });
-  return { code: await pretty(raw(ast)), applied, skipped: [...skipped] };
+  const r = await applyNameMap(code, map);
+  return { code: r.code, applied: r.renamed.length, skipped: [...new Set(r.skipped.map((x) => x.name))] };
 }

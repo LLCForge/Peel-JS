@@ -4,5 +4,5 @@ function _0x3c4d(_0x5e6f) {
   return _0x7a8b + _0x1a2b;
 }
 console.log(_0x3c4d(5));
-// EXPECT: function fn1(arg1)
+// EXPECT: function compute(num2)
 // GONE: _0x

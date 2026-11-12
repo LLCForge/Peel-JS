@@ -1,6 +1,7 @@
 import { t, td } from '../i18n.js';
 import { mountRuntime } from './runtime/mount.js';
 import { renderVmReport } from './vm/index.js';
+import { render as renderNaming } from './naming/index.js';
 import { render as renderSemantics } from './analysis/semantics.js';
 import { render as renderSecurity } from './security/index.js';
 
@@ -260,6 +261,7 @@ export function renderReport(root, report, onExport, actions = {}) {
     section('report.rollbacks', report.rollbacks.length
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])
       : muted('report.rollbacks.none')),
+    report.naming ? section('report.naming', renderNaming(el('div'), { ...report.naming, bundle: report.engine?.bundle ?? null })) : null,
     report.engine ? section('report.engine', engine(report.engine, report.stats)) : null,
     report.semantics ? section('report.semantics', semanticsBody(report.semantics)) : null,
     'symbolic' in report ? section('report.sym', lazySymbolic(report)) : null,

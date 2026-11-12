@@ -13,6 +13,7 @@ import { blobReport } from './stats.js';
 import { securityRuntime } from '../security/runtime.js';
 import { vmReport } from './vm/report.js';
 import { analyzeStringTables, crossCheck, serializeTables } from './vm/strtable.js';
+import { namingReport } from '../naming/index.js';
 import { engineReport } from './engine-report.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
@@ -238,6 +239,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
       functions: after.functions,
       outputHash: fnv1a(output),
     },
+    // anlamlandırma: özet, okunabilirlik, çözülemeyenler, kütüphane sürümleri, modüller, ad önerileri
+    naming: namingReport({ input, text, output, threat: { classes, risk: riskScore(classes, runtime) } }),
     semantics,
     // sembolik yürütme, concolic, SMT kanıtları, nokta/etki/taint, değişmezler: pahalı, isteğe bağlı
     // report.symbolic() ilk çağrıda hesaplar (rapor bölümü açılınca); sonuç report.symbolicData'ya yazılır

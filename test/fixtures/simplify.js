@@ -28,9 +28,9 @@ function pick(v) { return v; }
 var api = { main: main, check: check };
 console.log(api.main(6, 3, 0), api.check(5), api.check(0));
 api.main = null;
-// EXPECT: var x = a | b;
-// EXPECT: var y = a & b;
-// EXPECT: var z = a - b;
+// EXPECT: x = a | b;
+// EXPECT: y = a & b;
+// EXPECT: z = a - b;
 // EXPECT: if (flag) out.push("bang");
 // EXPECT: if (a && b) out.push("demorgan");
 // EXPECT: flag || "fallback", "same"

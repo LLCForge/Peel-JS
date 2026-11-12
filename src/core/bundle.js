@@ -4,7 +4,7 @@ import { traverse, generate } from '../util/ast.js';
 import { inlineSourceMap, decodeMappings, segmentAt } from '../util/sourcemap.js';
 
 // A-24: paketlenmiş kodu modüllere ayırma.
-//  webpack 4/5 (modül nesnesi/dizisi, webpackChunk push), browserify, esbuild (__commonJS/__esm ve "// yol.js"
+//  webpack 4/5 (modül nesnesi/dizisi, webpackChunk push), browserify, AMD define(), esbuild (__commonJS/__esm ve "// yol.js"
 //  işaretleri), kaynak haritalı kapsam birleştirmeli paketler (Rollup): her üst seviye deyim haritadaki kaynağına atanır.
 // Dönüş: { kind, modules: [{ id, size, deps, code }] } ya da null (paket değil)
 
@@ -76,6 +76,22 @@ function browserify(ast) {
     },
   });
   return found ? { kind: 'browserify', modules: found.slice(0, MAX_MODULES) } : null;
+}
+
+// AMD (r.js/almond paketleri): define("ad", ["bağımlılık", …], function (…) {…}) çağrıları
+function amd(ast) {
+  const mods = [];
+  for (const st of ast.program.body) {
+    const call = t.isExpressionStatement(st) && t.isCallExpression(st.expression) ? st.expression : null;
+    if (!call || !t.isIdentifier(call.callee, { name: 'define' }) || !t.isStringLiteral(call.arguments[0])) continue;
+    const fn = call.arguments.at(-1);
+    if (!isFn(fn)) continue;
+    const m = moduleFromFn(call.arguments[0].value, fn, -1);
+    const deps = call.arguments.length === 3 && t.isArrayExpression(call.arguments[1]) ? call.arguments[1].elements : [];
+    m.deps = deps.filter((d) => t.isStringLiteral(d)).map((d) => d.value);
+    mods.push(m);
+  }
+  return mods.length >= 2 ? { kind: 'amd', modules: mods.slice(0, MAX_MODULES) } : null;
 }
 
 // esbuild: var require_x = __commonJS({ "src/x.js"(exports, module) {…} });  var init_y = __esm({ "src/y.js"() {…} });
@@ -208,7 +224,7 @@ function parcel(ast) {
 export function splitBundle(code, { map = true } = {}) {
   let ast;
   try { ast = parse(code); } catch { return null; }
-  return webpack(ast, code) ?? browserify(ast) ?? esbuild(ast) ?? parcel(ast) ?? commentMarkers(ast) ?? (map ? sourceMapped(ast, code) : null);
+  return webpack(ast, code) ?? browserify(ast) ?? esbuild(ast) ?? parcel(ast) ?? amd(ast) ?? commentMarkers(ast) ?? (map ? sourceMapped(ast, code) : null);
 }
 
 // Modülleri indirilebilir dosyalara çevirir (ZIP için): güvenli ad, çakışmada kimlik eki

@@ -24,7 +24,7 @@ export const DEFAULTS = Object.freeze({
   scopeColors: false,
   deadLayer: false,
   trustLayer: false,
-  format: { printWidth: 100, tabWidth: 2, semi: true, singleQuote: false, trailingComma: 'all', bracketSpacing: true, arrowParens: 'always' },
+  format: { printWidth: 100, tabWidth: 2, useTabs: false, semi: true, singleQuote: false, trailingComma: 'all', bracketSpacing: true, arrowParens: 'always' },
   passOrder: [],
   passDisabled: [],
   keymap: {},
@@ -54,7 +54,7 @@ export function sanitize(raw) {
   const f = o.format && typeof o.format === 'object' ? o.format : {};
   s.format.printWidth = clampNum(f.printWidth, 40, 240, DEFAULTS.format.printWidth);
   s.format.tabWidth = clampNum(f.tabWidth, 1, 8, DEFAULTS.format.tabWidth);
-  for (const k of ['semi', 'singleQuote', 'bracketSpacing']) if (typeof f[k] === 'boolean') s.format[k] = f[k];
+  for (const k of ['semi', 'singleQuote', 'bracketSpacing', 'useTabs']) if (typeof f[k] === 'boolean') s.format[k] = f[k];
   for (const [k, allowed] of Object.entries(FORMAT_ENUMS)) if (allowed.includes(f[k])) s.format[k] = f[k];
   s.passOrder = strList(o.passOrder);
   s.passDisabled = strList(o.passDisabled);
