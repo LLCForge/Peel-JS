@@ -127,7 +127,9 @@ export function scan(ast, { ignore = null } = {}) {
       const n = p.node;
       const key = memberKey(n);
       if (key === null && !harmlessKey(p.get('property'))) info.dynamicMember = true;
-      else if (!(p.parentPath.isCallExpression({ callee: n }) || p.parentPath.isOptionalCallExpression({ callee: n }))) addProp(key, n);
+      // salt yazma (x.m = …) metodu okumaz; çağrı dışı her okuma metodun değerini sızdırabilir
+      else if (!(p.parentPath.isCallExpression({ callee: n }) || p.parentPath.isOptionalCallExpression({ callee: n }) ||
+        p.parentPath.isAssignmentExpression({ left: n, operator: '=' }))) addProp(key, n);
       if (key === 'defineProperty' || key === 'getOwnPropertyNames' || key === 'getOwnPropertyDescriptor' ||
         key === 'freeze' || key === 'seal' || key === 'preventExtensions' || key === 'keys' || key === 'entries' ||
         key === 'values' || key === 'getPrototypeOf' || key === 'setPrototypeOf' || key === 'ownKeys') info.reflective = true;

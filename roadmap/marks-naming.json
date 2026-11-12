@@ -29,7 +29,7 @@
   ],
   "79": [
     "x",
-    "96-babel + naming/regenerator.js: klasik (regeneratorRuntime/_regeneratorRuntime().mark/wrap) ve Babel 7.27+ kompakt (_regenerator().m/w) durum makineleri → function*/async (döngü, if/else, try/catch/finally, yield*); _asyncToGenerator kalıpları; _createClass ve _inherits+_callSuper/_createSuper+_superPropGet/_get kalıtımı → class extends + super(); _typeof, _toConsumableArray, _slicedToArray, _objectSpread, _extends, _defineProperty. Gerçek Babel 7.20/7.24/7.28 çıktılı fixture'lar. super() öncesi this, süper özelliğe atama, kanıtsız yield* hedefi gibi kanıtlanamayan durumlarda o fonksiyon/sınıf atlanır"
+    "96-babel + naming/regenerator.js + naming/babel-extra.js + 96-classes: klasik ve 7.27+ kompakt regenerator → function*/async; _asyncToGenerator; _createClass/_inherits/_callSuper/_createSuper/_superPropGet/_get ve gevşek _inheritsLoose/_proto/S.call(this) → class extends + super; _createForOfIteratorHelper(Loose) ve dizi indeks döngüsü → for-of; _slicedToArray/_toArray → dizi deseni; _toConsumableArray, [].concat, f.apply(o, [...]) → yayma; _objectSpread/_defineProperty/(_o = {}, …) → nesne literali; _objectWithoutProperties(Loose) → { a, ...rest }; _typeof → typeof; _extends → yayma (kaynakta kendi __proto__ olamıyorsa, yoksa Object.assign). Gerçek Babel 7.20/7.24/7.28 ve loose çıktılı fixture'lar. Kanıtsız durumlar atlanır: gevşek yardımcının generator üzerinde döngüsü (break'te return() farkı), dizi olduğu bilinmeyen _arrayLikeToArray/apply"
   ],
   "80": [
     "x",
@@ -53,11 +53,11 @@
   ],
   "86": [
     "x",
-    "src/naming/modules.js: webpack 4/5, webpackChunk/Jsonp, browserify, AMD, esbuild yorumları; tek tek ya da ZIP indirme (Modüller sekmesi)"
+    "Paket ayırma tek uygulama: core/bundle.js (webpack, browserify, esbuild, kaynak haritalı, AMD eklendi; report.engine.bundle ve CLI --split); Anlamlandırma > Modüller sekmesi tek tek ya da ZIP indirme (naming/zip.js)"
   ],
   "87": [
     "x",
-    "ui/naming/state.js: girdi özetine bağlı ad haritası tarayıcıda saklanır, her çözümde ve anında uygulanır"
+    "ui/naming/state.js: girdi özetine bağlı ad haritası tarayıcıda saklanır, her çözümde ve anında uygulanır; .peel projesinin adları (integrations/project.js applyRenames) aynı scope-güvenli yeniden adlandırıcıyı kullanır"
   ],
   "88": [
     "x",
@@ -65,11 +65,11 @@
   ],
   "89": [
     "x",
-    "src/naming/cfg.js + SVG çizim: fonksiyon seçimli kontrol akış grafiği"
+    "Tek uygulama araç panelindeki grafik görünümü (ui/graph-model.js cfg + graph-view.js); anlamlandırma panelindeki kopya kaldırıldı"
   ],
   "90": [
     "x",
-    "src/naming/defuse.js: deyim düzeyi CFG üzerinde ulaşan tanımlar; kapanış okumaları ayrı"
+    "Ulaşan tanımlar ve def-use zincirleri analysis/defs.js (semantik altyapı) üzerinden; Anlamlandırma > Tanım-kullanım sekmesi bağlama başına tanım/kullanım satırlarını gösterir"
   ],
   "91": [
     "x",
@@ -85,7 +85,7 @@
   ],
   "94": [
     "x",
-    "src/naming/unresolved.js: decoder çağrısı, _0x isim, tablo erişimi, dinamik kod, kodlanmış string, debugger, with, VM; satır ve nedenle"
+    "naming/unresolved.js: temel kalıntılar ui/code-intel.js remnants ile aynı tanım; tablo erişimi, kodlanmış/kaçışlı string, string zamanlayıcı, debugger, with, VM eklenir; satır ve nedenle rapor"
   ],
   "95": [
     "x",
@@ -157,7 +157,7 @@
   ],
   "E239": [
     "x",
-    "emit.FORMAT_PROFILES (default, compact, wide, standard, airbnb, tabs); Seçenekler sekmesi ve CLI --format"
+    "emit.FORMAT_PROFILES (default, compact, wide, standard, airbnb, tabs) arayüzün tek biçim ayarına (ui/settings.js format, useTabs eklendi) yazılır; CLI --format ve pipeline format seçeneği"
   ],
   "E240": [
     "x",

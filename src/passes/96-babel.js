@@ -3,6 +3,7 @@ import { traverse, gen } from '../util/ast.js';
 import { machineSwitch, decompile } from '../naming/regenerator.js';
 import { scan, runsAfter, isStrict, strictSafe, callOnlyProperty } from '../naming/scope.js';
 import { provablyPrimitive } from './97-modern-syntax.js';
+import { reverseExtras } from '../naming/babel-extra.js';
 
 // 79: Babel/regenerator kalıntılarını geri çevirme.
 //  - regenerator durum makinesi → function*  (try/catch/finally, döngü, if/else, yield*): klasik
@@ -14,8 +15,32 @@ import { provablyPrimitive } from './97-modern-syntax.js';
 // Yardımcılar adlarıyla değil gövde biçimleriyle tanınır (küçültülmüş çıktıda da çalışır).
 
 // Yardımcıların iç parçaları: gövdeleri jeneratör nesnesi/tanımlayıcı dizisi üzerinde çalışır, kullanıcı metotlarını okumaz
-export const SUPPORT_NAME = /^_?(asyncGeneratorStep|defineProperties|toPropertyKey|toPrimitive|ownKeys|arrayLikeToArray|unsupportedIterableToArray|iterableToArray|iterableToArrayLimit|arrayWithoutHoles|arrayWithHoles|nonIterableSpread|nonIterableRest|regeneratorRuntime|regenerator|regeneratorDefine|regeneratorValues|setPrototypeOf|possibleConstructorReturn|isNativeReflectConstruct|superPropBase|objectWithoutProperties|objectWithoutPropertiesLoose|taggedTemplateLiteral|interopRequireDefault|interopRequireWildcard)\d*$/;
-const HELPER_NAME = /^_?(typeof|toConsumableArray|slicedToArray|objectSpread2?|extends|defineProperty|classCallCheck|createClass|asyncToGenerator|inherits|createSuper|callSuper|superPropGet|superPropSet|get|set|getPrototypeOf|assertThisInitialized)\d*$/;
+export const SUPPORT_NAME = /^_?(asyncGeneratorStep|defineProperties|toPropertyKey|toPrimitive|ownKeys|unsupportedIterableToArray|iterableToArray|iterableToArrayLimit|arrayWithoutHoles|arrayWithHoles|nonIterableSpread|nonIterableRest|regeneratorRuntime|regenerator|regeneratorDefine|regeneratorValues|setPrototypeOf|possibleConstructorReturn|isNativeReflectConstruct|superPropBase|taggedTemplateLiteral|interopRequireDefault|interopRequireWildcard)\d*$/;
+const HELPER_NAME = /^_?(typeof|toConsumableArray|slicedToArray|objectSpread2?|extends|defineProperty|classCallCheck|createClass|asyncToGenerator|inherits|createSuper|callSuper|superPropGet|superPropSet|get|set|getPrototypeOf|assertThisInitialized|toArray|arrayLikeToArray|createForOfIteratorHelper|createForOfIteratorHelperLoose|objectWithoutProperties|objectWithoutPropertiesLoose|inheritsLoose)\d*$/;
+
+/** Babel yardımcı fonksiyonları: biçimi doğrulanmış türler (binding → tür) ve gövdesi kanıt dışı tutulacak düğümler */
+export function collectHelpers(ast) {
+  const program = gen(ast.program);
+  const helpers = new Map();
+  const helperNodes = new Set();
+  traverse(ast, {
+    FunctionDeclaration(p) {
+      if (!p.parentPath.isProgram() && !p.parentPath.parentPath?.isFunction()) return;
+      const kind = helperKind(p.node.id.name, gen(p.node), program);
+      if (!kind) {
+        if (p.parentPath.isProgram() && SUPPORT_NAME.test(p.node.id.name)) helperNodes.add(p.node);
+        return;
+      }
+      const b = p.scope.getBinding(p.node.id.name);
+      // yardımcı kendini önbellekli sürümle değiştirebilir (_typeof = …); başka yerde yazılmamalı
+      if (!b || !b.constantViolations.every((v) => v.findParent((x) => x.node === p.node))) return;
+      // düğümle anahtarlanır: scope yeniden taranınca binding nesneleri değişir
+      helpers.set(p.node, kind);
+      helperNodes.add(p.node);
+    },
+  });
+  return { helpers, helperNodes };
+}
 
 function helperKind(name, code, program) {
   const m = HELPER_NAME.exec(name);
@@ -42,6 +67,13 @@ function helperKind(name, code, program) {
     case 'set': return code.includes('Reflect.set') || code.includes('superPropBase') ? kind : null;
     case 'getPrototypeOf': return code.includes('getPrototypeOf') ? kind : null;
     case 'assertThisInitialized': return code.includes('initialised') ? kind : null;
+    case 'toArray': return /return \w+\(\w+\)\|\|\w+\(\w+\)\|\|\w+\(\w+\)\|\|\w+\(\)/.test(code) && program.includes('destructure non-iterable') ? kind : null;
+    case 'arrayLikeToArray': return /Array\(\w+\)/.test(code) && code.includes('.length') ? kind : null;
+    case 'createForOfIteratorHelper': return code.includes('Symbol.iterator') && /[{,]s:/.test(code) && /[{,]n:/.test(code) && /[{,]f:/.test(code) ? kind : null;
+    case 'createForOfIteratorHelperLoose': return code.includes('Symbol.iterator') && code.includes('.next.bind(') ? kind : null;
+    case 'objectWithoutProperties': return code.includes('getOwnPropertySymbols') && code.includes('indexOf') ? kind : null;
+    case 'objectWithoutPropertiesLoose': return code.includes('indexOf') && (code.includes('Object.keys') || code.includes('hasOwnProperty')) ? kind : null;
+    case 'inheritsLoose': return code.includes('Object.create') && code.includes('.constructor=') ? kind : null;
     default: return null;
   }
 }
@@ -96,25 +128,11 @@ export async function run(ast, { onLog, bump, naming = {} }) {
     },
   });
 
-  const program = gen(ast.program);
-  const helpers = new Map();
-  const helperNodes = new Set();
-  traverse(ast, {
-    FunctionDeclaration(p) {
-      if (!p.parentPath.isProgram() && !p.parentPath.parentPath?.isFunction()) return;
-      const kind = helperKind(p.node.id.name, gen(p.node), program);
-      if (!kind) return;
-      const b = p.scope.getBinding(p.node.id.name);
-      // yardımcı kendini önbellekli sürümle değiştirebilir (_typeof = …); başka yerde yazılmamalı
-      if (!b || !b.constantViolations.every((v) => v.findParent((x) => x.node === p.node))) return;
-      helpers.set(b, kind);
-      helperNodes.add(p.node);
-    },
-  });
+  const { helpers, helperNodes } = collectHelpers(ast);
   const helperOf = (p) => {
     if (!t.isIdentifier(p.node)) return null;
     const b = p.scope.getBinding(p.node.name);
-    return b ? helpers.get(b) ?? null : null;
+    return b ? helpers.get(b.path.node) ?? null : null;
   };
 
   // ── 2) basit yardımcılar ve async ──
@@ -132,12 +150,15 @@ export async function run(ast, { onLog, bump, naming = {} }) {
           rep = t.unaryExpression('typeof', args[0]);
         } else if (kind === 'toConsumableArray' && args.length === 1) {
           rep = t.arrayExpression([t.spreadElement(args[0])]);
-        } else if (kind === 'extends' && !p.scope.getBinding('Object')) {
+        } else if (kind === 'extends' && !p.scope.getBinding('Object') && !t.isObjectExpression(args[0])) {
+          // ilk argüman literal değilse yayma kurulamaz (hedef nesne değişir): Object.assign ile aynı
           rep = t.callExpression(t.memberExpression(t.identifier('Object'), t.identifier('assign')), args);
         } else if (kind === 'defineProperty' && args.length === 3 && t.isObjectExpression(args[0]) &&
           (t.isStringLiteral(args[1]) || t.isNumericLiteral(args[1]) || provablyPrimitive(p.get('arguments.1'), new Set()))) {
-          rep = t.objectExpression([...args[0].properties, t.objectProperty(args[1], args[2], true)]);
-        } else if ((kind === 'objectSpread' || kind === 'objectSpread2') && args.length && t.isObjectExpression(args[0]) && plainObject(args[0])) {
+          // sabit anahtar adı tanımlayıcıysa düz yazılır ({ plain: 2 }); __proto__ düz yazımda prototip ayarlar, hesaplanan kalır
+          const lit = t.isStringLiteral(args[1]) && t.isValidIdentifier(args[1].value) && args[1].value !== '__proto__';
+          rep = t.objectExpression([...args[0].properties, lit ? t.objectProperty(t.identifier(args[1].value), args[2]) : t.objectProperty(args[1], args[2], true)]);
+        } else if ((kind === 'objectSpread' || kind === 'objectSpread2') && args.length && t.isObjectExpression(args[0]) && freshTarget(args[0])) {
           rep = spreadObject(args, kind);
         } else if (kind === 'asyncToGenerator') {
           if (asyncCall(p, stats)) return;
@@ -157,7 +178,8 @@ export async function run(ast, { onLog, bump, naming = {} }) {
         if (kind !== 'slicedToArray' || !t.isNumericLiteral(d.init.arguments[1])) continue;
         const n = d.init.arguments[1].value;
         const b = p.scope.getBinding(d.id.name);
-        if (!b || !b.constant) continue;
+        // döngü içindeki var her turda yeniden bildirilir: tek atama yine bu bildirimdir
+        if (!b || !b.constantViolations.every((v) => v.node === d)) continue;
         const elems = new Array(n).fill(null);
         let j = i + 1;
         for (; j < ds.length; j++) {
@@ -178,6 +200,10 @@ export async function run(ast, { onLog, bump, naming = {} }) {
       }
     },
   });
+
+  // ── 2b) diğer yardımcılar: for-of, dizi/nesne dinlenme deseni, gevşek mod nesne literali, concat/apply, _extends ──
+  traverse(ast, { Program(p) { p.scope.crawl(); p.stop(); } });
+  reverseExtras(ast, helperOf, stats);
 
   // ── 3) _classCallCheck + _createClass → class ──
   traverse(ast, {
@@ -469,6 +495,9 @@ function refersTo(node, name) {
 
 // ── nesne yayma ─────────────────────────────────────────
 
+// Hedef nesne taze literal: düz özellikler ve yaymalar (getter/metot/__proto__ yok)
+const freshTarget = (o) => o.properties.every((p) => t.isSpreadElement(p) || (t.isObjectProperty(p) &&
+  !(t.isIdentifier(p.key, { name: '__proto__' }) || t.isStringLiteral(p.key, { value: '__proto__' })) && !(p.computed && !t.isLiteral(p.key) && !t.isIdentifier(p.key))));
 const plainObject = (o) => o.properties.every((p) => t.isObjectProperty(p) && !p.computed &&
   !(t.isIdentifier(p.key, { name: '__proto__' }) || t.isStringLiteral(p.key, { value: '__proto__' })));
 
@@ -623,7 +652,7 @@ function superAccesses(fnPath, name, isStatic, thisVar, helperOf) {
   });
   return ok ? edits : null;
 }
-const superMember = (key) => (t.isValidIdentifier(key) ? t.memberExpression(t.super(), t.identifier(key)) : t.memberExpression(t.super(), t.stringLiteral(key), true));
+export const superMember = (key) => (t.isValidIdentifier(key) ? t.memberExpression(t.super(), t.identifier(key)) : t.memberExpression(t.super(), t.stringLiteral(key), true));
 
 function createClassFor(p, helperOf, info) {
   const fn = p.node;
@@ -795,7 +824,7 @@ function createClassFor(p, helperOf, info) {
 }
 
 // İç normal fonksiyonlara girerken işaretleyerek gezinme
-function traverseOwn(node, cb, inNested = false) {
+export function traverseOwn(node, cb, inNested = false) {
   if (!node || typeof node !== 'object') return;
   if (Array.isArray(node)) { node.forEach((x) => traverseOwn(x, cb, inNested)); return; }
   if (!node.type) return;
@@ -805,7 +834,7 @@ function traverseOwn(node, cb, inNested = false) {
 }
 
 // _this → this, _assertThisInitialized(_this) → this (yalnızca kurucunun kendi kodunda)
-function replaceThisVar(node, thisVar) {
+export function replaceThisVar(node, thisVar) {
   const visit = (n, parent, key) => {
     if (!n || typeof n !== 'object') return;
     if (Array.isArray(n)) { n.forEach((x, i) => visit(x, n, i)); return; }

@@ -168,7 +168,7 @@ function builtinCallback(p, overwritten) {
 }
 
 // Alıcı kesin dizi mi: dizi literali, Array.from/of, split/map/filter/slice/concat sonucu ya da öyle başlatılmış sabit değişken
-function isProvenArray(p, depth = 0) {
+export function isProvenArray(p, depth = 0) {
   const n = p.node;
   if (t.isArrayExpression(n)) return true;
   if (depth > 4) return false;
