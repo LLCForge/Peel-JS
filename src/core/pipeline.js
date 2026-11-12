@@ -4,6 +4,7 @@ import { raw, pretty } from './emit.js';
 import { fnv1a } from '../util/hash.js';
 import { PASSES } from './registry.js';
 import { snapshot, same } from './behavior.js';
+import { resolvePasses } from '../integrations/plugins.js';
 
 const MAX_ROUNDS = 25;
 const CONTEXT_MAX_LEN = 2_000_000;
@@ -19,12 +20,13 @@ export async function deobfuscate(input, {
   onLog = () => {}, onProgress = () => {}, onPass = () => {}, onSnapshot = () => {},
   // order: pass kimliklerinin kullanıcı sırası; onLayer: değişen metin katmanı; onApprove: her kabulden önce onay (false → reddet)
   order = null, onLayer = () => {}, onApprove = null,
+  plugins = [],
 } = {}) {
   const stats = {};
   const bump = (k, n = 1) => { if (n) stats[k] = (stats[k] || 0) + n; };
   const checkAbort = () => { if (signal?.aborted) throw new Error('İptal edildi'); };
 
-  let enabled = PASSES.filter((p) => (only ? only.includes(p.id) : p.level <= level));
+  let enabled = resolvePasses(PASSES, plugins).filter((p) => (only ? only.includes(p.id) : p.level <= level));
   if (!sandbox) enabled = enabled.filter((p) => p.needs !== 'sandbox');
   if (order) {
     const rank = (id) => { const i = order.indexOf(id); return i < 0 ? order.length + PASSES.findIndex((p) => p.id === id) : i; };

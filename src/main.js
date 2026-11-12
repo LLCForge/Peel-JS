@@ -29,6 +29,7 @@ import { buildMap, mapOffset } from './ui/srcmap.js';
 import { fnv1a } from './util/hash.js';
 import { t, applyI18n, toggleLang, onLang, getLang, LANGS } from './i18n.js';
 import { SAMPLE } from './sample.js';
+import { mountIntegrations } from './ui/integrations/index.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -306,10 +307,11 @@ async function run({ mode = 'normal' } = {}) {
       signal: controller.signal,
       onLog: log,
       onPass: (id, state) => { if (mode !== 'dry') markPass(id, state); if (state !== 'run') sample(id, lastLen); },
-      onSnapshot: (s) => { snapshots.push(s); lastLen = s.code.length; if (mode !== 'dry') timeline.push(s); },
+      onSnapshot: (s) => { snapshots.push(s); lastLen = s.code.length; if (mode !== 'dry') timeline.push(s); tools.snapshot(s); },
       onLayer: (l) => { layers.push(l); lastLen = l.code.length; },
       onProgress: (pct) => updateEta(pct, t0),
       onApprove,
+      plugins: tools.plugins(),
     });
     $('eta').textContent = '';
     if (res.error) {
@@ -353,6 +355,7 @@ async function run({ mode = 'normal' } = {}) {
       obfIdsAfter: report.metrics.obfuscatedIdsAfter, hexCallsAfter: report.metrics.hexCallsAfter, functions: report.metrics.functions,
     }].slice(-20);
     safeRenderReport(report);
+    tools.onResult({ input: src, output, report, stats: res.stats });
     ws.render();
     ws.persist();
     emit('results', doc);
@@ -1152,4 +1155,17 @@ sandbox.health().then((ok) => {
   if (ok) return;
   log('Sandbox unavailable', 'warn');
   setStatus('status.nosandbox', {}, 'err');
+});
+
+// Entegrasyon araçları (karşılaştırma, geçmiş, paylaşım, öğrenme, kurallar/eklentiler, PWA)
+// Girdi/çıktı artık CodeMirror editörleri: entegrasyonlar onlara editör API'si üzerinden erişir
+const tools = mountIntegrations({
+  getInput: () => edIn.text,
+  setInput: (text) => { edIn.setText(text); syncEmpty(); },
+  getOutput: () => edOut.text,
+  setOutput: (text) => edOut.setText(text),
+  getSandbox: () => (sandboxOk ? sandbox : null),
+  deobfuscate,
+  log,
+  notify: (msg, kind) => rawStatus(msg, kind === 'ok' ? 'ok' : 'err'),
 });
