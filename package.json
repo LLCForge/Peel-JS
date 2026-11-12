@@ -33,7 +33,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js",
+    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js && node test/compare.test.js && node test/techniques.test.js && node test/integrations.test.js && node test/ctf.test.js",
     "bench": "node test/bench.js"
   },
   "dependencies": {
@@ -50,5 +50,18 @@
     "javascript-obfuscator": "^5.10.0",
     "js-confuser": "^2.1.3",
     "vite": "^6.0.0"
+  },
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./node": {
+      "types": "./src/node.d.ts",
+      "default": "./src/node.js"
+    },
+    "./package.json": "./package.json"
   }
 }
