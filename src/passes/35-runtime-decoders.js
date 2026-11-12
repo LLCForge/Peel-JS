@@ -71,7 +71,8 @@ function attached(p) {
   return Boolean(p.node);
 }
 
-const argsKey = (call) => JSON.stringify(call.node.arguments.map((a) => literalValue(a).value));
+// kaynak metin: JSON NaN/Infinity/undefined'ı null yapardı
+const argsKey = (call) => `[${call.node.arguments.map((a) => gen(a)).join(', ')}]`;
 
 // obfuscator.io rotasyon döngüsü: decoder'ı checksum için çağırıp diziyi push(shift()) ile döndürür.
 // Bu çağrıları son değerleriyle değiştirmek döngüyü erken bitirir ve diziyi döndürülmemiş bırakır.

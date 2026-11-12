@@ -139,10 +139,15 @@ export function isLiteralTree(node) {
 }
 
 // Literal düğümün JS değeri (yoksa undefined + ok:false)
+const GLOBAL_CONSTANTS = { NaN: NaN, Infinity: Infinity, undefined: undefined };
+
 export function literalValue(node) {
   if (t.isStringLiteral(node) || t.isNumericLiteral(node) || t.isBooleanLiteral(node)) return { ok: true, value: node.value };
   if (t.isNullLiteral(node)) return { ok: true, value: null };
   if (t.isUnaryExpression(node, { operator: '-' }) && t.isNumericLiteral(node.argument)) return { ok: true, value: -node.argument.value };
   if (t.isUnaryExpression(node, { operator: 'void' }) && t.isNumericLiteral(node.argument)) return { ok: true, value: undefined };
+  // const-fold NaN/Infinity'yi ad olarak üretir. shortcut: bu adların gölgelendiği kod varsayılmıyor
+  if (t.isIdentifier(node) && Object.hasOwn(GLOBAL_CONSTANTS, node.name)) return { ok: true, value: GLOBAL_CONSTANTS[node.name] };
+  if (t.isUnaryExpression(node, { operator: '-' }) && t.isIdentifier(node.argument, { name: 'Infinity' })) return { ok: true, value: -Infinity };
   return { ok: false };
 }

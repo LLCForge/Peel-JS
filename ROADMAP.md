@@ -12,8 +12,8 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 - [x] 4. Fonksiyon içine gömülmüş string dizileri (`_0x1234()` getter biçimi)
 - [ ] 5. Decoder ofsetini sembolik çıkarma
 - [x] 6. Kendini değiştiren decoder'lar — ilk çağrıda yakalanan fonksiyonla çözülüyor
-- [ ] 7. Obje tabanlı proxy'leri satır içi yazma
-- [ ] 8. Operatör proxy'leri (`o.KJs(a, b)` → `a + b`)
+- [x] 7. Obje tabanlı proxy'leri satır içi yazma — sabit nesne özellikleri ve ardışık kurulum (const-objects)
+- [x] 8. Operatör proxy'leri (`o.KJs(a, b)` → `a + b`) — a+b, a<b, f(x) proxy nesneleri
 - [ ] 9. js-confuser dispatcher fonksiyonları
 - [x] 10. js-confuser global gizleme tabloları (switch proxy + çalışma anında global nesne çözümü)
 - [ ] 11. Integrity/hash kontrollerini etkisizleştirip raporlama
@@ -21,11 +21,11 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 - [x] 13. Sayısal artıkları katlama
 - [~] 14. Template literal'lara gizlenmiş string'ler — ifadesiz olanlar katlanıyor
 - [x] 15. toString tabanlı tamper kontrolünü kaldırma
-- [ ] 16. `/abc/.source` regex string'lerini katlama
+- [x] 16. `/abc/.source` regex string'lerini katlama
 - [ ] 17. Destructuring ile gizlenmiş atamalar
 - [x] 18. `void 0` artıkları ve virgül zincirleri
 - [x] 19. `!0` / `!1` → `true` / `false`
-- [ ] 20. `a && b()` → if, iç içe ternary → if/else
+- [x] 20. `a && b()` → if, iç içe ternary → if/else — a && b(), a || b(), ternary deyim → if; virgül zinciri → ayrı deyimler
 - [ ] 21. js-confuser `M.length = 2; M[0]` → gerçek parametreler
 - [ ] 22. Generator tabanlı durum makinelerini düz fonksiyona çevirme
 - [ ] 23. Sabit nesneli `with` bloklarını açık erişime çevirme
@@ -322,7 +322,7 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 
 - [x] E96. Switch proxy
 - [ ] E97. Fonksiyon proxy (`W("k")(...)`)
-- [ ] E98. İki argümanlı proxy
+- [x] E98. İki argümanlı proxy — const-objects
 - [~] E99. Proxy zinciri — turlar arasında
 - [ ] E100. Getter proxy
 - [ ] E101. Sınıf üye proxy
@@ -330,15 +330,15 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [x] E103. Global alias sadeleştirme
 - [~] E104. `self`/`globalThis` birleştirme
 - [~] E105. `this` proxy — yalnızca `Function("return this")()`
-- [ ] E106. `arguments[0]` → parametre adı
+- [x] E106. `arguments[0]` → parametre adı
 - [ ] E107. `bind` düzleştirme
-- [ ] E108. `.call/.apply` düzleştirme
+- [x] E108. `.call/.apply` düzleştirme — yalnızca this undefined iken
 - [ ] E109. Kısmi uygulama açma
-- [ ] E110. Sarmalayıcı fonksiyon sökme
-- [ ] E111. Kimlik fonksiyonu
-- [ ] E112. Operatör fonksiyonu
-- [ ] E113. Sabit döndüren fonksiyon
-- [ ] E114. `o["m"].call(o, …)` → `o.m(…)`
+- [x] E110. Sarmalayıcı fonksiyon sökme — literal argümanlı sarmalayıcılar çağrı yerinde açılıyor (wrappers)
+- [x] E111. Kimlik fonksiyonu
+- [~] E112. Operatör fonksiyonu — nesne içindeki operatör fonksiyonları; bağımsız fonksiyonlar kullanıcı kodu olabileceği için açılmıyor
+- [x] E113. Sabit döndüren fonksiyon
+- [x] E114. `o["m"].call(o, …)` → `o.m(…)`
 - [ ] E115. `Object.create` sarmalını açma
 - [ ] E116. `Reflect.get/set`
 - [ ] E117. `Object.defineProperty` sabit değer
@@ -362,22 +362,22 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [x] E132. `parseInt/parseFloat`
 - [x] E133. İfadesiz şablon literal
 - [x] E134. Parçaları sabit şablon literal
-- [ ] E135. RegExp `.source/.test`
-- [ ] E136. `!!x` → `Boolean(x)`
-- [ ] E137. `~~x`
+- [x] E135. RegExp `.source/.test`
+- [~] E136. `!!x` → `Boolean(x)` — boolean bağlamda !!x → x
+- [x] E137. `~~x` — x int32 iken
 - [ ] E138. `+""`
-- [ ] E139. `x|0`
+- [x] E139. `x|0` — x int32 iken
 - [ ] E140. `0+x`
-- [ ] E141. `x*1`, `x+0`, `x**1`
-- [ ] E142. `x*0`
-- [ ] E143. De Morgan
-- [ ] E144. Çift olumsuzlama kaldırma
+- [x] E141. `x*1`, `x+0`, `x**1` — x number iken
+- [~] E142. `x*0` — uygulanmadı: x negatifse x*0 = -0, katlama anlamı değiştirir
+- [x] E143. De Morgan
+- [x] E144. Çift olumsuzlama kaldırma
 - [x] E145. `true?x:y` / `false?x:y`
-- [ ] E146. `x?x:y` → `x||y`
-- [ ] E147. `x?y:y` → `y`
-- [ ] E148. Boş blok temizliği
-- [ ] E149. Özdeş atama
-- [ ] E150. `delete` katlama
+- [x] E146. `x?x:y` → `x||y`
+- [x] E147. `x?y:y` → `y`
+- [x] E148. Boş blok temizliği
+- [x] E149. Özdeş atama
+- [x] E150. `delete` katlama
 
 ## E-E. Kontrol akışı (E151–E175)
 
@@ -398,11 +398,11 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [x] E165. Dispatcher döngüsünü while/do-while.a çevirme
 - [ ] E166. `break/continue` normalizasyonu
 - [x] E167. Sabit koşulda ölü dal budama
-- [ ] E168. İç içe aynı koşullu if birleştirme
-- [ ] E169. `else` sonrası erken çıkış
+- [x] E168. İç içe aynı koşullu if birleştirme
+- [x] E169. `else` sonrası erken çıkış
 - [ ] E170. Guard cümlesi üretimi
-- [ ] E171. Tek iterasyonlu döngüyü açma
-- [ ] E172. `while(true){…break}` → blok
+- [x] E171. Tek iterasyonlu döngüyü açma
+- [x] E172. `while(true){…break}` → blok
 - [ ] E173. Yineleme tanıma
 - [ ] E174. Çözülemeyen bölge için DOT/Mermaid
 - [ ] E175. Akış raporu

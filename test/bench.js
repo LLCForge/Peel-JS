@@ -22,7 +22,8 @@ console.log(config.endpoint, config.retries * 2, sum([1, 2, 3, 4]));
 console.log(words.join("-"), c.n, typeof config.debug);
 if (config.debug) { console.log("debug mode"); } else { console.log("production"); }
 `;
-const NEEDLES = ['"Hello, "', '"https://api.example.com/v1/collect"', '"alpha"', '"production"', 'toUpperCase', '.join(', 'console.log'];
+// greet("PEEL") sabit sonucuna katlanabilir ("Hello, PEEL!"): ikisi de kabul
+const NEEDLES = ['"Hello, ', '"https://api.example.com/v1/collect"', '"alpha"', '"production"', 'toUpperCase', '.join(', 'console.log'];
 
 const OBF_IO = {
   'io-default': {},

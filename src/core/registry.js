@@ -3,6 +3,8 @@ import * as unpack from '../passes/10-unpack-wrapper.js';
 import * as predecoders from '../passes/20-predecoders.js';
 import * as literals from '../passes/25-literals.js';
 import * as constArrays from '../passes/27-const-arrays.js';
+import * as constObjects from '../passes/28-const-objects.js';
+import * as wrappers from '../passes/29-wrappers.js';
 import * as stringArray from '../passes/30-string-array.js';
 import * as runtimeDecoders from '../passes/35-runtime-decoders.js';
 import * as runtimeFunctions from '../passes/36-runtime-functions.js';
@@ -14,6 +16,7 @@ import * as stateVar from '../passes/74-state-var.js';
 import * as vm from '../passes/75-vm.js';
 import * as unflatten from '../passes/76-unflatten.js';
 import * as deadCode from '../passes/80-dead-code.js';
+import * as simplify from '../passes/85-simplify.js';
 import * as unused from '../passes/90-unused.js';
 import * as rename from '../passes/95-rename.js';
 
@@ -26,6 +29,8 @@ export const PASSES = [
   { id: 'predecoders',  level: 1, kind: 'text', needs: 'sandbox', mod: predecoders },
   { id: 'literals',     level: 1, kind: 'ast',  needs: null,      mod: literals },
   { id: 'const-arrays', level: 1, kind: 'ast',  needs: null,      mod: constArrays },
+  { id: 'const-objects', level: 1, kind: 'ast',  needs: null,      mod: constObjects },
+  { id: 'wrappers',     level: 2, kind: 'ast',  needs: null,      mod: wrappers },
   { id: 'string-array', level: 2, kind: 'ast',  needs: 'sandbox', mod: stringArray },
   { id: 'runtime-decoders', level: 2, kind: 'ast', needs: 'sandbox', mod: runtimeDecoders },
   { id: 'runtime-functions', level: 3, kind: 'ast', needs: 'sandbox', mod: runtimeFunctions },
@@ -37,6 +42,7 @@ export const PASSES = [
   { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
   { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
+  { id: 'simplify',     level: 2, kind: 'ast',  needs: null,      mod: simplify },
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
   { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },
 ];
