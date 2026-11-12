@@ -1,6 +1,6 @@
 import * as t from '@babel/types';
 import { traverse } from '../util/ast.js';
-import { analyzeStringArray, evaluate, isThrown, Unsupported } from '../core/obfio.js';
+import { analyzeStringArray, evaluate, isThrown, splitRotatorSequences, Unsupported } from '../core/obfio.js';
 import { analyzeStringTables } from '../core/vm/strtable.js';
 
 // A-3 / A-5: obfuscator.io string dizisini sandbox olmadan çözer. Decoder ofseti (i = i - 0xd6) afin biçimden
@@ -23,6 +23,7 @@ function argsOf(call, env) {
 }
 
 export async function run(ast, { onLog, bump, sandbox }) {
+  splitRotatorSequences(ast);
   const sa = analyzeStringArray(ast);
   if (!sa) {
     if (!sandbox) await fallback(ast, { onLog, bump });

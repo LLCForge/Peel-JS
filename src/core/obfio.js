@@ -254,6 +254,24 @@ function wrapperFns(ast, decoders) {
  * Programdaki obfuscator.io string dizisini bulur ve rotasyonu statik olarak çözer.
  * Dönüş: { holder, decoder, rotator, model, env } ya da null (desen yok / doğrulanamadı).
  */
+// webpack-obfuscator: rotasyon IIFE'si paketin geri kalanıyla tek virgül ifadesindedir
+// ((function (T, n) {…push…shift…})(T, 0x57f15), (() => {…})()). Program düzeyinde ilk ifade ayrı deyime
+// bölünür (sıra ve değerler aynı); rotasyon böylece tanınır ve tek başına silinebilir.
+const isShuffleIife = (e) => t.isCallExpression(e) && t.isFunctionExpression(e.callee) && e.arguments.some((a) => t.isIdentifier(a)) &&
+  /push/.test(gen(e.callee.body)) && /shift/.test(gen(e.callee.body));
+export function splitRotatorSequences(ast) {
+  const body = ast.program.body;
+  let n = 0;
+  for (let i = 0; i < body.length; i++) {
+    const s = body[i];
+    if (!t.isExpressionStatement(s) || !t.isSequenceExpression(s.expression) || !isShuffleIife(s.expression.expressions[0])) continue;
+    const [first, ...rest] = s.expression.expressions;
+    body.splice(i, 1, t.expressionStatement(first), t.expressionStatement(rest.length === 1 ? rest[0] : t.sequenceExpression(rest)));
+    n++;
+  }
+  return n;
+}
+
 export function analyzeStringArray(ast) {
   const holders = arrayHolders(ast);
   if (!holders.length) return null;
@@ -283,6 +301,12 @@ export function analyzeStringArray(ast) {
         (!t.isFunctionDeclaration(body[decoderIndex]) && decoderIndex > rotIndex))) continue;
     // kodlamasız decoder sabit anahtarlı değil; yine de rotasyonsuz tanınmamış gövde olabilir
     if (!rotator && decoder.encoding !== 'none' && !decoder.alphabet) continue;
+    // rotasyon deyim olarak tanınmadıysa ama dizi bir yerde karıştırılıyorsa model rotasyonsuz yanlış olur
+    if (!rotator) {
+      let shuffled = false;
+      t.traverseFast(ast.program, (n) => { if (!shuffled && isShuffleIife(n) && n.arguments.some((a) => t.isIdentifier(a, { name: holder.name }))) shuffled = true; });
+      if (shuffled) continue;
+    }
 
     const info = { holder, decoder };
     const model = makeModel(info);
