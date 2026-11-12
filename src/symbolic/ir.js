@@ -124,8 +124,29 @@ export function mk(op, ...a) {
   if (op === '&&' || op === '||') {
     const c = truthOf(a[0]);
     if (c !== null) return (op === '&&') === c ? a[1] : a[0];
+    // boolean cebiri (yalnızca iki taraf da boolean tipliyse: değer döndüren && / || anlamı korunur)
+    if (onlyType(a[0], 'boolean') && onlyType(a[1], 'boolean')) {
+      const r = truthOf(a[1]);
+      if (r !== null) return (op === '&&') === r ? a[0] : C(r);
+      if (same(a[0], a[1])) return a[0];
+      if (isNegation(a[0], a[1])) return C(op === '||');
+      // x || (!x && y) → x || y ;  x && (!x || y) → x && y
+      const inner = op === '||' ? '&&' : '||';
+      if (a[1].k === 'op' && a[1].op === inner && isNegation(a[0], a[1].a[0])) return mk(op, a[0], a[1].a[1]);
+      // (x && y) || (!x && y) → y
+      if (a[0].k === 'op' && a[1].k === 'op' && a[0].op === inner && a[1].op === inner &&
+          isNegation(a[0].a[0], a[1].a[0]) && same(a[0].a[1], a[1].a[1])) return a[0].a[1];
+    }
   }
   return { k: 'op', op, a };
+}
+
+const NEG = { '===': '!==', '!==': '===', '==': '!=', '!=': '==' };
+/** b, a'nın mantıksal tersi mi? (sözdizimsel) */
+export function isNegation(a, b) {
+  if (b.k === 'op' && b.op === '!' && same(b.a[0], a)) return true;
+  if (a.k === 'op' && a.op === '!' && same(a.a[0], b)) return true;
+  return a.k === 'op' && b.k === 'op' && NEG[a.op] === b.op && same(a.a[0], b.a[0]) && same(a.a[1], b.a[1]);
 }
 
 // Terimin doğruluk değeri sabit mi? (null: bilinmiyor)
