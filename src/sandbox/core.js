@@ -57,7 +57,10 @@ export function createHost(QuickJS) {
         if (/interrupted|out of memory|stack overflow/i.test(message)) tainted = true;
         return { ok: false, error: message };
       }
-      const value = vm.dump(r.value);
+      // nesneler (özellikle Promise) dump edilmez: dump Promise tutamacını kendisi serbest bırakır ve
+      // ardından gelen dispose "Lifetime not alive" ile host'u düşürür. Çağıranlar yalnızca ilkel değer okur.
+      const kind = vm.typeof(r.value);
+      const value = kind === 'object' || kind === 'function' ? undefined : vm.dump(r.value);
       r.value.dispose();
       return { ok: true, value };
     };
