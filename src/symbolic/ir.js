@@ -39,7 +39,7 @@ const MULTI = {
   ite: (c, a, b) => (c ? a : b), '&&': (a, b) => a && b, '||': (a, b) => a || b, '??': (a, b) => a ?? b,
   charCodeAt: (s, i) => s.charCodeAt(i), charAt: (s, i) => s.charAt(i), slice: (s, a, b) => s.slice(a, b),
   indexOf: (s, x) => s.indexOf(x), startsWith: (s, x) => s.startsWith(x), endsWith: (s, x) => s.endsWith(x),
-  includes: (s, x) => s.includes(x), retest: (src, flags, s) => new RegExp(src, flags).test(s),
+  includes: (s, x) => s.includes(x), imul: (a, b) => Math.imul(a, b), retest: (src, flags, s) => new RegExp(src, flags).test(s),
 };
 export const OPS = new Set([...Object.keys(BIN), ...Object.keys(UN), ...Object.keys(MULTI)]);
 // String metodlarının argümanı string/number değilse ToString/ToNumber gözlenebilir yan etki üretebilir:
@@ -56,7 +56,7 @@ export function applyOp(op, vals) {
 // ── tip modeli (E599) ──────────────────────────────────
 const ALL = ['number', 'string', 'boolean', 'undefined', 'null', 'object'];
 const VAR_TYPES = { int32: ['number'], int: ['number'], num: ['number'], str: ['string'], bool: ['boolean'], undef: ['undefined'], null: ['null'], any: ALL };
-const NUMERIC = new Set(['-', '*', '/', '%', '**', '&', '|', '^', '<<', '>>', '>>>', 'neg', 'pos', '~', 'tonum', 'len', 'charCodeAt', 'indexOf']);
+const NUMERIC = new Set(['imul', '-', '*', '/', '%', '**', '&', '|', '^', '<<', '>>', '>>>', 'neg', 'pos', '~', 'tonum', 'len', 'charCodeAt', 'indexOf']);
 const BOOLEAN = new Set(['===', '!==', '==', '!=', '<', '<=', '>', '>=', '!', 'truthy', 'startsWith', 'endsWith', 'includes', 'retest']);
 const STRINGY = new Set(['typeof', 'tostr', 'upper', 'lower', 'charAt', 'slice']);
 const typeCache = new WeakMap();
@@ -231,6 +231,7 @@ export function show(x, p = 0) {
   if (op === 'upper') return `${show(a[0], 13)}.toUpperCase()`;
   if (op === 'lower') return `${show(a[0], 13)}.toLowerCase()`;
   if (op === 'retest') return `/${a[0].v}/${a[1].v}.test(${show(a[2])})`;
+  if (op === 'imul') return `Math.imul(${show(a[0])}, ${show(a[1])})`;
   return `${show(a[0], 13)}.${op}(${a.slice(1).map((e) => show(e)).join(', ')})`;
 }
 
@@ -265,6 +266,7 @@ export function toAst(x, nameOf = (n) => n) {
     case 'len': return t.memberExpression(A(0), t.identifier('length'));
     case 'upper': return call('toUpperCase', []);
     case 'lower': return call('toLowerCase', []);
+    case 'imul': return t.callExpression(t.memberExpression(t.identifier('Math'), t.identifier('imul')), [A(0), A(1)]);
     case 'retest': return t.callExpression(t.memberExpression(t.regExpLiteral(a[0].v, a[1].v), t.identifier('test')), [A(2)]);
     default: return call(op, a.slice(1).map((_, i) => A(i + 1)));
   }

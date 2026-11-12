@@ -1,14 +1,16 @@
 // API: solve(constraints[], { mode: 'find'|'prove', strCap, timeMs, maxConflicts })
 //        → { status:'sat', model: Map } | { status:'unsat', proof } | { status:'unknown', reason }
+//      solveAsync(constraints[], { backend: 'builtin'|'z3'|'auto', ...solve seçenekleri }) → aynı sonuç + backend
 //      implies(pc[], cond, opts) → { holds, proof|model }, intervalTruth(term) → true|false|null, stats (sayaçlar).
-// Kanıt biçimleri: simplify | interval | exhaustive | sat-drup {checked} | type-split {cases}.
+// Kanıt biçimleri: simplify | interval | exhaustive | sat-drup {checked} | type-split {cases} | z3 {checked: false}.
 import { Sat, checkDrup } from './sat.js';
 import { C, V, mk, types, onlyType, evaluate, vars, substitute, show, truthOf } from './ir.js';
 import { parseRegex, toNfa } from './regex.js';
 
 // Yol koşulu çözücüsü (E589/E590). Katmanlar ucuzdan pahalıya:
 //   1) sadeleştirme  2) aralık akıl yürütmesi  3) küçük alanlarda tüketici sayım  4) bit-blast + CDCL SAT
-// Neden z3 değil: z3-solver WASM paketi ~30 MB ve tarayıcıda SharedArrayBuffer (COOP/COEP başlıkları) ister;
+// Yerleşik motor budur; z3 (src/symbolic/z3/) yalnızca solveAsync üzerinden isteğe bağlı hızlandırıcıdır.
+// Neden z3 varsayılan değil: z3-solver WASM paketi ~30 MB ve tarayıcıda SharedArrayBuffer (COOP/COEP başlıkları) ister;
 // statik barındırılan PEEL'de bu başlıklar yok. Gizleyicilerin kullandığı işlemler (32 bit tamsayı aritmetiği,
 // bit işlemleri, karşılaştırma, sınırlı string) bit-blasting ile tam ve kesin modellenebiliyor.
 //
@@ -72,7 +74,7 @@ function ivRaw(x, memo) {
       for (const c of [a, b]) if (c.k === 'c' && Number.isInteger(c.v) && c.v >= 0 && c.v <= I32[1]) return [0, c.v];
       return I32;
     }
-    case '|': case '^': case '~': case '<<': return I32;
+    case '|': case '^': case '~': case '<<': case 'imul': return I32;
     case '>>': {
       const b = x.a[1];
       const a = A(0);
@@ -450,6 +452,12 @@ class Encoder {
         return { t: 'n', b: this.sext(A.slice(0, 32).map((p, i) => f(p, B[i])), W), nan: this.F };
       }
       case '~': return { t: 'n', b: this.sext(this.int32(N(0)).slice(0, 32).map((p) => -p), W), nan: this.F };
+      case 'imul': {
+        // Math.imul: tam çarpımın alt 32 biti (64 bitte kesin), işaretle genişletilir
+        const A = this.sext(this.int32(N(0)).slice(0, 32), 64);
+        const B = this.sext(this.int32(N(1)).slice(0, 32), 64);
+        return { t: 'n', b: this.sext(this.mul(A, B).slice(0, 32), W), nan: this.F };
+      }
       case '<<': case '>>': case '>>>': {
         const A = this.int32(N(0)).slice(0, 32);
         const Bn = N(1);
@@ -677,6 +685,72 @@ function enumerate(cs, vs) {
   return { status: 'unsat', proof: { method: 'exhaustive', cases: total, vars: list.map((v) => `${v.name}∈[${doms[list.indexOf(v)].length}]`) } };
 }
 
+// Bit genişliği: tüm sayısal ara terimler kesin tamsayı aralığında olmalı (z3 çevirisi de aynı genişliği kullanır)
+export function numericWidth(live) {
+  const memo = new Map();
+  let maxAbs = 2 ** 33;
+  let exact = true;
+  const walk = (x) => {
+    if (x.k === 'op') x.a.forEach(walk);
+    if (!onlyType(x, 'number')) return;
+    const r = iv(x, memo);
+    if (!r) { if (!(x.k === 'c' && Number.isNaN(x.v)) && !(x.k === 'op' && (x.op === '%' || x.op === 'charCodeAt'))) exact = false; return; }
+    maxAbs = Math.max(maxAbs, Math.abs(r[0]), Math.abs(r[1]));
+  };
+  live.forEach(walk);
+  if (!exact) return { reason: 'tamsayı olmayan ya da aralıksız sayı' };
+  if (maxAbs >= SAFE) return { reason: 'ara değer 2^53 sınırını aşabilir (double yuvarlaması)' };
+  return { W: Math.ceil(Math.log2(maxAbs + 1)) + 2, memo };
+}
+
+/**
+ * Arka uç seçmeli çözüm: 'builtin' (CDCL + bit-blast, DRUP denetimli), 'z3' (isteğe bağlı z3-solver; Node ya da
+ * cross-origin isolated tarayıcıda worker), 'auto' (önce yerleşik, bilinmiyorsa ve z3 varsa z3).
+ * z3'ün SAT modeli JS anlamıyla yeniden doğrulanır; UNSAT'ı denetlenmemiş kanıt ({ method: 'z3', checked: false })
+ * taşır: kod değiştiren tüketiciler (opaque-smt, korelasyon, E716) yalnızca denetlenmiş kanıta güvenir.
+ * @returns {Promise<{status, backend, model?, proof?, reason?}>}
+ */
+export async function solveAsync(constraints, { backend = 'auto', ...o } = {}) {
+  if (backend !== 'z3') {
+    const r = { ...solve(constraints, o), backend: 'builtin' };
+    if (r.status !== 'unknown' || backend === 'builtin') return r;
+    const { z3Available } = await import('./z3/z3.js');
+    if (!(await z3Available())) return r;
+  }
+  const { z3Solve } = await import('./z3/z3.js');
+  const prep = z3Prepare(constraints);
+  if (prep.reason) return { status: 'unknown', backend: 'z3', reason: prep.reason };
+  const z = await z3Solve(prep, o.timeMs ?? 5000);
+  if (z.status === 'sat') {
+    const model = new Map(Object.entries(z.model ?? {}));
+    for (const v of prep.vars) if (!model.has(v.name)) model.set(v.name, sample(v));
+    try { if (prep.live.every((c) => evaluate(c, model))) return { status: 'sat', backend: 'z3', model }; } catch { /* aşağıda */ }
+    return { status: 'unknown', backend: 'z3', reason: 'z3 modeli JS anlamıyla doğrulanamadı' };
+  }
+  if (z.status === 'unsat') return { status: 'unsat', backend: 'z3', proof: { method: 'z3', checked: false } };
+  return { status: 'unknown', backend: 'z3', reason: z.reason ?? 'z3: bilinmiyor' };
+}
+
+// z3'e gidecek tipli kısıtlar: 'any'/'num'/sınırsız string değişkenleri desteklenmez; karışık tipli ite dağıtılır
+function z3Prepare(constraints) {
+  const live = constraints.map((c) => distributeIte(mk('truthy', c))).filter((c) => !(c.k === 'c' && c.v));
+  if (live.some((c) => c.k === 'c')) return { live: [], vars: [], W: 34, terms: [C(false)] };
+  const vs = new Map();
+  for (const c of live) vars(c, vs);
+  for (const v of vs.values()) if (!['int32', 'int', 'bool'].includes(v.ty)) return { reason: `z3: desteklenmeyen değişken tipi ${v.ty}` };
+  const wd = numericWidth(live);
+  if (wd.reason) return { reason: wd.reason };
+  return { live, terms: live, vars: [...vs.values()].map((v) => ({ name: v.name, ty: v.ty, lo: v.lo, hi: v.hi })), W: wd.W };
+}
+export function distributeIte(x) {
+  if (x.k !== 'op') return x;
+  const a = x.a.map(distributeIte);
+  if (x.op !== 'ite') {
+    const k = a.findIndex((e) => e.k === 'op' && e.op === 'ite' && !sameType(e.a[1], e.a[2]));
+    if (k >= 0) return distributeIte(mk('ite', a[k].a[0], mk(x.op, ...a.map((e, j) => (j === k ? a[k].a[1] : e))), mk(x.op, ...a.map((e, j) => (j === k ? a[k].a[2] : e)))));
+  }
+  return mk(x.op, ...a);
+}
 // ── ana giriş ──────────────────────────────────────────
 export const stats = { calls: 0, sat: 0, unsat: 0, unknown: 0, satCalls: 0, ms: 0 };
 
@@ -724,21 +798,9 @@ function solveTyped(cs, vs, { mode, maxConflicts, deadline }) {
   if (!live.length) return { status: 'sat', model: new Map([...vs.values()].map((v) => [v.name, sample(v)])) };
   const en = enumerate(live, vs);
   if (en) return en;
-  // genişlik: tüm sayısal ara terimler kesin tamsayı aralığında olmalı
-  const memo = new Map();
-  let maxAbs = 2 ** 33;
-  let exact = true;
-  const walk = (x) => {
-    if (x.k === 'op') x.a.forEach(walk);
-    if (!onlyType(x, 'number')) return;
-    const r = iv(x, memo);
-    if (!r) { if (!(x.k === 'c' && Number.isNaN(x.v)) && !(x.k === 'op' && (x.op === '%' || x.op === 'charCodeAt'))) exact = false; return; }
-    maxAbs = Math.max(maxAbs, Math.abs(r[0]), Math.abs(r[1]));
-  };
-  live.forEach(walk);
-  if (!exact) return { status: 'unknown', reason: 'tamsayı olmayan ya da aralıksız sayı' };
-  if (maxAbs >= SAFE) return { status: 'unknown', reason: 'ara değer 2^53 sınırını aşabilir (double yuvarlaması)' };
-  const W = Math.ceil(Math.log2(maxAbs + 1)) + 2;
+  const wd = numericWidth(live);
+  if (wd.reason) return { status: 'unknown', reason: wd.reason };
+  const { W, memo } = wd;
   let enc;
   try {
     enc = new Encoder({ W, mode, ivMemo: memo });

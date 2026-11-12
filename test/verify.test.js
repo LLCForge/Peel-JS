@@ -19,7 +19,7 @@ import { rationaleLog } from '../src/verify/rationale.js';
 import { issueTemplate } from '../src/verify/template.js';
 import { runVerification, verificationSummary } from '../src/verify/run.js';
 import { compareProfiles } from '../src/sandbox/compare.js';
-import { shutdownZ3 } from '../src/verify/solver/z3.js';
+import { shutdownZ3 } from '../src/symbolic/z3/z3.js';
 
 const host = createHost(await getQuickJS());
 const sb = sandboxApi(async (m) => host.handle(m));

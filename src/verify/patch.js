@@ -3,7 +3,7 @@
 // değerlendiriciyle (ör. sandbox.batch) rastgele girdilerde doğrular ve koda uygular.
 import { parse } from '../core/parse.js';
 import { traverse, gen, generate } from '../util/ast.js';
-import { proveEquivalent } from './symbolic/api.js';
+import { proveEquivalent } from '../symbolic/verify.js';
 
 const SKIP = new Set(['start', 'end', 'loc', 'extra', 'range', 'leadingComments', 'trailingComments', 'innerComments', 'comments']);
 const HOLE = /^\$\d+$/;
@@ -117,7 +117,12 @@ export async function validateRule(rule, { evaluate = null, samples = 40, seed =
   const params = holeNames(rule).join(', ');
   const fa = `function a(${params}) { return (${rule.pattern}); }`;
   const fb = `function b(${params}) { return (${rule.replacement}); }`;
-  const smt = await proveEquivalent(fa, fb, { ...opts, minimize: true });
+  let smt = await proveEquivalent(fa, fb, { ...opts, minimize: true });
+  // kural kod değiştirir: z3'ün denetlenmemiş UNSAT'ı yerleşik çözücüyle (DRUP denetimli) yeniden kanıtlanmalı
+  if (smt.status === 'proved' && !smt.checked) {
+    const again = await proveEquivalent(fa, fb, { ...opts, backend: 'builtin', minimize: true, timeoutMs: Math.max(opts.timeoutMs ?? 5000, 10000) });
+    smt = again.status === 'proved' && again.checked ? again : { status: 'unknown', reason: 'z3 kanıtı yerleşik çözücüyle denetlenemedi' };
+  }
   if (smt.status === 'refuted') return { valid: false, method: 'smt', counterexample: smt.minimized ?? smt.counterexample };
   // SMT kanıtı yalnızca int32 girdiler içindir; değerlendirici varsa diğer tipler de denenir
   if (!evaluate) {
