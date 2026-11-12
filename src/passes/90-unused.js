@@ -112,7 +112,8 @@ export async function run(ast, { onLog, bump, level }) {
     VariableDeclarator(p) {
       if (!t.isIdentifier(p.node.id) || isExported(p)) return;
       const decl = p.parentPath;
-      if (decl.parentPath.isForStatement() || decl.parentPath.isForXStatement()) return;
+      // for (var n = e, r = 0; …): başka bildirim kalıyorsa kullanılmayan alias çıkarılabilir
+      if ((decl.parentPath.isForStatement() && decl.node.declarations.length === 1) || decl.parentPath.isForXStatement()) return;
       const b = p.scope.getBinding(p.node.id.name);
       if (!b || b.referenced || b.constantViolations.length) return;
       if (b.scope.path.isProgram() && !allowGlobal) return;

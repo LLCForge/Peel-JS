@@ -197,5 +197,18 @@ globalThis.__peelReads = {};
   Object.assign(navigator, prof.navigator || {});
   Object.assign(screen, prof.screen || {});
 })();
+// QuickJS "".fontcolor() gibi HTML yöntemlerini argümansız çağırınca hata verir; tarayıcılar
+// <font color="undefined"> üretir. jsfuck " karakterini buradan alır: tarayıcı davranışına eşitle.
+(function () {
+  try { "".fontcolor(); return; } catch (e) {}
+  var tags = { anchor: ["a", "name"], fontcolor: ["font", "color"], fontsize: ["font", "size"], link: ["a", "href"] };
+  Object.keys(tags).forEach(function (k) {
+    var tag = tags[k][0], attr = tags[k][1];
+    Object.defineProperty(String.prototype, k, { writable: true, configurable: true, value: function (v) {
+      if (this === null || this === undefined) throw new TypeError("String.prototype." + k + " called on null or undefined");
+      return "<" + tag + " " + attr + '="' + String(v).replace(/"/g, "&quot;") + '">' + String(this) + "</" + tag + ">";
+    } });
+  });
+})();
 globalThis.__peelBaseGlobals = Object.getOwnPropertyNames(globalThis);
 `;

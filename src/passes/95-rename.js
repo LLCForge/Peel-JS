@@ -35,6 +35,9 @@ export async function run(ast, { onLog, bump }) {
           if (!GENERATED.test(name)) continue;
           const prefix = PREFIX[binding.kind];
           if (!prefix) continue;
+          // class bildiriminin kendi kapsamındaki ad kopyası: dış bağ zaten yeniden adlandırıldı, ikinci kez adlandırmak
+          // sınıfı dış referanslardan koparır (class v6 {} ... new v1())
+          if (p.isClassDeclaration() && binding.identifier === p.node.id) continue;
           p.scope.rename(name, fresh(prefix));
           n++;
         }

@@ -18,6 +18,8 @@ const MAX_ARGS = 3;
 // string çözen fonksiyonlarda indir: aksi halde pad(5) gibi sıradan fonksiyonlar da sabitlenirdi.
 const DECODER_BODY = /fromCharCode|fromCodePoint|charCodeAt|\batob\b|\.slice\(|\.substr(ing)?\(|decodeURIComponent/;
 const DECODER_SRC = DECODER_BODY.source;
+// obfuscator.io stringArrayIndexesType: 'hexadecimal-numeric-string' ve 0.18 sürümü indeksi "0x1f" string'i olarak verir
+const isIndexLit = (v) => typeof v === 'number' || (typeof v === 'string' && /^-?0x[0-9a-f]+$/i.test(v));
 
 const PRELUDE = `
 var __peelFns = {};
@@ -80,8 +82,18 @@ const ROTATION = /\.push\([^;]*\.shift\(\)\)|\["push"\]\([^;]*\["shift"\]\(\)\)/
 // gövde metni fonksiyon başına bir kez üretilir: her çağrıda yeniden üretmek büyük dosyada O(çağrı × boyut)
 const rotationCache = new WeakMap();
 function isRotationFn(node) {
-  if (!rotationCache.has(node)) rotationCache.set(node, ROTATION.test(gen(node.body)));
+  // yalnızca değişken bildirimleri + tek döngüden oluşan gövde: rotasyonu içeren bütün bir paket/modül
+  // fonksiyonu (webpack-obfuscator loader'ı her modüle kendi tablosunu koyar) rotasyon sayılmaz
+  const own = (b) => t.isBlockStatement(b) && b.body.length <= 3 &&
+    b.body.every((s) => t.isVariableDeclaration(s) || t.isLoop(s)) && b.body.some((s) => t.isLoop(s));
+  if (!rotationCache.has(node)) rotationCache.set(node, own(node.body) && ROTATION.test(gen(node.body)));
   return rotationCache.get(node);
+}
+function isRotationStatement(s) {
+  if (!t.isExpressionStatement(s)) return false;
+  let e = s.expression;
+  if (t.isUnaryExpression(e)) e = e.argument;
+  return t.isCallExpression(e) && e.arguments.length > 0 && t.isFunction(e.callee) && isRotationFn(e.callee);
 }
 function inRotation(p) {
   return Boolean(p.findParent((x) => x.isFunction() && isRotationFn(x.node)));
@@ -90,9 +102,11 @@ function inRotation(p) {
 // Üst seviyedeki decoder altyapısı (string tablosu getter'ı, rotasyon IIFE'si, decoder ve alias'ları):
 // canlı koddan hiçbir referans kalmadıysa birlikte silinir. Sabit nokta: bir deyimin bildirdiği isim
 // aday kümesi dışından okunuyorsa o deyim kalır; rotasyon deyimi ancak dokunduğu her isim siliniyorsa gider.
-function removeInfrastructure(ast, decoderNames) {
-  let program = null;
-  traverse(ast, { Program(p) { program = p; p.stop(); } });
+// block verilirse (decoder bir fonksiyon gövdesinde: webpack-obfuscator loader'ı) aynı işlem o gövdede yapılır.
+function removeInfrastructure(ast, decoderNames, block = null) {
+  let program = block;
+  if (!program) traverse(ast, { Program(p) { program = p; p.stop(); } });
+  if (!program.node) return 0;
   program.scope.crawl();
   const names = (s) => {
     if (s.isFunctionDeclaration() && s.node.id) return [s.node.id.name];
@@ -108,7 +122,8 @@ function removeInfrastructure(ast, decoderNames) {
     s.node.declarations.every((d) => !d.init || t.isIdentifier(d.init) || t.isFunction(d.init)));
 
   const set = new Set(program.get('body').filter(candidate));
-  const top = (p) => (p.parentPath?.isProgram() ? p : p.findParent((x) => x.parentPath?.isProgram()));
+  const atTop = (x) => x.parentPath?.node === program.node;
+  const top = (p) => (atTop(p) ? p : p.findParent(atTop));
   const inSet = (p) => set.has(top(p));
   const owner = (p) => { const s = top(p); return set.has(s) ? s : undefined; };
 
@@ -196,7 +211,7 @@ function collectGroups(ast) {
       const lits = args.map(literalValue);
       if (lits.every((l) => l.ok)) {
         // sayı argümanlı çağrılar decoder adayı; yalnızca string argümanlılar (decode("ZOjM4E")) gövde decoder'a benziyorsa
-        if (lits.some((l) => typeof l.value === 'number')) g.numeric = (g.numeric ?? 0) + 1;
+        if (lits.some((l) => isIndexLit(l.value))) g.numeric = (g.numeric ?? 0) + 1;
         g.calls.push(p);
       } else {
         g.dynamic.push(p);
@@ -207,7 +222,7 @@ function collectGroups(ast) {
   const byBinding = [...groups.values()].filter((g) => {
     if ((g.calls.length > 0 || g.dynamic.length > 0) && looksLikeDecoder(g.binding)) return true;
     if ((g.numeric ?? 0) < MIN_CALLS) return false;
-    g.calls = g.calls.filter((c) => c.node.arguments.some((a) => typeof literalValue(a).value === 'number'));
+    g.calls = g.calls.filter((c) => c.node.arguments.some((a) => isIndexLit(literalValue(a).value)));
     return true;
   });
   // yol gruplarının decoder olup olmadığı çalışma anında, yakalanan fonksiyonun kaynağından anlaşılır
@@ -222,12 +237,34 @@ function looksLikeDecoder(b) {
   for (const v of b.constantViolations) {
     if (v.isAssignmentExpression() && t.isFunction(v.node.right)) fns.push(v.node.right);
   }
-  return fns.some((f) => DECODER_BODY.test(gen(f.body)));
+  return fns.some((f) => DECODER_BODY.test(gen(f.body)) || isIndexDecoder(f));
+}
+// kodlamasız obfuscator.io indeks decoder'ı: function a(t, n) { return t -= 220, s()[t]; }
+// (webpack-obfuscator loader'ı her modüle ayrı tablo koyar; tek modülde çağrı sayısı eşiğin altında kalabilir)
+function isIndexDecoder(f) {
+  const p = f.params[0];
+  if (!t.isIdentifier(p)) return false;
+  const src = gen(f.body);
+  const x = p.name.replace(/\$/g, '\\$');
+  return src.length < 300 && new RegExp(`${x}(?:-=|=${x}-)(?:0x[0-9a-f]+|\\d+)`, 'i').test(src) &&
+    new RegExp(`\\(\\)\\[${x}\\]|[\\w$]+\\[${x}\\]`).test(src);
 }
 
 export async function run(ast, ctx) {
   await resolveCalls(ast, ctx);
-  const removed = removeInfrastructure(ast, ctx.decoderNames ?? []);
+  let removed = removeInfrastructure(ast, ctx.decoderNames ?? []);
+  // fonksiyon gövdelerindeki altyapı: bu turda çözülen decoder'ların gövdeleri ve doğrudan bir rotasyon
+  // deyimi içeren gövdeler (decoder'ın çağrıları önceki turda bitmiş olabilir)
+  const blocks = new Set(ctx.decoderBlocks ?? []);
+  traverse(ast, {
+    BlockStatement(p) {
+      if (p.parentPath.isFunction() && p.node.body.some((s) => isRotationStatement(s))) blocks.add(p);
+    },
+  });
+  for (const block of blocks) {
+    if (attached(block)) removed += removeInfrastructure(ast, ctx.decoderNames ?? [], block);
+  }
+  ctx.decoderBlocks = null;
   if (removed) ctx.onLog(`runtime-decoders: decoder altyapısı kaldırıldı (${removed} deyim)`, 'info');
   ctx.bump('runtimeDecoder', removed);
 }
@@ -276,7 +313,7 @@ async function resolveCalls(ast, ctx) {
       // yol grubu: gövdesi string çözüyorsa ya da sayısal literal argümanla en az MIN_CALLS kez çağrılıyorsa
       // (js-confuser decoder'ı CFF sarmalayıcısının arkasında olabilir, kaynağı ipucu vermez)
       if (g.memberPath) {
-        const numeric = g.calls.filter((c) => c.node.arguments.some((a) => typeof literalValue(a).value === 'number')).length;
+        const numeric = g.calls.filter((c) => c.node.arguments.some((a) => isIndexLit(literalValue(a).value))).length;
         // eşik altındaki gruplar: her çağrı string vermeli ve değerlendirmede yan etki gözlenmemeli (aşağıda)
         g.strict = numeric < MIN_CALLS && (await sandbox.batchIn(opened.token, [`__peelSrcOk(${g.id})`])).results?.[0]?.value !== true;
       }
@@ -327,6 +364,14 @@ async function resolveCalls(ast, ctx) {
       if (n) onLog(`runtime-decoders: ${n}/${sites.length} dinamik çağrı çalışma anı gözlemiyle çözüldü`, 'info');
     }
     ctx.decoderNames = [...decoders].filter((g) => !g.memberPath).map((g) => g.binding.identifier.name);
+    // fonksiyon gövdesindeki decoder'ların gövdeleri (aynı gövde bir kez)
+    const blocks = new Map();
+    for (const g of decoders) {
+      const sp = g.memberPath ? null : g.binding.scope.path;
+      if (!sp?.isFunction() || !sp.get('body').isBlockStatement()) continue;
+      blocks.set(sp.node, sp.get('body'));
+    }
+    ctx.decoderBlocks = [...blocks.values()];
     bump('runtimeDecoder', total);
   } finally {
     await sandbox.close(opened.token);

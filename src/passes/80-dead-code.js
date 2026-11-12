@@ -128,7 +128,9 @@ function isLengthSpoofer(fnPath) {
 
 // obfuscator.io selfDefending / debugProtection / disableConsoleOutput: bir "callController" ile tek seferlik
 // çalıştırılan koruma geri çağrıları. Kodun kendi metnini regex ile tarar; biçimlendirilmiş kodda sonsuz döngüye girer.
-const GUARD_STRINGS = new Set(['(((.+)+)+)+$', 'function *\\( *\\)', '\\+\\+ *(?:[a-zA-Z_$][0-9a-zA-Z_$]*)']);
+const GUARD_STRINGS = new Set(['(((.+)+)+)+$', 'function *\\( *\\)', '\\+\\+ *(?:[a-zA-Z_$][0-9a-zA-Z_$]*)',
+  // javascript-obfuscator 0.x selfDefending: sıkıştırılmış fonksiyon metni ve \x/\u kaçışı testi
+  '\\w+ *\\(\\) *{\\w+ *[\'|"].+[\'|"];? *}', '(\\\\[x|u](\\w){2,4})+']);
 
 function isGuardCallback(node) {
   if (!t.isFunctionExpression(node) && !t.isArrowFunctionExpression(node)) return false;
