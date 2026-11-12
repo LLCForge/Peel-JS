@@ -176,6 +176,29 @@ function scalarizeRegisters(fnNode, name, used) {
   return true;
 }
 
+// Tablo dağıtımlı VM çevrildikten sonra handler tablosu (yalnızca yorumlayıcı kullanıyordu) kaldırılır
+function dropUnusedTable(fnNode, name) {
+  const body = t.isProgram(fnNode) ? fnNode.body : fnNode.body?.body;
+  if (!Array.isArray(body)) return;
+  let refs = 0;
+  let found = null;
+  walk(fnNode, (n) => {
+    if (t.isVariableDeclaration(n)) for (const d of n.declarations) if (t.isIdentifier(d.id, { name })) found = { decl: n, d };
+    if (t.isIdentifier(n, { name })) refs++;
+  });
+  if (!found || refs !== 1) return;
+  const { decl, d } = found;
+  // başlangıç değeri yalnızca fonksiyon ifadeleri içeren dizi/nesne olmalı: kaldırmak gözlenebilir bir şeyi değiştirmez
+  const inert = (x) => t.isFunctionExpression(x) || (t.isArrayExpression(x) && x.elements.every((e) => !e || t.isFunctionExpression(e))) ||
+    (t.isObjectExpression(x) && x.properties.every((p) => t.isObjectProperty(p) && !p.computed && t.isFunctionExpression(p.value)));
+  if (!inert(d.init)) return;
+  decl.declarations.splice(decl.declarations.indexOf(d), 1);
+  if (!decl.declarations.length) {
+    const visitList = (list) => { const i = list.indexOf(decl); if (i >= 0) list.splice(i, 1); };
+    walk(fnNode, (n) => { for (const k of ['body', 'consequent']) if (Array.isArray(n[k])) visitList(n[k]); });
+  }
+}
+
 // Çevrilemeyen VM: döngüye neden ve case'lere komut adı/anlam açıklaması
 function annotate(vm, a) {
   const loopNode = vm.stmtPath.node;
@@ -273,7 +296,7 @@ export async function run(ast, ctx) {
       t.addComment(a.lifted[0], 'leading', comment, false);
       if (!sites) {
         replaceInPlace(vm, a.lifted);
-        touched.push({ fn: vm.fnPath.node, regs: vm.roles.regs });
+        touched.push({ fn: vm.fnPath.node, regs: vm.roles.regs, table: vm.table });
       } else {
         const fnNode = vm.fnPath.node;
         const kp = keyPath(fnNode, vm.stmtPath.node);
@@ -288,7 +311,7 @@ export async function run(ast, ctx) {
         placeAt(clone, kp, a.lifted);
         vm.fnPath.insertAfter(clone);
         for (const s of g.sites) s.path.node.callee = t.identifier(name);
-        touched.push({ fn: clone, regs: vm.roles.regs });
+        touched.push({ fn: clone, regs: vm.roles.regs, table: vm.table });
       }
       anyOk = true;
       gi++;
@@ -307,7 +330,10 @@ export async function run(ast, ctx) {
       if (b && !b.referencePaths.some((r) => !r.findParent((x) => x === fn))) fn.remove();
     }
   }
-  for (const tch of touched) scalarizeRegisters(tch.fn, tch.regs, used);
+  for (const tch of touched) {
+    if (tch.table) dropUnusedTable(tch.fn, tch.table);
+    scalarizeRegisters(tch.fn, tch.regs, used);
+  }
   if (lifted) bump('vmLift', lifted);
 }
 

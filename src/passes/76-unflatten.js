@@ -451,6 +451,22 @@ function breaksLoop(stmts) {
   return found;
 }
 
+// Etiketsiz continue bu döngüyü mü hedefliyor? (kendi döngüsü içinde olmayan)
+function continuesLoop(stmts) {
+  let found = false;
+  const walk = (n, nested) => {
+    if (!n || typeof n !== 'object' || found || t.isFunction(n)) return;
+    if (t.isContinueStatement(n) && !n.label && !nested) { found = true; return; }
+    const inner = nested || t.isLoop(n);
+    for (const k of t.VISITOR_KEYS[n.type] ?? []) {
+      const v = n[k];
+      if (Array.isArray(v)) v.forEach((c) => walk(c, inner)); else walk(v, inner);
+    }
+  };
+  stmts.forEach((s) => walk(s, false));
+  return found;
+}
+
 const isEmptyBlock = (b) => t.isBlockStatement(b) && !b.body.length;
 const isJump = (s, type) => (type === 'continue' ? t.isContinueStatement(s) : t.isBreakStatement(s)) && !s.label;
 
@@ -474,10 +490,22 @@ function tidyList(stmts) {
       body.forEach((x) => dropLabel(x, label));
       body = tidyList(body);
       // sonda: if (C) { continue; } break;  →  do { … } while (C)
+      // (gövdede bu döngüye continue varsa olmaz: do-while'da continue koşulu da çalıştırır)
       const [last, prev] = [body[body.length - 1], body[body.length - 2]];
       if (isJump(last, 'break') && t.isIfStatement(prev) && !prev.alternate && t.isBlockStatement(prev.consequent) &&
-          prev.consequent.body.length === 1 && isJump(prev.consequent.body[0], 'continue')) {
+          prev.consequent.body.length === 1 && isJump(prev.consequent.body[0], 'continue') && !continuesLoop(body.slice(0, -2))) {
         return [t.doWhileStatement(prev.test, t.blockStatement(body.slice(0, -2)))];
+      }
+      // sonda: if (C) { continue; } else { Y } break;  →  do { … } while (C); Y
+      if (isJump(last, 'break') && t.isIfStatement(prev) && prev.alternate && !continuesLoop(body.slice(0, -2))) {
+        const asList = (b) => (t.isBlockStatement(b) ? b.body : [b]);
+        let [test, loopPart, exitPart] = [prev.test, asList(prev.consequent), asList(prev.alternate)];
+        if (!(loopPart.length === 1 && isJump(loopPart[0], 'continue')) && exitPart.length === 1 && isJump(exitPart[0], 'continue')) {
+          [test, loopPart, exitPart] = [negate(test), exitPart, loopPart];
+        }
+        if (loopPart.length === 1 && isJump(loopPart[0], 'continue') && !hasMachineJump(t.blockStatement(exitPart))) {
+          return [t.doWhileStatement(test, t.blockStatement(body.slice(0, -2))), ...exitPart];
+        }
       }
       // tek deyim: if (C) { X; continue; } else { Y }  →  while (C) { X } Y   (X döngüden break etmemeli)
       const only = body.length === 1 ? body[0] : body.length === 2 && isJump(body[1], 'break') ? body[0] : null;

@@ -80,26 +80,59 @@ function assignedNames(node) {
 const litValue = (n) => (t.isNumericLiteral(n) || t.isStringLiteral(n) ? n.value
   : t.isUnaryExpression(n, { operator: '-' }) && t.isNumericLiteral(n.argument) ? -n.argument.value : undefined);
 
-// if (op === 0) … else if (op === 1) … — konu ifadesi (op) ve kollar
+// if (op === 0) … else if (op === 1) … — konu ifadesi (op) ve kollar.
+// Olumsuz biçim de tanınır (çevrilmiş kodda sık): if (!(op === 0)) { if (!(op === 1)) … } else { kol 0 }
+function eqTest(test) {
+  let te = test;
+  let neg = false;
+  while (t.isUnaryExpression(te, { operator: '!' })) { te = te.argument; neg = !neg; }
+  if (!t.isBinaryExpression(te) || !['===', '==', '!==', '!='].includes(te.operator)) return null;
+  if (te.operator[0] === '!') neg = !neg;
+  let s = te.left;
+  let v = litValue(te.right);
+  if (v === undefined) { s = te.right; v = litValue(te.left); }
+  if (v === undefined) return null;
+  return { subject: s, value: v, neg };
+}
+
+function chainStep(cur) {
+  const eq = eqTest(cur.test);
+  if (!eq) return null;
+  const arm = eq.neg ? cur.alternate : cur.consequent;
+  const other = eq.neg ? cur.consequent : cur.alternate;
+  let next = other;
+  if (t.isBlockStatement(next) && next.body.length === 1 && t.isIfStatement(next.body[0])) next = next.body[0];
+  return { eq, arm, other, next: t.isIfStatement(next) ? next : null };
+}
+
+export function ifChainNodes(stmt) {
+  const nodes = new Set();
+  for (let cur = stmt; cur; ) {
+    const st = chainStep(cur);
+    if (!st) break;
+    nodes.add(cur);
+    cur = st.next;
+  }
+  return nodes;
+}
+
 function ifChain(stmt) {
   const arms = [];
   let subject = null;
+  let elseNode = null;
   let cur = stmt;
-  while (t.isIfStatement(cur)) {
-    const te = cur.test;
-    if (!t.isBinaryExpression(te) || !['===', '=='].includes(te.operator)) return null;
-    let s = te.left;
-    let v = litValue(te.right);
-    if (v === undefined) { s = te.right; v = litValue(te.left); }
-    if (v === undefined) return null;
-    const src = gen(s);
-    if (subject === null) subject = { node: s, src };
+  while (cur) {
+    const st = chainStep(cur);
+    if (!st || !st.arm) return null;
+    const src = gen(st.eq.subject);
+    if (subject === null) subject = { node: st.eq.subject, src };
     else if (subject.src !== src) return null;
-    arms.push({ key: v, node: cur.consequent });
-    cur = cur.alternate;
+    arms.push({ key: st.eq.value, node: st.arm });
+    if (st.next && chainStep(st.next)) cur = st.next;
+    else { elseNode = st.other ?? null; cur = null; }
   }
   if (arms.length < MIN_HANDLERS) return null;
-  return { subject: subject.node, arms, elseNode: cur ?? null };
+  return { subject: subject.node, arms, elseNode };
 }
 
 // Döngü gövdesinde dağıtım: switch / if-chain / tablo çağrısı
@@ -129,13 +162,13 @@ function resolveTable(loopPath, name) {
   const out = [];
   const fnOk = (f) => t.isFunctionExpression(f) && !f.params.length && !f.async && !f.generator;
   if (t.isArrayExpression(init)) {
-    init.elements.forEach((e, i) => { if (fnOk(e)) out.push({ key: i, fn: e }); });
+    init.elements.forEach((e, i) => { if (fnOk(e)) out.push({ key: i, fn: e, fnPath: b.path.get(`init.elements.${i}`) }); });
   } else if (t.isObjectExpression(init)) {
-    for (const p of init.properties) {
-      if (!t.isObjectProperty(p) || p.computed || !fnOk(p.value)) continue;
+    init.properties.forEach((p, i) => {
+      if (!t.isObjectProperty(p) || p.computed || !fnOk(p.value)) return;
       const key = t.isIdentifier(p.key) ? p.key.name : p.key.value;
-      out.push({ key: /^\d+$/.test(String(key)) ? Number(key) : key, fn: p.value });
-    }
+      out.push({ key: /^\d+$/.test(String(key)) ? Number(key) : key, fn: p.value, fnPath: b.path.get(`init.properties.${i}.value`) });
+    });
   }
   if (b.constantViolations.length || out.length < MIN_HANDLERS) return null;
   return out;
@@ -167,7 +200,8 @@ function inferRoles(handlerNodes, codeName, pcName) {
     walk(h, (n, parent) => {
       if (t.isCallExpression(n) && t.isMemberExpression(n.callee) && !n.callee.computed && t.isIdentifier(n.callee.object) &&
           ['push', 'pop'].includes(n.callee.property.name)) inc(pushPop, n.callee.object.name);
-      if (t.isMemberExpression(n) && n.computed && t.isIdentifier(n.object) && t.isUpdateExpression(n.property) && t.isIdentifier(n.property.argument)) {
+      if (t.isMemberExpression(n) && n.computed && t.isIdentifier(n.object) && n.object.name !== codeName && t.isUpdateExpression(n.property) &&
+          t.isIdentifier(n.property.argument) && n.property.argument.name !== pcName) {
         inc(spStore, `${n.object.name}|${n.property.argument.name}`);
       }
       if (t.isMemberExpression(n) && n.computed && t.isIdentifier(n.object) && n.object.name !== codeName) {
@@ -225,7 +259,7 @@ export function describeLoop(p) {
   } else {
     const tab = resolveTable(p, d.table);
     if (!tab) return null;
-    handlers = tab.map((h, i) => ({ key: h.key, index: i, node: h.fn.body, fn: h.fn }));
+    handlers = tab.map((h, i) => ({ key: h.key, index: i, node: h.fn.body, fn: h.fn, fnPath: h.fnPath }));
   }
   const roles = inferRoles(handlers.map((h) => h.node), fetch.code, fetch.pc);
   const fnPath = p.getFunctionParent() ?? p.findParent((x) => x.isProgram());

@@ -1,7 +1,7 @@
 import * as t from '@babel/types';
 import { gen } from '../../util/ast.js';
 import { literalOf } from '../../util/literal.js';
-import { walk, namesIn, isRefPos } from './detect.js';
+import { walk, namesIn, isRefPos, ifChainNodes } from './detect.js';
 import {
   Env, Entry, C, E, HOLE, fail, Unsupported, ev, exec, leaf, mapLeaves, leavesOf, concreteEntry,
   evalStatementExpr, flush, emit,
@@ -37,32 +37,47 @@ function classify(vm) {
     while (f && tableFns.has(f.node)) f = f.parentPath.getFunctionParent();
     return f?.node ?? null;
   };
-  const names = new Set();
-  const visit = (node) => walk(node, (n, par, k) => { if (t.isIdentifier(n) && isRefPos(par, k)) names.add(n.name); });
-  visit(loop.node);
-  tableFns.forEach(visit);
+  // ad → bağlama: döngüdeki adlar döngü kapsamında, tablo handler'larındaki adlar kendi fonksiyon kapsamında çözülür
+  const lookups = new Map();
+  const visit = (node, scope) => walk(node, (n, par, k) => {
+    if (!t.isIdentifier(n) || !isRefPos(par, k)) return;
+    const b = scope.getBinding(n.name) ?? null;
+    // farklı handler fonksiyonlarının kendi yerelleri (her çağrıda yeni) aynı adı taşıyabilir
+    const ownLocal = (x) => x && tableFns.has(x.scope.getFunctionParent()?.path.node);
+    if (lookups.has(n.name) && lookups.get(n.name) !== b && !(ownLocal(b) && ownLocal(lookups.get(n.name)))) fail(`ad çakışması: ${n.name}`);
+    lookups.set(n.name, b);
+  });
+  visit(loop.node, loop.scope);
+  for (const h of vm.style === 'table' ? vm.handlers : []) visit(h.fn, h.fnPath.scope);
+  const names = new Set(lookups.keys());
 
   const internal = new Set();
   const locals = new Set();
   const writeback = new Set();
   const external = new Set();
   let stackWriteback = false;
+  let stackFresh = true;
   const roles = vm.roles;
   for (const name of names) {
-    const b = loop.scope.getBinding(name);
+    const b = lookups.get(name);
     if (!b) { external.add(name); continue; }
     const ownerFn = b.scope.getFunctionParent()?.path.node ?? null;
-    const inVmFn = ownerFn === fnNode || (b.scope.path.isProgram() && !fnNode);
+    const inHandlerFn = tableFns.has(ownerFn);
+    const inVmFn = ownerFn === fnNode || (b.scope.path.isProgram() && !fnNode) || inHandlerFn;
     if (!inVmFn && !inside(b.path, loop)) { external.add(name); continue; }
     const refs = [...b.referencePaths, ...b.constantViolations];
     const captured = refs.some((p) => fnOf(p) !== fnNode) || (b.path.isVariableDeclarator() && fnOf(b.path) !== fnNode && !inside(b.path, loop));
-    const declInLoop = inside(b.path, loop);
+    const declInLoop = inside(b.path, loop) || inHandlerFn;
     const assigned = b.constantViolations.some(inRegion) || (declInLoop && b.path.isVariableDeclarator() && b.path.node.init);
     const outside = refs.filter((p) => !inRegion(p));
     if (name === roles.stack) {
       if (captured) fail('yığın bir closure tarafından yakalanıyor');
       if (b.constantViolations.some(inRegion)) fail('yığın döngüde yeniden atanıyor');
       stackWriteback = outside.some((p) => !b.constantViolations.includes(p) || inside(p, loop));
+      // yığın dışarıdan gelen bir diziyse (S = K[4]) her çıkışta (return dahil) son içerik geri yazılır
+      const init = b.path.isVariableDeclarator() ? b.path.node.init : null;
+      stackFresh = Boolean(init && t.isArrayExpression(init) && !init.elements.length && !b.constantViolations.length);
+      if (!stackFresh) stackWriteback = true;
       continue;
     }
     if (!assigned) {
@@ -90,7 +105,7 @@ function classify(vm) {
     if (b.referencePaths.every((r) => r.parentPath.isMemberExpression({ object: r.node }) && fnOf(r) === fnNode &&
         !(r.parentPath.parentPath.isCallExpression({ callee: r.parent })))) plainArrays.add(name);
   }
-  return { internal, locals, writeback, external, stackWriteback, inRegion, plainArrays };
+  return { internal, locals, writeback, external, stackWriteback, stackFresh, inRegion, plainArrays };
 }
 
 // Döngüdeki tüm atamaları somut değer üreten (literal, sayaç, bytecode okuması) değişken
@@ -144,7 +159,9 @@ function handlerLists(vm) {
 function stateVarsOf(vm, internal) {
   const pre = vm.body.slice(0, vm.dispatchIndex);
   const post = vm.body.slice(vm.dispatchIndex + 1);
-  const ctl = new Set([...(vm.test ? namesIn(vm.test) : []), ...(vm.update ? namesIn(vm.update) : [])]);
+  // döngü koşulu, güncellemesi ve dağıtım ifadesinin her turda okuduğu adlar
+  const ctl = new Set([...(vm.test ? namesIn(vm.test) : []), ...(vm.update ? namesIn(vm.update) : []),
+    ...(vm.style === 'table' ? namesIn(vm.disc) : [])]);
   const lists = handlerLists(vm);
   const state = new Set();
   for (const v of internal) {
@@ -159,12 +176,6 @@ function stateVarsOf(vm, internal) {
 }
 
 // ── lifter bağlamı ──────────────────────────────────────
-
-function chainIfs(node) {
-  const s = new Set();
-  for (let cur = node; t.isIfStatement(cur); cur = cur.alternate) s.add(cur);
-  return s;
-}
 
 export function collectNames(ast) {
   const used = new Set();
@@ -188,7 +199,7 @@ export function makeLifter(vm, values, { used = new Set(), mode = 'lift' } = {})
     temps: new Set(), slots: new Map(), countCache: new Map(), curList: null,
     dispatchStmt: vm.style === 'switch' || vm.style === 'table' ? vm.dispatch : null,
     regsSeen: new Set(), iter: { pc: null, reads: [], op: undefined }, opCounter: 0,
-    chainNodes: vm.style === 'if-chain' ? chainIfs(vm.dispatch) : null,
+    chainNodes: vm.style === 'if-chain' ? ifChainNodes(vm.dispatch) : null,
     semJumps: [],
     gensym(prefix) {
       const n = gensyms.get(prefix) ?? 0;
@@ -370,9 +381,9 @@ function canon(L, env) {
   return out;
 }
 
-function exitWriteback(L, env) {
+function exitWriteback(L, env, stackOnly = false) {
   settle(env);
-  for (const name of L.writeback) {
+  for (const name of stackOnly ? [] : L.writeback) {
     if (!env.conc.has(name)) continue;
     const lit = literalOf(t, env.conc.get(name));
     if (!lit) fail(`geri yazılamayan değer: ${name}`);
@@ -381,9 +392,7 @@ function exitWriteback(L, env) {
   if (L.stackWriteback) {
     const S = t.identifier(L.stackName);
     const nodes = env.stack.map((e) => t.cloneNode(e.node, true));
-    if ((L.values.stackInit ?? 0) > 0 || !nodes.length) {
-      if ((L.values.stackInit ?? 0) > 0) env.out.push(t.expressionStatement(t.assignmentExpression('=', t.memberExpression(S, t.identifier('length')), t.numericLiteral(0))));
-    }
+    if ((L.values.stackInit ?? 0) > 0 || !L.stackFresh) env.out.push(t.expressionStatement(t.assignmentExpression('=', t.memberExpression(S, t.identifier('length')), t.numericLiteral(0))));
     if (nodes.length) env.out.push(t.expressionStatement(t.callExpression(t.memberExpression(t.cloneNode(S), t.identifier('push')), nodes)));
     env.pending = null;
   }
@@ -407,7 +416,17 @@ export function codegen(L, ex) {
       return [...tree.out, t.ifStatement(tree.test, t.blockStatement(conv(tree.yes)), t.blockStatement(conv(tree.no)))];
     }
     const env = tree.env;
-    if (tree.end === 'ret') return env.out;
+    if (tree.end === 'ret') {
+      if (!L.stackWriteback || L.stackFresh || !L.stackName) return env.out;
+      // dışarıdan görünen yığın: dönüş değeri hesaplandıktan sonra, dönmeden önce yığın geri yazılır
+      const last = env.out.pop();
+      const tmp = L.gensym('_t');
+      L.temps.add(tmp);
+      const arg = last.argument ?? t.identifier('undefined');
+      env.out.push(t.expressionStatement(t.assignmentExpression('=', t.identifier(tmp), arg)));
+      const wb = exitWriteback(L, env, true);
+      return [...wb, t.isThrowStatement(last) ? t.throwStatement(t.identifier(tmp)) : t.returnStatement(t.identifier(tmp))];
+    }
     if (tree.end === 'exit') {
       const out = exitWriteback(L, env);
       return single ? out : [...out, setPc(-1)];

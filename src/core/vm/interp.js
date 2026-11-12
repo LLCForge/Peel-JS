@@ -135,7 +135,7 @@ export function flush(env, e) {
 }
 
 function use(e, parts) {
-  if (e.eff && e.used) fail(`etkili değer iki kez kullanılıyor: ${gen(e.node).slice(0, 60)}`);
+  if ((e.eff || e.fresh) && e.used) fail(`etkili değer iki kez kullanılıyor: ${gen(e.node).slice(0, 60)}`);
   e.used++;
   parts.push(e);
   return t.cloneNode(e.node, true);
@@ -181,15 +181,21 @@ export function asEntry(env, v) {
   }
   if (v.k === 'arr') return materialize(env, v.a);
   if (v.k === 'stack') fail('yığın dizisi değer olarak kullanılıyor');
+  if (v.k === 'smeth') fail('yığın metodu değer olarak kullanılıyor');
   return fail('bilinmeyen değer');
 }
 
+// Dizi literali oluşturmak yan etkisizdir: bekleyen değer boşaltılmaz; yeni nesne kimliği iki kez kullanılamaz
 function materialize(env, a) {
   if (a.mat) return a.mat;
   const parts = [];
   const node = t.arrayExpression(a.items.map((e) => use(e, parts)));
-  a.mat = mkEff(env, node, parts);
-  return a.mat;
+  const holdsPending = env.pending && parts.includes(env.pending);
+  const e = new Entry(node, holdsPending || parts.some((x) => x.eff), depsOf(parts));
+  e.fresh = true;
+  if (holdsPending) env.pending = e;
+  a.mat = e;
+  return e;
 }
 
 const isConcrete = (v) => v.k === 'c' || (v.k === 'e' && v.e.hasC);
@@ -260,7 +266,8 @@ function bind(env, name, v) {
     env.sym.delete(name);
     return;
   }
-  if (v.k === 'e' && (v.e.eff || v.e.deps.size) && readCount(env, name) > 1) flush(env, v.e);
+  // birden çok okunan etkili değer geçiciye alınır; saf (yalnızca bağımlılıklı) değer yazmada zaten kopyalanır
+  if (v.k === 'e' && v.e.eff && readCount(env, name) > 1) flush(env, v.e);
   env.sym.set(name, v);
   env.conc.delete(name);
 }
@@ -343,7 +350,12 @@ export function ev(n, env) {
         return asEntry(env, ev(x, env));
       });
       const els = ents.map((e) => (e ? use(e, parts) : null));
-      return E(mkEff(env, t.arrayExpression(els), parts));
+      // dizi literali yan etkisizdir: bekleyen değeri boşaltmaz, yeni kimlik bir kez kullanılır
+      const holdsPending = env.pending && parts.includes(env.pending);
+      const arr = new Entry(t.arrayExpression(els), holdsPending || parts.some((x) => x.eff), depsOf(parts));
+      arr.fresh = true;
+      if (holdsPending) env.pending = arr;
+      return E(arr);
     }
     case 'ObjectExpression': {
       const parts = [];
@@ -401,6 +413,8 @@ function member(n, env) {
   if (ov.k === 'stack') {
     if (!isConcrete(pv)) fail('sembolik yığın indeksi');
     if (cval(pv) === 'length') return C(env.stack.length);
+    // çevrilmiş kodda görülen biçim: _t = S.push; _t.apply(S, [x])
+    if (['push', 'pop'].includes(cval(pv))) return { k: 'smeth', m: cval(pv) };
     const i = intOf(pv);
     if (i === null) fail('yığın dizisinde özellik okuma');
     return i < env.stack.length ? E(stackPeek(env, i)) : C(undefined);
@@ -488,8 +502,23 @@ function call(n, env) {
     const ov = ev(callee.object, env);
     const pv = callee.computed ? ev(callee.property, env) : C(callee.property.name);
     const method = isConcrete(pv) ? cval(pv) : undefined;
+    if (ov.k === 'smeth') return stackMethodCall(n, env, ov.m, method);
     if (ov.k === 'stack') return stackMethod(n, env, method);
     if (ov.k === 'arr') return arrayMethod(n, env, ov.a, method);
+    // o.m.apply(o, [a, b]) → o.m(a, b): o saf ve aynı ifade (E114'teki .call kuralının apply karşılığı)
+    if (method === 'apply' && n.arguments.length === 2 && ov.k === 'e' && t.isMemberExpression(ov.e.node)) {
+      const self = ev(n.arguments[0], env);
+      const list = ev(n.arguments[1], env);
+      const se = self.k === 'e' ? self.e : null;
+      const literalList = list.k === 'e' && list.e.fresh && t.isArrayExpression(list.e.node) && list.e.node.elements.every((x) => x && !t.isSpreadElement(x));
+      if ((literalList || (list.k === 'arr' && !list.a.mat)) && se && !se.eff && !se.fresh && gen(ov.e.node.object) === gen(se.node)) {
+        const parts = [];
+        const callee = use(ov.e, parts);
+        const args = literalList ? use(list.e, parts).elements : list.a.items.map((x) => use(x, parts));
+        return E(mkEff(env, t.callExpression(callee, args), parts));
+      }
+      return residualCallWith(env, n, ov, pv, [self, list], false);
+    }
     if (isConcrete(ov) && method !== undefined) {
       const o = cval(ov);
       const args = n.arguments.map((a) => ev(a, env));
@@ -567,6 +596,26 @@ function stackMethod(n, env, method) {
     return { k: 'arr', a: new SymArray(env.stack.splice(start, count)) };
   }
   return fail(`yığında desteklenmeyen işlem: ${String(method)}`);
+}
+
+// S.push / S.pop bir değişkene alınıp apply/call ile çağrılmış: this yığınsa yığın işlemi
+function stackMethodCall(n, env, m, how) {
+  if (!['apply', 'call'].includes(how) || !n.arguments.length) fail('yığın metodu doğrudan çağrılıyor');
+  if (ev(n.arguments[0], env).k !== 'stack') fail('yığın metodu başka nesneyle çağrılıyor');
+  let items = [];
+  if (how === 'call') items = n.arguments.slice(1).map((a) => asEntry(env, ev(a, env)));
+  else if (n.arguments.length > 1) {
+    const list = n.arguments[1];
+    if (t.isArrayExpression(list) && list.elements.every((e) => e && !t.isSpreadElement(e))) items = list.elements.map((e) => asEntry(env, ev(e, env)));
+    else {
+      const v = ev(list, env);
+      if (v.k !== 'arr' || v.a.mat) fail('yığın metodu bilinmeyen argüman listesiyle');
+      items = v.a.items;
+    }
+  }
+  if (m === 'push') { env.stack.push(...items); return C(env.stack.length); }
+  if (items.length) fail('pop argümanlı');
+  return E(stackPop(env));
 }
 
 function arrayMethod(n, env, a, method) {

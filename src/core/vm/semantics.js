@@ -46,7 +46,8 @@ export const TEMPLATES = [
   { name: 'STORE', match: (p, ctx) => one(p, 1, []) && p[0].stmts.length === 1 && ctx.regs && new RegExp(`^${esc(ctx.regs)}\\[[^\\]]+\\]\\s*=\\s*\\${S(0)};$`).test(p[0].stmts[0]) },
   { name: 'STORE_NAME', match: (p) => one(p, 1, []) && p[0].stmts.length === 1 && new RegExp(`=\\s*\\${S(0)};$`).test(p[0].stmts[0]) },
   { name: 'SETPROP', match: (p) => one(p, 3, []) && p[0].stmts.length === 1 && p[0].stmts[0] === `${S(2)}[${S(1)}]=${S(0)};` },
-  { name: 'GETMETHOD', match: (p) => one(p, 2, [S(1), `${S(1)}[${S(0)}]`]) },
+  // nesne yerinde kalır, anahtar yerine metot gelir: [o, k] → [o, o[k]]
+  { name: 'GETMETHOD', match: (p) => one(p, 1, [`${S(1)}[${S(0)}]`]) || one(p, 2, [S(1), `${S(1)}[${S(0)}]`]) },
   { name: 'GETPROP', match: (p) => one(p, 2, [`${S(1)}[${S(0)}]`]) },
   { name: 'GETPROP_K', match: (p) => one(p, 1, null) && p[0].pushes.length === 1 && new RegExp(`^\\${S(0)}(\\[|\\.)`).test(p[0].pushes[0]) && !/\(/.test(p[0].pushes[0]) },
   { name: 'NEW', match: (p) => p.length === 1 && p[0].pushes.length === 1 && /^new /.test(p[0].pushes[0]) },
