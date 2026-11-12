@@ -18,6 +18,10 @@ function isInertInit(path) {
   const n = path.node;
   if (isLiteralTree(n) || t.isFunction(n) || t.isClassExpression(n) && !n.superClass) return true;
   if (t.isIdentifier(n)) return Boolean(path.scope.getBinding(n.name)) || n.name === 'undefined';
+  // Object.create(null) / Object.create({...}): yeni boş nesne, yan etkisiz
+  if (t.isCallExpression(n) && n.arguments.length === 1 && t.isMemberExpression(n.callee) && !n.callee.computed &&
+      t.isIdentifier(n.callee.object, { name: 'Object' }) && t.isIdentifier(n.callee.property, { name: 'create' }) &&
+      !path.scope.getBinding('Object') && (t.isNullLiteral(n.arguments[0]) || isLiteralTree(n.arguments[0]) && t.isObjectExpression(n.arguments[0]))) return true;
   return isFactoryIife(n);
 }
 
