@@ -24,38 +24,51 @@ import * as ssaOpt from '../passes/55-ssa-opt.js';
 import * as loopOpt from '../passes/57-loop-opt.js';
 import * as specializeFns from '../passes/58-specialize.js';
 import * as cfgOpt from '../passes/87-cfg-opt.js';
+import * as staticStrings from '../passes/31-static-strings.js';
+import * as integrity from '../passes/24-integrity.js';
+import * as confuser from '../passes/37-confuser.js';
+import * as indirection from '../passes/42-indirection.js';
+import * as flow from '../passes/78-flow.js';
+import * as deadExtra from '../passes/82-dead-extra.js';
+import * as sourcemap from '../passes/05-sourcemap.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
 // needs: 'sandbox' ise sandbox yokken pass atlanır (diğerleri bağlam varsa onu kullanır, yoksa da çalışır)
 export const PASSES = [
   { id: 'normalize',    level: 1, kind: 'text', needs: null,      mod: normalize },
+  { id: 'sourcemap',    level: 1, kind: 'text', needs: null,      mod: sourcemap },
   { id: 'unpack',       level: 1, kind: 'text', needs: null,      mod: unpack },
   { id: 'predecoders',  level: 1, kind: 'text', needs: 'sandbox', mod: predecoders },
+  { id: 'integrity',    level: 1, kind: 'ast',  needs: 'sandbox', mod: integrity },
   { id: 'literals',     level: 1, kind: 'ast',  needs: null,      mod: literals },
   { id: 'const-arrays', level: 1, kind: 'ast',  needs: null,      mod: constArrays },
   { id: 'const-objects', level: 1, kind: 'ast',  needs: null,      mod: constObjects },
   { id: 'wrappers',     level: 2, kind: 'ast',  needs: null,      mod: wrappers },
+  { id: 'static-strings', level: 2, kind: 'ast', needs: null,     mod: staticStrings },
   { id: 'string-array', level: 2, kind: 'ast',  needs: 'sandbox', mod: stringArray },
   { id: 'runtime-decoders', level: 2, kind: 'ast', needs: 'sandbox', mod: runtimeDecoders },
   { id: 'runtime-functions', level: 3, kind: 'ast', needs: 'sandbox', mod: runtimeFunctions },
+  { id: 'confuser',     level: 2, kind: 'ast',  needs: null,      mod: confuser },
   { id: 'proxy',        level: 2, kind: 'ast',  needs: null,      mod: proxy },
+  { id: 'indirection',  level: 2, kind: 'ast',  needs: null,      mod: indirection },
   { id: 'const-fold',   level: 1, kind: 'ast',  needs: 'sandbox', mod: constFold },
   { id: 'dead-code',    level: 2, kind: 'ast',  needs: null,      mod: deadCode },
   { id: 'opaque',       level: 2, kind: 'ast',  needs: null,      mod: opaque },
-  { id: 'state-var',    level: 3, kind: 'ast',  needs: null,      mod: stateVar },
-  { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
-  { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
-  { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
-  { id: 'simplify',     level: 2, kind: 'ast',  needs: null,      mod: simplify },
-  { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
-  { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },
-  // sembolik/derleyici pass'leri (turlar sabit noktaya kadar sürdüğü için sondan da etkili)
   { id: 'opaque-smt',   level: 2, kind: 'ast',  needs: null,      mod: opaqueSmt },
   { id: 'ssa-opt',      level: 3, kind: 'ast',  needs: null,      mod: ssaOpt },
   { id: 'loop-opt',     level: 3, kind: 'ast',  needs: null,      mod: loopOpt },
   { id: 'specialize',   level: 4, kind: 'ast',  needs: null,      mod: specializeFns },
+  { id: 'state-var',    level: 3, kind: 'ast',  needs: null,      mod: stateVar },
+  { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
+  { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
+  { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
+  { id: 'flow',         level: 2, kind: 'ast',  needs: null,      mod: flow },
+  { id: 'simplify',     level: 2, kind: 'ast',  needs: null,      mod: simplify },
   { id: 'cfg-opt',      level: 3, kind: 'ast',  needs: null,      mod: cfgOpt },
+  { id: 'dead-extra',   level: 2, kind: 'ast',  needs: null,      mod: deadExtra },
+  { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
+  { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },
 ];
 
 export const byId = (id) => PASSES.find((p) => p.id === id);

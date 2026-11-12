@@ -10,7 +10,7 @@ import { literalValue } from '../util/pure.js';
 const keyName = (k, computed) => (!computed && t.isIdentifier(k) ? k.name : t.isStringLiteral(k) ? k.value : null);
 
 // function (a, b) { return a OP b; } → OP;  function (f, ...xs) { return f(...xs); } → 'call'
-function proxyKind(fn) {
+export function proxyKind(fn) {
   if (!t.isFunctionExpression(fn) || fn.async || fn.generator || fn.body.body.length !== 1) return null;
   const ret = fn.body.body[0];
   if (!t.isReturnStatement(ret) || !ret.argument || !fn.params.every((p) => t.isIdentifier(p))) return null;
@@ -27,7 +27,7 @@ function proxyKind(fn) {
   return null;
 }
 
-function expand(kind, args) {
+export function expand(kind, args) {
   if (kind.type === 'binary') return t.binaryExpression(kind.operator, args[0], args[1]);
   if (kind.type === 'logical') return t.logicalExpression(kind.operator, args[0], args[1]);
   // f this'siz çağrılıyordu: o.m gibi bir üye ifadesini (0, o.m)(…) yaparak this bağlamasını koru

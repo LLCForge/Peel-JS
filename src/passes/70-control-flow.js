@@ -1,5 +1,6 @@
 import * as t from '@babel/types';
 import { traverse, gen } from '../util/ast.js';
+import { isPureExpr } from '../util/pure.js';
 
 // obfuscator.io control flow flattening:
 //   var o = "2|0|1".split("|"), i = 0;
@@ -9,14 +10,20 @@ import { traverse, gen } from '../util/ast.js';
 const alwaysTrue = (n) =>
   t.isBooleanLiteral(n, { value: true }) || (t.isNumericLiteral(n) && n.value !== 0) || ['!![]', '!0'].includes(gen(n));
 
+// Sıra anahtarları türüyle tutulur: switch === ile karşılaştırır, "2" ile 2 eşleşmez
+const keyOf = (v) => `${typeof v}:${v}`;
+
 function staticOrder(binding) {
   if (!binding?.constant || !binding.path.isVariableDeclarator()) return null;
   const init = binding.path.node.init;
+  // E152: sayı (ya da string) dizisi: var o = [2, 0, 1]
+  if (t.isArrayExpression(init) && init.elements.length &&
+      init.elements.every((e) => t.isNumericLiteral(e) || t.isStringLiteral(e))) return init.elements.map((e) => keyOf(e.value));
   if (!t.isCallExpression(init) || init.arguments.length !== 1 || !t.isStringLiteral(init.arguments[0])) return null;
   const callee = init.callee;
   if (!t.isMemberExpression(callee) || !t.isStringLiteral(callee.object)) return null;
   if (!(t.isIdentifier(callee.property, { name: 'split' }) && !callee.computed)) return null;
-  return callee.object.value.split(init.arguments[0].value);
+  return callee.object.value.split(init.arguments[0].value).map(keyOf);
 }
 
 // Case gövdesinde, sondaki dışında dispatcher'ı hedefleyen break/continue var mı?
@@ -40,7 +47,20 @@ function hasStrayJump(stmts) {
 const isLexical = (s) => t.isFunctionDeclaration(s) || t.isClassDeclaration(s) ||
   (t.isVariableDeclaration(s) && s.kind !== 'var');
 
-function flatten(p) {
+// Dispatcher biçimi: while (true) { switch (o[i++]) { … } break; } — sıra değişkeni ve indeks bağlamaları
+function dispatcherOf(p) {
+  if (p.parentPath.isLabeledStatement() || !alwaysTrue(p.node.test)) return null;
+  const body = p.node.body;
+  if (!t.isBlockStatement(body) || body.body.length !== 2) return null;
+  const [sw, brk] = body.body;
+  if (!t.isSwitchStatement(sw) || !t.isBreakStatement(brk) || brk.label) return null;
+  const d = sw.discriminant;
+  if (!t.isMemberExpression(d) || !d.computed || !t.isIdentifier(d.object)) return null;
+  if (!t.isUpdateExpression(d.property, { operator: '++', prefix: false }) || !t.isIdentifier(d.property.argument)) return null;
+  return { orderB: p.scope.getBinding(d.object.name), idxB: p.scope.getBinding(d.property.argument.name) };
+}
+
+function flatten(p, observed = null) {
   if (p.parentPath.isLabeledStatement() || !alwaysTrue(p.node.test)) return false;
   const body = p.node.body;
   if (!t.isBlockStatement(body) || body.body.length !== 2) return false;
@@ -53,15 +73,15 @@ function flatten(p) {
 
   const orderB = p.scope.getBinding(d.object.name);
   const idxB = p.scope.getBinding(d.property.argument.name);
-  const order = staticOrder(orderB);
-  if (!order || orderB.referencePaths.length !== 1) return false;
+  const order = observed ?? staticOrder(orderB);
+  if (!order || !orderB?.constant || orderB.referencePaths.length !== 1) return false;
   if (!idxB?.path.isVariableDeclarator() || !t.isNumericLiteral(idxB.path.node.init)) return false;
   if (idxB.constantViolations.length !== 1 || idxB.referencePaths.some((r) => r.parent !== d.property)) return false;
 
   const cases = new Map();
   for (const c of sw.cases) {
     if (!c.test) return false;
-    const lit = t.isStringLiteral(c.test) || t.isNumericLiteral(c.test) ? String(c.test.value) : null;
+    const lit = t.isStringLiteral(c.test) || t.isNumericLiteral(c.test) ? keyOf(c.test.value) : null;
     if (lit === null) return false;
     const stmts = c.consequent.slice();
     const last = stmts[stmts.length - 1];
@@ -91,15 +111,50 @@ function flatten(p) {
   return true;
 }
 
-export async function run(ast, { onLog, bump }) {
+// E154: sıra ifadesi statik değilse (decoder çağrısı, hesaplanmış string) ama programın sabit tablolarından
+// deterministik olarak üretiliyorsa (isPureExpr programFns) değerlendirme bağlamında çalıştırılıp gözlenir.
+// Deterministik ifade her çalıştırmada aynı sırayı verir: gözlenen sıra ile düzleştirme birebir eşdeğerdir.
+async function observeOrders(ast, { sandbox, ctx }) {
+  if (!ctx) return new Map();
+  const jobs = [];
+  traverse(ast, {
+    WhileStatement(p) {
+      const d = dispatcherOf(p);
+      if (!d?.orderB?.constant || !d.orderB.path.isVariableDeclarator() || staticOrder(d.orderB)) return;
+      const init = d.orderB.path.get('init');
+      if (!init.node || !isPureExpr(init, { programFns: true })) return;
+      jobs.push({ node: p.node, src: `JSON.stringify(${gen(init.node)})` });
+    },
+  });
+  const out = new Map();
+  if (!jobs.length) return out;
+  const r = await sandbox.batchIn(ctx, jobs.map((j) => j.src));
+  if (!r.ok) return out;
+  jobs.forEach((j, i) => {
+    const v = r.results[i];
+    if (!v?.ok || v.type !== 'string') return;
+    let arr;
+    try { arr = JSON.parse(v.value); } catch { return; }
+    if (Array.isArray(arr) && arr.length && arr.every((x) => typeof x === 'string' || (typeof x === 'number' && Number.isFinite(x)))) {
+      out.set(j.node, arr.map(keyOf));
+    }
+  });
+  return out;
+}
+
+export async function run(ast, { onLog, bump, sandbox, ctx }) {
+  const observed = await observeOrders(ast, { sandbox, ctx });
   let n = 0;
+  let traced = 0;
   traverse(ast, {
     WhileStatement: {
       exit(p) {
-        if (flatten(p)) n++;
+        const order = observed.get(p.node) ?? null;
+        if (flatten(p, order)) { n++; if (order) traced++; }
       },
     },
   });
-  if (n) onLog(`control-flow: ${n} dispatcher düzleştirildi`, 'info');
+  if (n) onLog(`control-flow: ${n} dispatcher düzleştirildi${traced ? ` (${traced} sıra çalışma anında gözlendi)` : ''}`, 'info');
   bump('controlFlow', n);
+  bump('controlFlowTraced', traced);
 }

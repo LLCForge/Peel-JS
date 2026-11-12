@@ -3,8 +3,10 @@ import { parse } from './parse.js';
 import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
 import { encodingReport } from './encodings.js';
+import { analysisReport } from '../analysis/report.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
 import { symbolicReport } from '../symbolic/report.js';
+import { engineReport } from './engine-report.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
 // fingerprint okumaları ve kalite metrikleri. Statik kısım AST'den, dinamik kısım sandbox'tan gelir.
@@ -172,7 +174,7 @@ async function runtimeScan(sandbox, text, config) {
   };
 }
 
-export async function analyze({ input, text, output, events = [], sandbox = null, config = null }) {
+export async function analyze({ input, text, output, events = [], sandbox = null, config = null, stats = null, trace = null }) {
   const before = staticScan(text ?? input);
   const after = staticScan(output);
   const runtime = await runtimeScan(sandbox, text ?? input, config);
@@ -180,6 +182,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
   for (const e of events) passTimes[e.id] = (passTimes[e.id] ?? 0) + e.ms;
   const found = iocs(after.strings, output);
   const classes = classify({ code: output, runtime, iocs: found, apis: after.apis });
+  // E-U/E-V: semantik modeller, veri akışı ve analiz altyapısı (trace verilmişse pass kayıtları)
+  const semantics = await analysisReport({ text: text ?? input, output, sandbox, config, trace });
   return {
     fingerprint: fingerprint(input),
     iocs: found,
@@ -198,6 +202,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
     regexes: after.regexes,
     runtime,
     rollbacks: events.filter((e) => e.state === 'fail'),
+    // çözme motoru analizleri: obfuscator ayarları, akış, bütünlük, paket modülleri (stats verilmezse ölü kod dağılımı rapor tarafında stats'tan)
+    engine: engineReport({ input, text, output, stats }),
     passTimes: Object.entries(passTimes).map(([id, ms]) => ({ id, ms })).sort((a, b) => b.ms - a.ms),
     metrics: {
       inBytes: input.length,
@@ -210,7 +216,16 @@ export async function analyze({ input, text, output, events = [], sandbox = null
       functions: after.functions,
       outputHash: fnv1a(output),
     },
-    // sembolik yürütme, concolic, SMT kanıtları, nokta/etki/taint analizleri, değişmezler
-    symbolic: await symbolicReport({ text: text ?? input, output, sandbox }).catch((e) => ({ skipped: e.message })),
+    semantics,
+    // sembolik yürütme, concolic, SMT kanıtları, nokta/etki/taint, değişmezler: pahalı, isteğe bağlı
+    // report.symbolic() ilk çağrıda hesaplar (rapor bölümü açılınca); sonuç report.symbolicData'ya yazılır
+    symbolic: lazySymbolic({ text: text ?? input, output, sandbox }),
   };
+}
+
+// Tek seferlik tembel hesap: fonksiyon (JSON dışa aktarımda görünmez), sonuç önbellekte
+export function lazySymbolic(args) {
+  let p = null;
+  const fn = () => (p ??= symbolicReport(args).catch((e) => ({ skipped: e.message })).then((r) => { fn.data = r; return r; }));
+  return fn;
 }

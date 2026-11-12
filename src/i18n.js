@@ -1,3 +1,6 @@
+import { UI_TR, UI_EN } from './ui/i18n-ui.js';
+import { EXTRA_LANGS } from './ui/i18n-langs.js';
+
 // Arayüz metinleri. Pass log'ları ve rapordaki teknik etiketler şimdilik Türkçe kalır.
 const DICT = {
   tr: {
@@ -118,6 +121,23 @@ const DICT = {
     'stat.proxy': 'proxy', 'stat.constFold': 'katlama', 'stat.deadCode': 'ölü kod', 'stat.opaque': 'sabit test',
     'stat.stateVar': 'durum değişkeni', 'stat.vm': 'VM', 'stat.controlFlow': 'akış', 'stat.unused': 'kullanılmayan',
     'stat.rename': 'isim',
+    'report.engine': 'Çözme motoru analizi',
+    'report.engine.obf': 'obfuscator.io ayarları (tahmin)',
+    'report.engine.flow': 'Akış raporu',
+    'report.engine.flowStats': 'Fonksiyon {f} · döngü {l} · en derin iç içelik {d} · toplam karmaşıklık {c} · dispatcher {b} → {a}',
+    'report.engine.recursion': 'Özyineleme',
+    'report.engine.recursion.none': 'Özyinelemeli fonksiyon yok.',
+    'report.engine.complex': 'En karmaşık fonksiyonlar',
+    'report.engine.unresolved': 'Açılamayan durum makineleri (Mermaid / DOT)',
+    'report.engine.integrity': 'Bütünlük ve konsol kontrolleri',
+    'report.engine.integrity.summary': '{n} kontrol bulundu · {x} etkisizleştirildi · çıktıda kalan {r}',
+    'report.engine.integrity.none': 'Bütünlük (hash/kaynak) kontrolü bulunamadı.',
+    'report.engine.console': 'Konsol tespiti / müdahalesi',
+    'report.engine.dead': 'Ölü kod türleri',
+    'report.engine.dead.none': 'Türüne göre sayılmış ölü kod yok.',
+    'report.engine.bundle': 'Paket modülleri ({k})',
+    'report.engine.bundle.none': 'Paket (webpack/esbuild/browserify/kaynak haritalı) yapısı bulunamadı.',
+    'report.semantics': 'Semantik analiz',
     'report.sym': 'Sembolik analiz ve derleyici analizleri',
     'report.sym.none': 'Sembolik analiz sonucu yok.',
     'report.sym.opaque': 'Kanıtlanan opaque predicate\'ler',
@@ -135,6 +155,9 @@ const DICT = {
     'report.sym.specs': 'Çağrı dizisi kuralları',
     'report.sym.solver': 'Çözücü',
     'report.sym.trace': 'Sembolik iz örneği',
+    'report.sym.open': 'Sembolik analizi çalıştır (birkaç saniye sürebilir)',
+    'report.sym.pending': 'Bölüm açılınca hesaplanır.',
+    'report.sym.loading': 'Sembolik analiz çalışıyor…',
   },
   en: {
     'brand.sub': 'JS DEOBFUSCATOR',
@@ -254,6 +277,23 @@ const DICT = {
     'stat.proxy': 'proxies', 'stat.constFold': 'folds', 'stat.deadCode': 'dead code', 'stat.opaque': 'opaque tests',
     'stat.stateVar': 'state vars', 'stat.vm': 'VMs', 'stat.controlFlow': 'flows', 'stat.unused': 'unused',
     'stat.rename': 'renames',
+    'report.engine': 'Deobfuscation engine analysis',
+    'report.engine.obf': 'obfuscator.io settings (inferred)',
+    'report.engine.flow': 'Flow report',
+    'report.engine.flowStats': 'Functions {f} · loops {l} · max nesting {d} · total complexity {c} · dispatchers {b} → {a}',
+    'report.engine.recursion': 'Recursion',
+    'report.engine.recursion.none': 'No recursive functions.',
+    'report.engine.complex': 'Most complex functions',
+    'report.engine.unresolved': 'Unresolved state machines (Mermaid / DOT)',
+    'report.engine.integrity': 'Integrity and console checks',
+    'report.engine.integrity.summary': '{n} checks found · {x} neutralized · {r} left in output',
+    'report.engine.integrity.none': 'No integrity (hash/source) checks found.',
+    'report.engine.console': 'Console detection / tampering',
+    'report.engine.dead': 'Dead code by type',
+    'report.engine.dead.none': 'No dead code counted by type.',
+    'report.engine.bundle': 'Bundle modules ({k})',
+    'report.engine.bundle.none': 'No bundle (webpack/esbuild/browserify/source-mapped) structure found.',
+    'report.semantics': 'Semantic analysis',
     'report.sym': 'Symbolic analysis and compiler analyses',
     'report.sym.none': 'No symbolic analysis results.',
     'report.sym.opaque': 'Proven opaque predicates',
@@ -271,6 +311,9 @@ const DICT = {
     'report.sym.specs': 'Call sequence rules',
     'report.sym.solver': 'Solver',
     'report.sym.trace': 'Sample symbolic trace',
+    'report.sym.open': 'Run symbolic analysis (may take a few seconds)',
+    'report.sym.pending': 'Computed when opened.',
+    'report.sym.loading': 'Symbolic analysis running…',
   },
 };
 
@@ -312,36 +355,61 @@ const DATA_EN = {
   davranış: 'behaviour changed',
 };
 
-// Rapor verisindeki etiketi etkin dile çevirir (karşılığı yoksa olduğu gibi)
-export const td = (s) => (lang === 'en' && s && DATA_EN[s]) || s;
+// Arayüz katmanının metinleri ve ek diller (DE/ES/AR) ayrı dosyalarda; burada birleştirilir
+Object.assign(DICT.tr, UI_TR);
+Object.assign(DICT.en, UI_EN);
+for (const [code, dict] of Object.entries(EXTRA_LANGS)) DICT[code] = dict;
+
+// Desteklenen diller: [kod, kendi dilindeki adı]. ar sağdan sola yazılır.
+export const LANGS = [['tr', 'Türkçe'], ['en', 'English'], ['de', 'Deutsch'], ['es', 'Español'], ['ar', 'العربية']];
+const RTL = new Set(['ar']);
+const CODES = LANGS.map(([c]) => c);
+
+// Rapor verisindeki etiketi etkin dile çevirir (karşılığı yoksa olduğu gibi); TR dışı diller İngilizce veri etiketi alır
+export const td = (s) => (lang !== 'tr' && s && DATA_EN[s]) || s;
 
 const KEY = 'peel.lang';
 let lang = (() => {
   try {
     const saved = localStorage.getItem(KEY);
-    if (saved === 'tr' || saved === 'en') return saved;
+    if (CODES.includes(saved)) return saved;
   } catch { /* depolama kapalı */ }
-  return navigator.language?.toLowerCase().startsWith('tr') ? 'tr' : 'en';
+  const nav = navigator.language?.toLowerCase().slice(0, 2);
+  return CODES.includes(nav) ? nav : 'en';
 })();
 
 export const getLang = () => lang;
+export const isRtl = () => RTL.has(lang);
 
+// Eksik anahtar: TR dışı dillerde önce İngilizceye, sonra Türkçeye düşer
 export function t(key, vars = {}) {
-  const s = DICT[lang][key] ?? DICT.tr[key] ?? key;
+  const s = DICT[lang]?.[key] ?? (lang !== 'tr' ? DICT.en[key] : undefined) ?? DICT.tr[key] ?? key;
   return s.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
 }
 
-// data-i18n (metin), data-i18n-placeholder, data-i18n-label (aria-label) özniteliklerini doldurur
+// data-i18n (metin), data-i18n-placeholder, data-i18n-label (aria-label), data-i18n-title özniteliklerini doldurur
 export function applyI18n(root = document) {
   document.documentElement.lang = lang;
+  document.documentElement.dir = RTL.has(lang) ? 'rtl' : 'ltr';
   for (const el of root.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
   for (const el of root.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder);
   for (const el of root.querySelectorAll('[data-i18n-label]')) el.setAttribute('aria-label', t(el.dataset.i18nLabel));
+  for (const el of root.querySelectorAll('[data-i18n-title]')) el.title = t(el.dataset.i18nTitle);
 }
 
-export function toggleLang() {
-  lang = lang === 'tr' ? 'en' : 'tr';
+const listeners = new Set();
+export const onLang = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+
+export function setLang(code) {
+  if (!CODES.includes(code)) return lang;
+  lang = code;
   try { localStorage.setItem(KEY, lang); } catch { /* depolama kapalı */ }
   applyI18n();
+  for (const fn of listeners) fn(lang);
   return lang;
+}
+
+// Sıradaki dile geç (dil düğmesi)
+export function toggleLang() {
+  return setLang(CODES[(CODES.indexOf(lang) + 1) % CODES.length]);
 }
