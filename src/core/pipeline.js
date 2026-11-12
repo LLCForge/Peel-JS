@@ -4,6 +4,8 @@ import { raw, pretty } from './emit.js';
 import { fnv1a } from '../util/hash.js';
 import { PASSES } from './registry.js';
 import { snapshot, same } from './behavior.js';
+import { rationale } from '../verify/rationale.js';
+import { getSettings } from '../sandbox/settings.js';
 
 const MAX_ROUNDS = 25;
 const CONTEXT_MAX_LEN = 2_000_000;
@@ -15,7 +17,7 @@ const DEEP_MAX_LEN = 1_000_000; // QuickJS'te 1 MB'lık programı çalıştırma
  * @param {object|null} o.sandbox  sandboxApi uyumlu nesne; null ise sandbox pass'leri atlanır
  */
 export async function deobfuscate(input, {
-  level = 2, only = null, sandbox = null, deep = false, signal = null,
+  level = 2, only = null, sandbox = null, deep = false, signal = null, verifyLevel = null,
   onLog = () => {}, onProgress = () => {}, onPass = () => {}, onSnapshot = () => {},
 } = {}) {
   const stats = {};
@@ -32,14 +34,18 @@ export async function deobfuscate(input, {
   const tick = () => onProgress(Math.min(99, Math.round((++step / totalSteps) * 100)));
 
   const ctx = { onLog, bump, level, sandbox, ctx: null };
+  // E720: doğrulama seviyesi — parse her zaman; behaviour = console; effects ve üstü = console + gözlenebilir etkiler
+  const vLevel = verifyLevel ?? (deep ? getSettings().verifyLevel : 'parse');
+  const behaviourCheck = deep && !['none', 'parse'].includes(vLevel);
+  const effectsCheck = behaviourCheck && vLevel !== 'behaviour';
 
   // Pass başına süre ve sonuç: rapor ve zaman çizelgesi için
   const events = [];
   let passStart = 0;
   let round = 0;
-  const pass = (id, state, reason) => {
+  const pass = (id, state, reason, extra = null) => {
     if (state === 'run') passStart = performance.now();
-    else events.push({ id, round, state, ms: Math.round(performance.now() - passStart), reason });
+    else events.push({ id, round, state, ms: Math.round(performance.now() - passStart), reason, ...extra });
     onPass(id, state);
   };
 
@@ -88,11 +94,11 @@ export async function deobfuscate(input, {
       }
     }
 
-    if (deep && sandbox) {
+    if (behaviourCheck && sandbox) {
       if (text.length > DEEP_MAX_LEN) {
         onLog('derin doğrulama kapalı: kod çok büyük', 'warn');
       } else {
-        const snap = await snapshot(sandbox, code);
+        const snap = await snapshot(sandbox, code, { effects: effectsCheck });
         checkAbort();
         if (snap.ok) {
           baseline = snap;
@@ -135,7 +141,7 @@ export async function deobfuscate(input, {
           continue;
         }
         if (baseline) {
-          const snap = await snapshot(sandbox, v.code);
+          const snap = await snapshot(sandbox, v.code, { effects: effectsCheck });
           checkAbort();
           if (!same(baseline, snap)) {
             onLog(`${p.id}: davranış değişti, geri alındı`, 'warn');
@@ -144,9 +150,11 @@ export async function deobfuscate(input, {
             continue;
           }
         }
+        // E718: gerekçe kaydı (özetler, boyut farkı, doğrulama düzeyi, gözlemle çözülen değerler)
+        const why = rationale(p, code, v.code, baseline ? (effectsCheck ? 'effects' : 'behaviour') : 'parse', ast);
         code = v.code;
         changed = true;
-        pass(p.id, 'ok');
+        pass(p.id, 'ok', undefined, why);
         onSnapshot({ id: p.id, round, code });
         tick();
       }
@@ -162,5 +170,5 @@ export async function deobfuscate(input, {
   const out = await pretty(code);
   onProgress(100);
   // text: metin katmanları açıldıktan sonraki program; rapor çalışma anı analizini bunun üzerinde yapar
-  return { code: out, stats, events, text, verified: Boolean(baseline) };
+  return { code: out, stats, events, text, verified: Boolean(baseline), verifyLevel: baseline ? (effectsCheck ? 'effects' : 'behaviour') : 'parse' };
 }
