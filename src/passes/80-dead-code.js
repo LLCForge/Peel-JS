@@ -30,10 +30,27 @@ function containsFunctionDecl(node) {
 const isLexical = (s) => t.isClassDeclaration(s) || t.isFunctionDeclaration(s) ||
   (t.isVariableDeclaration(s) && s.kind !== 'var');
 
+// Ölü bloktaki fonksiyon bildirimleri: sloppy kipte (Annex B) çevre fonksiyonda undefined değerli bir var
+// oluşturur, blok hiç çalışmadığından değer atanmaz; katı kipte yalnızca blok kapsamlıdır.
+function blockFunctionNames(node, out = []) {
+  if (!node || typeof node !== 'object' || t.isFunction(node)) return out;
+  if (t.isBlockStatement(node) || t.isSwitchCase(node)) {
+    for (const s of node.body ?? node.consequent) if (t.isFunctionDeclaration(s) && s.id) out.push(s.id.name);
+  }
+  for (const key of t.VISITOR_KEYS[node.type] ?? []) {
+    const v = node[key];
+    if (Array.isArray(v)) v.forEach((c) => blockFunctionNames(c, out)); else blockFunctionNames(v, out);
+  }
+  return out;
+}
+
 function replaceStatement(p, keep, dead) {
-  if (containsFunctionDecl(dead)) return false;
+  // ölü dal doğrudan (bloksuz) bir fonksiyon bildirimiyse ya da async/generator bildirim varsa dokunulmaz
+  if (containsFunctionDecl(dead) && (t.isFunctionDeclaration(dead) ||
+      (() => { let odd = false; t.traverseFast(dead, (n) => { if (t.isFunctionDeclaration(n) && (n.async || n.generator)) odd = true; }); return odd; })())) return false;
   const stmts = keep ? (t.isBlockStatement(keep) ? keep.body : [keep]) : [];
   const vars = hoistedVars(dead);
+  if (containsFunctionDecl(dead) && !p.isInStrictMode()) vars.push(...blockFunctionNames(dead));
   const out = stmts.some(isLexical) ? [t.blockStatement(stmts)] : [...stmts];
   if (vars.length) out.push(t.variableDeclaration('var', vars.map((v) => t.variableDeclarator(t.identifier(v)))));
   if (Array.isArray(p.container)) {

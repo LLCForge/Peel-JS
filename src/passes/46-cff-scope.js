@@ -1,5 +1,6 @@
 import * as t from '@babel/types';
 import { traverse } from '../util/ast.js';
+import { literalValue } from '../util/pure.js';
 
 // js-confuser controlFlowFlattening, durum makinesi açıldıktan sonra kalan "kapsam nesneleri":
 //   function M(states, scope = { K: {} }, runtime, arg) { scope.K.x = 1; scope.K.f = function (...a) {
@@ -438,7 +439,44 @@ function tidyEntries(ast) {
   return n;
 }
 
-export async function run(ast, { onLog, bump }) {
+// 5) Tek atamalı değişken (js-confuser movedDeclarations: var a, b; … a = false;): atama kapsamın gövdesinde
+// düz bir deyimse, aynı gövdede ondan SONRAKİ deyimlerdeki (iç fonksiyonlar hariç) okumalar literal olur.
+// Başka yazma yok; okuma atamadan sonra sırayla çalışır.
+function propagateOnce(ast, level) {
+  let n = 0;
+  traverse(ast, {
+    Scopable(sp) {
+      // program değişkeni globaldir (window.x ile de yazılabilir): yalnızca seviye 4
+      if (sp.isProgram() && level < 4) return;
+      const body = sp.isProgram() ? sp.get('body') : sp.isFunction() && sp.get('body').isBlockStatement() ? sp.get('body.body') : null;
+      if (!body) return;
+      for (const b of Object.values(sp.scope.bindings)) {
+        if (b.kind !== 'var' || b.path.node.init || b.constantViolations.length !== 1) continue;
+        const v = b.constantViolations[0];
+        const stmt = v.parentPath;
+        if (!v.isAssignmentExpression({ operator: '=' }) || !stmt.isExpressionStatement()) continue;
+        const i = body.indexOf(body.find((s) => s.node === stmt.node));
+        if (i < 0) continue;
+        const r = v.node.right;
+        const lit = literalValue(r);
+        if (!lit.ok || (t.isIdentifier(r) && sp.scope.getBinding(r.name))) continue;
+        const fn = sp.isProgram() ? null : sp;
+        for (const ref of b.referencePaths) {
+          if (ref.getFunctionParent() !== fn) continue;
+          const top = ref.findParent((x) => x.parentPath?.node === (sp.isProgram() ? sp.node : sp.node.body));
+          const j = top ? body.findIndex((s) => s.node === top.node) : -1;
+          if (j <= i) continue;
+          // döngü içindeki okuma da atamadan sonradır (atama döngü dışında, önce)
+          ref.replaceWith(t.cloneNode(r, true));
+          n++;
+        }
+      }
+    },
+  });
+  return n;
+}
+
+export async function run(ast, { onLog, bump, level = 3 }) {
   const a = inlineClones(ast);
   if (a) {
     onLog(`cff-scope: ${a} makine kopyası kabuğuna taşındı`, 'info');
@@ -449,7 +487,9 @@ export async function run(ast, { onLog, bump }) {
   if (d) onLog(`cff-scope: ${d} okunmayan kapsam özelliği ataması silindi`, 'info');
   const s = d ? 0 : splitScopes(ast);
   if (s) onLog(`cff-scope: kapsam nesnesi erişimleri yerel değişkenlere çevrildi (${s})`, 'info');
-  const e = s || d ? 0 : tidyEntries(ast);
+  const o = s || d ? 0 : propagateOnce(ast, level);
+  if (o) onLog(`cff-scope: tek atamalı ${o} okuma literal yapıldı`, "info");
+  const e = s || d || o ? 0 : tidyEntries(ast);
   if (e) onLog(`cff-scope: ${e} giriş/çağrı sadeleştirildi`, 'info');
-  bump('cffScope', s + d + e);
+  bump("cffScope", s + d + e + o);
 }

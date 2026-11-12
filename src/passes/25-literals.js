@@ -26,6 +26,15 @@ export async function run(ast, { bump }) {
       if (!p.node.computed && t.isStringLiteral(key) && t.isValidIdentifier(key.value, false)) {
         p.node.key = t.identifier(key.value);
         n++;
+        return;
+      }
+      // ["inc"]() → inc(): hesaplanmış string anahtar. "constructor" (sınıfta gerçek kurucu olurdu) ve "__proto__"
+      // (nesnede prototip ataması olurdu) hesaplanmış kalır.
+      if (p.node.computed && t.isStringLiteral(key) && t.isValidIdentifier(key.value, false) &&
+          !['constructor', '__proto__', 'prototype'].includes(key.value)) {
+        p.node.key = t.identifier(key.value);
+        p.node.computed = false;
+        n++;
       }
     },
     CallExpression(p) {

@@ -118,7 +118,8 @@ function readEntry(entryPath, payload, dispatcherPath) {
   if (t.isVariableDeclaration(first) && first.declarations.length === 1 && t.isArrayPattern(first.declarations[0].id) &&
       t.isIdentifier(first.declarations[0].init, { name: payload })) {
     const els = first.declarations[0].id.elements;
-    if (!els.every((e) => t.isIdentifier(e) || (t.isRestElement(e) && t.isIdentifier(e.argument)))) return null;
+    // iç içe kalıplar da parametre olabilir: flatten + dispatcher → var [flatObject, [a, b]] = payload
+    if (!els.every((e) => e && (t.isIdentifier(e) || t.isArrayPattern(e) || t.isObjectPattern(e) || t.isAssignmentPattern(e) || (t.isRestElement(e) && t.isIdentifier(e.argument))))) return null;
     params = els;
     rest = body.slice(1);
   }

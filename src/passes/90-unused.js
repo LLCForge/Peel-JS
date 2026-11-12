@@ -114,8 +114,20 @@ export async function run(ast, { onLog, bump, level }) {
       const scope = p.parentPath.scope;
       if (!p.node.id || isExported(p) || (scope.path.isProgram() && !allowGlobal)) return;
       const b = scope.getBinding(p.node.id.name);
-      if (!b || b.constantViolations.length) return;
+      // blok içi fonksiyon bildirimini Babel kendi ihlali olarak da kaydeder (sloppy kip Annex B)
+      if (!b || b.constantViolations.some((v) => v.node !== p.node)) return;
       if (b.referencePaths.some((r) => !r.findParent((x) => x === p))) return;
+      // blok içi bildirim sloppy kipte fonksiyon kapsamında da bir var oluşturur: o ad blok dışında okunmamalı
+      if (!scope.path.isFunction() && !scope.path.isProgram()) {
+        const outer = p.getFunctionParent() ?? p.scope.getProgramParent().path;
+        let seen = false;
+        outer.traverse({
+          Identifier(q) {
+            if (q.node.name === p.node.id.name && q.isReferencedIdentifier() && !q.findParent((x) => x === p)) { seen = true; q.stop(); }
+          },
+        });
+        if (seen) return;
+      }
       p.remove();
       n++;
       bump('dead.unusedFunction');

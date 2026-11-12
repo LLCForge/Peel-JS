@@ -28,7 +28,7 @@ function isGetGlobal(fn) {
 
 const unshadowed = (scope, name) => !scope.getBinding(name);
 
-export async function run(ast, { onLog, bump }) {
+export async function run(ast, { onLog, bump, level = 2 }) {
   let n = 0;
   // 1) G = getGlobal() || {}  bağları ve onlardan türeyen yerleşik takma adlar (S = G.String || String)
   const globalish = new Set();
@@ -87,6 +87,8 @@ export async function run(ast, { onLog, bump }) {
     }
     if (t.isLogicalExpression(e)) return pureVal(p.get('left'), locals) && pureVal(p.get('right'), locals);
     // yerel (IIFE içinde bildirilmiş) fonksiyonun çağrısı: o fonksiyonun gövdesi de etkisiz olmalı
+    // (function () { …etkisiz… })()  — IIFE değeri
+    if (t.isCallExpression(e) && !e.arguments.length && t.isFunctionExpression(e.callee) && !e.callee.async && !e.callee.generator) return pureBody(p.get("callee"), locals);
     if (t.isCallExpression(e) && !e.arguments.length && t.isIdentifier(e.callee)) {
       const b = p.scope.getBinding(e.callee.name);
       return Boolean(b && locals.has(b) && b.path.isFunctionDeclaration() && pureBody(b.path, locals));
@@ -154,11 +156,11 @@ export async function run(ast, { onLog, bump }) {
       // hiç okunmayan değişkene etkisiz değer: V = G.String || String;  V = getGlobal() || {};  V = function () {…}
       if (e.isAssignmentExpression({ operator: '=' }) && t.isIdentifier(e.node.left)) {
         const b = p.scope.getBinding(e.node.left.name);
-        if (!b || b.referenced || b.kind === 'param' || b.scope.path.isProgram()) return;
+        if (!b || b.referenced || b.kind === 'param' || (b.scope.path.isProgram() && level < 4)) return;
         const r = e.get('right');
         const getGlobalCall = r.isLogicalExpression({ operator: '||' }) && r.get('left').isCallExpression() && !r.node.left.arguments.length &&
           isGetGlobal(fnOf(p.scope, r.node.left.callee));
-        if (getGlobalCall || builtin.has(b) || pureVal(r, new Set())) { p.remove(); n++; }
+        if (getGlobalCall || builtin.has(b) || stdRead(p.scope, r.node) || pureVal(r, new Set())) { p.remove(); n++; }
       }
     },
   });
