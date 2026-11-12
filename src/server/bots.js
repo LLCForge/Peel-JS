@@ -1,8 +1,7 @@
 import { createServer } from 'node:http';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { getQuickJS } from 'quickjs-emscripten';
 import { deobfuscate } from '../core/pipeline.js';
-import { createHost, sandboxApi } from '../sandbox/core.js';
+import { createNodeSandbox } from '../sandbox/node-host.js';
 import { detectTechniques } from '../integrations/techniques.js';
 
 // H169: Slack ve Discord botu. Kendi sunucunda çalışır, loopback'e bağlanır; dışarıya bir ters vekil
@@ -71,8 +70,8 @@ export async function startBotServer({ host = '127.0.0.1', port = 8788, slack = 
   if (!slack?.signingSecret && !discord?.publicKey) throw new Error('En az bir platform yapılandırılmalı (Slack signing secret ya da Discord public key)');
   if (discord && !/^\d{5,25}$/.test(discord.applicationId ?? '')) throw new Error('Discord applicationId geçersiz');
 
-  const host2 = createHost(await getQuickJS());
-  const sandbox = sandboxApi(async (msg) => host2.handle(msg));
+  // I182: bekçili sandbox (worker_thread)
+  const sandbox = createNodeSandbox();
   let chain = Promise.resolve();
   const run = (input) => {
     const job = chain.then(() => deobfuscate(input, { level: 4, sandbox, deep: true }));

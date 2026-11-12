@@ -1,9 +1,8 @@
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { getQuickJS } from 'quickjs-emscripten';
 import { deobfuscate } from '../core/pipeline.js';
 import { analyze } from '../core/analyze.js';
-import { createHost, sandboxApi } from '../sandbox/core.js';
+import { createNodeSandbox } from '../sandbox/node-host.js';
 import { PASSES } from '../core/registry.js';
 import { semanticDiff } from '../integrations/compare.js';
 import { toSarif } from '../integrations/sarif.js';
@@ -84,9 +83,9 @@ export async function startServer({ host = '127.0.0.1', port = 8787, token = nul
   const secret = token ?? randomBytes(24).toString('hex');
   if (secret.length < 16) throw new Error('Token en az 16 karakter olmalı');
 
-  const qjs = await getQuickJS();
-  let sandboxHost = createHost(qjs);
-  const sandbox = sandboxApi(async (msg) => sandboxHost.handle(msg));
+  // I182: bekçili sandbox (worker_thread); kilitlenen motor sonlandırılıp yeniden başlatılır
+  let box = createNodeSandbox();
+  const sandbox = new Proxy({}, { get: (_t, k) => box[k] });
 
   // tek işlik kuyruk: aynı QuickJS host'u eşzamanlı pipeline'larla paylaşılmaz
   let chain = Promise.resolve();
@@ -106,7 +105,9 @@ export async function startServer({ host = '127.0.0.1', port = 8787, token = nul
       return await fn(ac.signal);
     } catch (e) {
       if (ac.signal.aborted) {
-        sandboxHost = createHost(qjs); // yarıda kalan bağlamlar atılır
+        // yarıda kalan bağlamlar atılır: motor yeniden başlatılır
+        box.close();
+        box = createNodeSandbox();
         throw new HttpError(504, 'Zaman aşımı');
       }
       throw e;
@@ -214,6 +215,6 @@ export async function startServer({ host = '127.0.0.1', port = 8787, token = nul
     url: `http://${shown}:${addr.port}`,
     port: addr.port,
     token: secret,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    close: () => new Promise((resolve) => server.close(() => { box.close(); resolve(); })),
   };
 }

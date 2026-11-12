@@ -9,8 +9,36 @@ import { PASSES } from './core/registry.js';
 
 let shared = null;
 
-/** Yeni, yalıtılmış bir QuickJS sandbox'ı. Ağ yok, gerçek DOM yok, bellek ve süre sınırlı. */
+/**
+ * Yeni, yalıtılmış bir QuickJS sandbox'ı. Ağ yok, gerçek DOM yok, bellek ve süre sınırlı.
+ * Bekçili (I182): Node'da worker_thread, tarayıcıda Web Worker; kilitlenen motor (felaket regex)
+ * sonlandırılıp yeniden başlatılır. İkisi de yoksa (ör. tek dosyalık paket Node'da) süreç içinde çalışır.
+ */
 export async function createSandbox() {
+  if (typeof process !== 'undefined' && process.versions?.node) {
+    // değişken yol: tarayıcı paketine node:worker_threads girmesin
+    const nodeHost = './sandbox/node-host.js';
+    try {
+      const { createNodeSandbox } = await import(/* @vite-ignore */ nodeHost);
+      return createNodeSandbox();
+    } catch {
+      // tek dosyalık pakette yan dosya yok: aşağıdaki süreç içi host'a düş
+    }
+  } else if (typeof Worker !== 'undefined') {
+    const { createWatchdog } = await import('./sandbox/watchdog.js');
+    const dog = createWatchdog({
+      spawn() {
+        const w = new Worker(new URL('./sandbox/sandbox.worker.js', import.meta.url), { type: 'module' });
+        return {
+          post: (m) => w.postMessage(m),
+          onMessage: (cb) => { w.onmessage = (e) => cb(e.data); },
+          onError: (cb) => { w.onerror = (e) => cb(e.message); },
+          terminate: () => w.terminate(),
+        };
+      },
+    });
+    return { ...sandboxApi(dog.send), watchdog: true, close: () => dog.terminate() };
+  }
   const host = createHost(await getQuickJS());
   return sandboxApi(async (msg) => host.handle(msg));
 }
