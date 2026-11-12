@@ -72,7 +72,8 @@ rules:
           $V = $EL.value;
           ...
       - pattern-either:
-          - pattern: fetch($URL, {..., body: <... $V ...>, ...})
+          - pattern: |
+              fetch($URL, {..., body: <... $V ...>, ...})
           - pattern: navigator.sendBeacon($URL, <... $V ...>)
           - pattern: $XHR.send(<... $V ...>)
 
