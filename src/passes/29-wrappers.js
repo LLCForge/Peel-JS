@@ -48,10 +48,12 @@ function paramOrder(call, params) {
 // E109: literal olmayan argümanlarla açma. Her parametre dönüş ifadesinde tam bir kez ve parametre sırasıyla
 // kullanılıyorsa argümanlar orijinaldeki sırayla değerlendirilir; kullanılmayan/fazla argümanlar literal olmalı.
 function inlineableArgs(args, params, order) {
-  if (args.every((a) => !t.isSpreadElement(a) && literalValue(a).ok)) return true;
   if (args.some((a) => t.isSpreadElement(a))) return false;
-  if (order.length !== params.length || new Set(order).size !== order.length || order.some((x, i) => x !== params[i])) return false;
-  return args.slice(params.length).every((a) => literalValue(a).ok);
+  if (!args.slice(params.length).every((a) => literalValue(a).ok)) return false;
+  // literal argümanlı parametreler serbest; diğerleri tam bir kez ve kendi aralarında parametre sırasıyla kullanılmalı
+  const dynamic = params.filter((name, i) => args[i] && !literalValue(args[i]).ok);
+  const seen = order.filter((name) => dynamic.includes(name));
+  return seen.length === dynamic.length && seen.every((name, i) => name === dynamic[i]);
 }
 
 // E99: zincir — açılan argümanlardaki literal aritmetiği katla ki bir sonraki sarmalayıcı aynı pass'te açılabilsin

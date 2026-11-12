@@ -1,6 +1,7 @@
 import * as t from '@babel/types';
 import { traverse, gen } from '../util/ast.js';
-import { literalValue } from '../util/pure.js';
+import { literalValue, isLiteralTree } from '../util/pure.js';
+import { literalOf } from '../util/literal.js';
 
 // Anlamı birebir koruyan küçük sadeleştirmeler (gözetleme deliği). Her kural yalnızca eşdeğerliği
 // yerel olarak kanıtlanabilen biçimlere uygulanır; şüpheli durumda dokunulmaz.
@@ -42,6 +43,50 @@ function inBooleanContext(p) {
 }
 
 const isGlobalRef = (p, name) => !p.scope.getBinding(name);
+
+// A-14: şablon literali içine literal ifadeyi göm (ham metinde \, ` ve ${ kaçışlanır)
+const rawOf = (cooked) => cooked.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${').replace(/\r/g, '\\r');
+
+// E126: yan etkisiz literal ağacının JS değeri (nesne/dizi taze oluşturulur)
+function treeValue(node) {
+  if (t.isArrayExpression(node)) return node.elements.map((e) => (e === null ? undefined : treeValue(e)));
+  if (t.isObjectExpression(node)) {
+    const o = {};
+    for (const p of node.properties) {
+      const k = t.isIdentifier(p.key) ? p.key.name : String(p.key.value);
+      if (k === '__proto__') return undefined;
+      o[k] = treeValue(p.value);
+    }
+    return o;
+  }
+  if (t.isTemplateLiteral(node)) return node.quasis[0].value.cooked;
+  return literalValue(node).value;
+}
+const BUILTIN_CTORS = new Set(['Object', 'Array', 'Function', 'String', 'Number', 'Boolean', 'RegExp', 'Error', 'Date', 'Map', 'Set', 'Promise', 'Symbol']);
+
+// E142: kesinlikle sonlu ve negatif olmayan, yan etkisiz sayı (x * 0 → 0 için; -0/NaN üretemez)
+function constNumberLeaf(p, n) {
+  if (t.isNumericLiteral(n)) return true;
+  if (!t.isIdentifier(n)) return false;
+  const b = p.scope.getBinding(n.name);
+  return Boolean(b?.constant && b.path.isVariableDeclarator() && t.isNumericLiteral(b.path.node.init));
+}
+function sideEffectFreeNumeric(p, n) {
+  if (constNumberLeaf(p, n)) return true;
+  if (t.isBinaryExpression(n) && NUM_OPS.has(n.operator)) return sideEffectFreeNumeric(p, n.left) && sideEffectFreeNumeric(p, n.right);
+  if (t.isUnaryExpression(n) && ['-', '~'].includes(n.operator)) return sideEffectFreeNumeric(p, n.argument);
+  return false;
+}
+function nonNegativeFinite(p, n) {
+  if (t.isNumericLiteral(n)) return Number.isFinite(n.value);
+  if (!sideEffectFreeNumeric(p, n)) return false;
+  if (t.isBinaryExpression(n, { operator: '>>>' })) return true;
+  if (t.isBinaryExpression(n, { operator: '&' })) {
+    const nonneg = (x) => t.isNumericLiteral(x) && Number.isInteger(x.value) && x.value >= 0 && x.value <= 0x7fffffff;
+    return nonneg(n.left) || nonneg(n.right);
+  }
+  return false;
+}
 
 // break/continue hedefi verilen döngü olan deyim var mı (iç döngü/switch içindekiler hariç)
 function hasOwnJump(body) {
@@ -135,7 +180,24 @@ export async function run(ast, { onLog, bump, level }) {
           p.replaceWith(t.logicalExpression(argument.operator === '||' ? '&&' : '||', argument.left.argument, argument.right.argument)); hit(); return;
         }
         // E150: delete <literal> → true
-        if (operator === 'delete' && literalValue(argument).ok) { p.replaceWith(t.booleanLiteral(true)); hit(); }
+        if (operator === 'delete' && literalValue(argument).ok) { p.replaceWith(t.booleanLiteral(true)); hit(); return; }
+        // E136: boolean bağlam dışında !!x → Boolean(x)  (Boolean global'i gölgelenmemişse)
+        if (operator === '!' && t.isUnaryExpression(argument, { operator: '!' }) && !inBooleanContext(p) &&
+            isGlobalRef(p, 'Boolean') && !p.parentPath.isUnaryExpression({ operator: '!' })) {
+          p.replaceWith(t.callExpression(t.identifier('Boolean'), [argument.argument])); hit(); return;
+        }
+        // E138: +"12" / +"" / +true / +null / +[] → sayı
+        if (operator === '+') {
+          const lit = literalValue(argument);
+          let v;
+          if (lit.ok && typeof lit.value !== 'number') v = +lit.value;
+          else if (t.isArrayExpression(argument) && !argument.elements.length) v = 0;
+          else if (t.isTemplateLiteral(argument) && !argument.expressions.length) v = +argument.quasis[0].value.cooked;
+          if (v !== undefined) {
+            const node = literalOf(t, v);
+            if (node) { p.replaceWith(node); hit(); }
+          }
+        }
       },
     },
     BinaryExpression: {
@@ -146,7 +208,74 @@ export async function run(ast, { onLog, bump, level }) {
         if (operator === '|' && num(right, 0) && isInt32(left)) { p.replaceWith(left); hit(); return; }
         if ((operator === '*' || operator === '/') && num(right, 1) && isNumber(left)) { p.replaceWith(left); hit(); return; }
         if (operator === '*' && num(left, 1) && isNumber(right)) { p.replaceWith(right); hit(); return; }
-        if (operator === '**' && num(right, 1) && isNumber(left)) { p.replaceWith(left); hit(); }
+        if (operator === '**' && num(right, 1) && isNumber(left)) { p.replaceWith(left); hit(); return; }
+        // E140: 0 + x / x + 0 → x (x int32: -0 olamaz); x - 0 → x (x number: -0 - 0 = -0)
+        if (operator === '+' && num(left, 0) && isInt32(right)) { p.replaceWith(right); hit(); return; }
+        if (operator === '+' && num(right, 0) && isInt32(left)) { p.replaceWith(left); hit(); return; }
+        if (operator === '-' && num(right, 0) && isNumber(left)) { p.replaceWith(left); hit(); return; }
+        // E142: x * 0 → 0 (x yan etkisiz, sonlu ve negatif değil: -0 ve NaN oluşamaz)
+        if (operator === '*' && ((num(right, 0) && nonNegativeFinite(p, left)) || (num(left, 0) && nonNegativeFinite(p, right)))) {
+          p.replaceWith(t.numericLiteral(0)); hit(); return;
+        }
+        // E126: <primitive literal> instanceof YerleşikKurucu → false; [..] instanceof Array → true; "k" in {literal}
+        if (operator === 'instanceof' && t.isIdentifier(right) && BUILTIN_CTORS.has(right.name) && isGlobalRef(p, right.name) &&
+            ((literalValue(left).ok && !t.isIdentifier(left)) || (t.isTemplateLiteral(left) && !left.expressions.length))) {
+          p.replaceWith(t.booleanLiteral(false)); hit(); return;
+        }
+        if (operator === 'instanceof' && t.isIdentifier(right) && isGlobalRef(p, right.name) && isLiteralTree(left) &&
+            ((t.isArrayExpression(left) && ['Array', 'Object'].includes(right.name)) || (t.isObjectExpression(left) && right.name === 'Object'))) {
+          p.replaceWith(t.booleanLiteral(true)); hit(); return;
+        }
+        if (operator === 'in' && (t.isObjectExpression(right) || t.isArrayExpression(right)) && isLiteralTree(right) &&
+            literalValue(left).ok && !t.isIdentifier(left)) {
+          const value = treeValue(right);
+          if (value === undefined) return;
+          const key = String(literalValue(left).value);
+          // kendi anahtarı: kesin true; prototipte de yoksa false (prototipteki adlar ortama göre değişebilir: dokunma)
+          if (Object.hasOwn(value, key)) { p.replaceWith(t.booleanLiteral(true)); hit(); return; }
+          if (!(key in value)) { p.replaceWith(t.booleanLiteral(false)); hit(); }
+        }
+      },
+    },
+    // A-14: şablon literalindeki literal ifadeler metne gömülür; ifadesi kalmayan şablon string olur
+    TemplateLiteral: {
+      exit(p) {
+        if (p.parentPath.isTaggedTemplateExpression()) return;
+        const { quasis, expressions } = p.node;
+        const named = (e) => t.isIdentifier(e) && ['undefined', 'NaN', 'Infinity'].includes(e.name) && isGlobalRef(p, e.name);
+        const inlinable = (e) => (literalValue(e).ok && !t.isIdentifier(e)) || named(e) || (t.isTemplateLiteral(e) && !e.expressions.length);
+        if (expressions.length && !expressions.some(inlinable)) return;
+        if (quasis.some((q) => typeof q.value.cooked !== 'string')) return;
+        const outQ = [quasis[0].value.cooked];
+        const outE = [];
+        expressions.forEach((e, i) => {
+          if (inlinable(e)) {
+            const v = t.isTemplateLiteral(e) ? e.quasis[0].value.cooked : named(e) ? String(globalThis[e.name]) : String(literalValue(e).value);
+            outQ[outQ.length - 1] += v + quasis[i + 1].value.cooked;
+          } else {
+            outE.push(e);
+            outQ.push(quasis[i + 1].value.cooked);
+          }
+        });
+        if (!outE.length) { p.replaceWith(t.stringLiteral(outQ[0])); hit(); return; }
+        p.replaceWith(t.templateLiteral(outQ.map((q, i) => t.templateElement({ raw: rawOf(q), cooked: q }, i === outQ.length - 1)), outE));
+        hit();
+      },
+    },
+    // E162: return a(), b(), x; → a(); b(); return x;   return c ? (A, x) : y; → if (c) { return (A, x); } return y;
+    ReturnStatement: {
+      exit(p) {
+        const arg = p.node.argument;
+        if (!arg || !Array.isArray(p.container)) return;
+        if (t.isSequenceExpression(arg)) {
+          const exprs = arg.expressions;
+          p.replaceWithMultiple([...exprs.slice(0, -1).map((x) => t.expressionStatement(x)), t.returnStatement(exprs[exprs.length - 1])]);
+          hit(); return;
+        }
+        if (t.isConditionalExpression(arg) && [arg.consequent, arg.alternate].some((x) => t.isSequenceExpression(x) || t.isConditionalExpression(x))) {
+          p.replaceWithMultiple([t.ifStatement(arg.test, t.blockStatement([t.returnStatement(arg.consequent)])), t.returnStatement(arg.alternate)]);
+          hit();
+        }
       },
     },
     ConditionalExpression: {
