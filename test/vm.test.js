@@ -10,6 +10,9 @@ import { staticValues } from '../src/core/vm/values.js';
 import { compareSignatures, dynamicNames, assemble } from '../src/core/vm/semantics.js';
 import { vmReport, isaFromFinding, encoderFor } from '../src/core/vm/report.js';
 import { branchTemplate } from '../src/core/vm/sm.js';
+import { analyzeStringTables } from '../src/core/vm/strtable.js';
+import { run as stringStatic } from '../src/passes/31-string-static.js';
+import { gen } from '../src/util/ast.js';
 
 const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
@@ -109,5 +112,24 @@ assert.equal(tpl('P += 2; break;', ['P']), 'artımlı geçiş');
 assert.equal(tpl('if (x) { P = 1; } else { P = 2; } break;', ['P']), 'koşullu sabit geçiş');
 assert.equal(tpl('return 5;', ['P']), 'çıkış (return)');
 assert.equal(tpl('P = T[i];', ['P']), 'tablo geçişi');
+
+// 9) string tablosu (E632–E636): statik rotasyon, kısmi kurtarma, tekilleştirme, ters kodlayıcı
+const rc4src = fixture('string-array-rc4.js');
+const [tab] = analyzeStringTables(parse(rc4src));
+assert.equal(tab.rotation.rotation, 6);
+assert.equal(tab.rotation.method, 'checksum');
+assert.match(tab.shape, /rc4, ofset 0x12b/);
+assert.equal(tab.recovered, 21);
+assert.equal(tab.total, 29);
+assert.equal(tab.missing.length, 8);
+assert.equal(tab.duplicates, 1);
+assert.equal(tab.inverseVerified, '21 / 21');
+assert.ok(tab.entries.some((e) => e.value === 'deltaepsilon'.slice(0, 5)));
+// sandbox olmadan statik pass çağrıları değerleriyle değiştirir ve yardımcıları kaldırır
+const rcAst = parse(rc4src);
+await stringStatic(rcAst, { onLog: () => {}, bump: () => {}, sandbox: null });
+const rcOut = gen(rcAst);
+assert.match(rcOut, /"hello "/);
+assert.doesNotMatch(rcOut, /_0x35dd|_0x3a37/);
 
 console.log('vm.test: tamam');

@@ -5,6 +5,7 @@ import { fnv1a } from '../util/hash.js';
 import { encodingReport } from './encodings.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
 import { vmReport } from './vm/report.js';
+import { analyzeStringTables, crossCheck, serializeTables } from './vm/strtable.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
 // fingerprint okumaları ve kalite metrikleri. Statik kısım AST'den, dinamik kısım sandbox'tan gelir.
@@ -172,6 +173,19 @@ async function runtimeScan(sandbox, text, config) {
   };
 }
 
+// Girdideki string tabloları: statik rotasyon, tekil tablo, kısmi kurtarma, ters kodlayıcı (sandbox ile çapraz denetim)
+async function stringTables(code, sandbox) {
+  if (code.length > 2_000_000) return [];
+  try {
+    const ast = parse(code);
+    const rep = analyzeStringTables(ast);
+    await crossCheck(sandbox, ast, rep);
+    return serializeTables(rep);
+  } catch {
+    return [];
+  }
+}
+
 export async function analyze({ input, text, output, events = [], sandbox = null, config = null, findings = null }) {
   const before = staticScan(text ?? input);
   const after = staticScan(output);
@@ -198,8 +212,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
     regexes: after.regexes,
     runtime,
     rollbacks: events.filter((e) => e.state === 'fail'),
-    // VM / durum makinesi / string tablosu bulguları (E199, E660)
-    vm: vmReport(findings),
+    // VM / durum makinesi / string tablosu bulguları (E199, E660, E632–E637)
+    vm: vmReport(findings, { strings: await stringTables(text ?? input, sandbox) }),
     passTimes: Object.entries(passTimes).map(([id, ms]) => ({ id, ms })).sort((a, b) => b.ms - a.ms),
     metrics: {
       inBytes: input.length,

@@ -77,13 +77,17 @@ export function renderVmReport(root, data) {
     root.append(el('h4', {}, 'Kaldırılan zamanlama tabanlı anti-debug kontrolleri'), table(['Koşul', 'Eylem', 'Yerine'],
       data.timing.map((x) => [x.test, x.action, x.kept ?? 'kaldırıldı']), ['mono', 'mono', '']));
   }
+  if (data.proxy?.some((p) => p.byTrial)) {
+    root.append(el('h4', {}, 'Proxy tabloları'), table(['Proxy', 'Case', 'Çözülen anahtar', 'Denemeyle'],
+      data.proxy.map((p) => [p.name, p.entries, p.resolved, p.byTrial]), ['mono', 'num', 'num', 'num']));
+  }
   if (data.strings?.length) {
     data.strings.forEach((st) => {
       const box = el('div');
-      root.append(details(`String tablosu · ${st.decoder} · ${st.entries.length} değer`, box));
-      if (st.rotation) box.append(el('p', { class: 'rep-muted' }, `Rotasyon: ${st.rotation.text}`));
+      root.append(details(`String tablosu · ${st.table} · ${st.decoder} · ${st.entries.length} değer`, box));
+      if (st.rotation) box.append(el('p', { class: 'rep-muted' }, `Rotasyon: ${st.rotation.text}${st.crossCheck ? ` · ${st.crossCheck}` : ''}`));
       if (st.shape) box.append(el('p', { class: 'rep-muted' }, `Decoder biçimi: ${st.shape}`));
-      if (st.inverse) box.append(details('Decoder tersi (kodlayıcı)', el('pre', { class: 'mono' }, st.inverse)));
+      if (st.inverse) box.append(details(`Decoder tersi (kodlayıcı) · gidiş-dönüş ${st.inverseVerified}`, el('pre', { class: 'mono' }, st.inverse)));
       box.append(el('p', { class: 'rep-muted' }, `Kurtarılan ${st.recovered} / ${st.total}; ${st.duplicates} tekrar birleştirildi${st.missing?.length ? `; çözülemeyen indeksler: ${st.missing.slice(0, 40).join(', ')}` : ''}`));
       box.append(table(['İndeks / çağrı', 'Değer'], st.entries.slice(0, 400).map((e) => [e.keys.join(', '), e.value]), ['mono', 'mono']));
     });

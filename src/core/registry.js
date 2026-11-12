@@ -6,6 +6,7 @@ import * as constArrays from '../passes/27-const-arrays.js';
 import * as constObjects from '../passes/28-const-objects.js';
 import * as wrappers from '../passes/29-wrappers.js';
 import * as stringArray from '../passes/30-string-array.js';
+import * as stringStatic from '../passes/31-string-static.js';
 import * as runtimeDecoders from '../passes/35-runtime-decoders.js';
 import * as runtimeFunctions from '../passes/36-runtime-functions.js';
 import * as proxy from '../passes/40-proxy.js';
@@ -33,6 +34,7 @@ export const PASSES = [
   { id: 'const-arrays', level: 1, kind: 'ast',  needs: null,      mod: constArrays },
   { id: 'const-objects', level: 1, kind: 'ast',  needs: null,      mod: constObjects },
   { id: 'wrappers',     level: 2, kind: 'ast',  needs: null,      mod: wrappers },
+  { id: 'string-static', level: 2, kind: 'ast', needs: null,      mod: stringStatic },
   { id: 'string-array', level: 2, kind: 'ast',  needs: 'sandbox', mod: stringArray },
   { id: 'runtime-decoders', level: 2, kind: 'ast', needs: 'sandbox', mod: runtimeDecoders },
   { id: 'runtime-functions', level: 3, kind: 'ast', needs: 'sandbox', mod: runtimeFunctions },

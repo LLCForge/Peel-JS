@@ -5,8 +5,9 @@ import { compareSignatures, isaOf, assemble } from './semantics.js';
 
 const MAX_TRACE = 3000;
 
-export function vmReport(findings) {
-  if (!findings) return null;
+export function vmReport(findings, extra = {}) {
+  if (!findings && !extra.strings?.length) return null;
+  findings = findings ?? {};
   const byKey = new Map();
   for (const f of findings.vm ?? []) {
     const k = `${f.raw}|${f.signature?.table}|${f.origin?.source ?? ''}`;
@@ -29,14 +30,16 @@ export function vmReport(findings) {
     }
   }
   const timing = findings.timing ?? [];
-  const strings = findings.strings ?? [];
-  if (!bytecode.length && !machines.length && !timing.length && !strings.length) return null;
+  const strings = [...(findings.strings ?? []), ...(extra.strings ?? [])];
+  const proxy = findings.proxy ?? [];
+  if (!bytecode.length && !machines.length && !timing.length && !strings.length && !proxy.some((p) => p.byTrial)) return null;
   return {
     bytecode,
     machines,
     compare,
     timing,
     strings,
+    proxy,
     summary: {
       vms: bytecode.length,
       lifted: bytecode.filter((b) => b.lifted).length,
