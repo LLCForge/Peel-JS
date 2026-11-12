@@ -3,6 +3,7 @@ import { verify } from './verify.js';
 import { raw, pretty } from './emit.js';
 import { fnv1a } from '../util/hash.js';
 import { PASSES } from './registry.js';
+import { createVmSolver } from '../symbolic/vm-solver.js';
 import { snapshot, same } from './behavior.js';
 import { rationale } from '../verify/rationale.js';
 import { getSettings } from '../sandbox/settings.js';
@@ -62,7 +63,8 @@ export async function deobfuscate(input, {
 
   // findings: pass'lerin rapora aktardığı analiz verileri (VM, durum makinesi, string tablosu)
   const findings = { vm: [], sm: [], strings: [] };
-  const ctx = { onLog, bump, level, sandbox, ctx: null, findings };
+  // madde 27: VM pass'inin concolic çoklu yol keşfi için çözücü bağdaştırıcısı (çalıştırma başına bir kez)
+  const ctx = { onLog, bump, level, sandbox, ctx: null, findings, solver: sandbox ? createVmSolver(sandbox) : null };
   // E720: doğrulama seviyesi — parse her zaman; behaviour = console; effects ve üstü = console + gözlenebilir etkiler
   const vLevel = verifyLevel ?? (deep ? getSettings().verifyLevel : 'parse');
   const behaviourCheck = deep && !['none', 'parse'].includes(vLevel);

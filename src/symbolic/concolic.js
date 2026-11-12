@@ -202,6 +202,8 @@ export async function concolic(sandbox, code, { target = null, maxRuns = 12, tim
   if (!inst.syms.size) return { ok: false, reason: 'sembolik girdi yok' };
 
   const coverage = new Map(); // "id:yön" → ilk kapsayan koşu
+  // "id:yön" → çözücü denemeleri: { sat, unsat (kesin önekli UNSAT), unknown, proof }
+  const goals = new Map();
   const runs = [];
   const queue = [{ inputs: {}, bound: 0, target: null, constraints: [] }];
   const tried = new Set();
@@ -268,6 +270,11 @@ export async function concolic(sandbox, code, { target = null, maxRuns = 12, tim
       if (coverage.has(goal)) continue;
       const cs = [...one.pc.slice(0, b.pcLen), b.taken ? mk('!', b.cond) : b.cond];
       const sol = solve(cs, { mode: 'find', timeMs: 400 });
+      const g = goals.get(goal) ?? { sat: 0, unsat: 0, unknown: 0, proof: null };
+      goals.set(goal, g);
+      if (sol.status === 'unsat' && b.exact) { g.unsat++; g.proof ??= sol.proof; }
+      else if (sol.status === 'sat') g.sat++;
+      else g.unknown++;
       if (sol.status !== 'sat') continue;
       const inputs = { ...item.inputs };
       for (const [name, v] of sol.model) if (inst.syms.size && [...inst.syms.values()].includes(name)) inputs[name] = v;
@@ -321,6 +328,9 @@ export async function concolic(sandbox, code, { target = null, maxRuns = 12, tim
     target: target?.name ?? null,
     inputs: [...new Set(inst.syms.values())],
     runs: runs.map(({ events, pcTerms, constraints, conds, ...r }) => r),
+    goals: Object.fromEntries(goals),
+    covered: [...coverage.keys()],
+    runEvents: runs.map((r) => r.events.filter((e) => e.k === 'b').map((e) => [e.id, e.v])),
     coverage: { covered: coverage.size, total: totalBranches, ratio: totalBranches ? coverage.size / totalBranches : 1 },
     correlations,
     regexes,
@@ -402,3 +412,29 @@ export function proveCorrelation(condA, condB, relation) {
 }
 
 export { TRUE, evaluate };
+/**
+ * Ortam okumalarını (navigator.language, Date.now() …) verilen girdi değerleriyle değiştirir: çözücünün bulduğu
+ * girdiyle başka bir araçlanmış programı (ör. VM izleyicisi) aynı ortamda çalıştırmak için.
+ * inputs: { "navigator.language": "tr-TR", "Date.now()": 77, ... }
+ */
+export function applyInputs(src, inputs) {
+  const ast = parse(src);
+  const lit = (v) => (v === undefined ? t.unaryExpression('void', t.numericLiteral(0)) : t.valueToNode(v));
+  traverse(ast, {
+    MemberExpression(p) {
+      const par = p.parentPath;
+      if (par.isAssignmentExpression({ left: p.node }) || par.isUpdateExpression() || (par.isCallExpression() && par.node.callee === p.node)) return;
+      const name = dotted(p.node)?.replace(GLOBAL_PREFIX, '');
+      const root = rootName(p.node);
+      if (name && Object.hasOwn(inputs, name) && root && !p.scope.getBinding(root)) { p.replaceWith(lit(inputs[name])); p.skip(); }
+    },
+    CallExpression(p) {
+      const callee = dotted(p.node.callee)?.replace(GLOBAL_PREFIX, '');
+      if (!callee || !ENV_CALLS.has(callee) || !p.node.arguments.every((a) => t.isStringLiteral(a) || t.isNumericLiteral(a))) return;
+      const name = p.node.arguments.length ? `${callee}(${p.node.arguments.map((a) => a.value).join(',')})` : `${callee}()`;
+      const root = rootName(p.node.callee);
+      if (Object.hasOwn(inputs, name) && root && !p.scope.getBinding(root)) { p.replaceWith(lit(inputs[name])); p.skip(); }
+    },
+  });
+  return generate(ast, { comments: false }).code;
+}

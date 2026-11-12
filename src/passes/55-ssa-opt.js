@@ -75,6 +75,8 @@ function sroa(fn) {
       props.set(name, p.value);
     }
     if (!ok || !b.referencePaths.length) continue;
+    // durum makinesi deyimi (döngüde switch (o.p)): VM/unflatten pass'lerinin işi, nesne yerinde kalır (E184 Proxy izleme)
+    if (b.referencePaths.some((r) => r.parentPath.parentPath?.isSwitchStatement() && r.parentPath.key === 'discriminant' && r.findParent((x) => x.isLoop()))) continue;
     const declStmt = decl.parentPath;
     if (!Array.isArray(declStmt.container) || declStmt.parentPath.isForStatement()) continue;
     const list = declStmt.container;
