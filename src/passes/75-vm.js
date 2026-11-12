@@ -11,6 +11,13 @@ import { caseSummaries, observedEdges, machineReport, debugSteps } from '../core
 //  - zorlanmış dallarla ek çalıştırmalar (madde 27) ve bunların birleşimi (E195)
 //  - durum bir nesnede tutuluyorsa Proxy ile yazmaların gözlenmesi (E184)
 // Tek çalıştırmadan çıkarılan akış diğer girdiler için yanlış olabilir: bu yüzden kod değiştirilmez.
+//
+// Çözücü kancası (madde 27/30): ek çalıştırmaların planı concolicPlan() ile yapılır. Varsayılan strateji her case
+// içi dalın ilk görülen sonucunu tersine zorlar. ctx.solver verilirse onun planBranches({ log, branches }) metodu
+// kullanılır: log = temel çalıştırmadaki [anahtar, sonuç] dizisi ("makine:dal" anahtarı), branches = her dalın
+// { key, test (kaynak), machine } bilgisi; dönüş, her biri bir çalıştırma olan zorlama haritaları listesidir:
+// [{ "0:2": [kaçıncı değerlendirme, değer] }, …]. Gerçek bir SMT çözücü yol koşulunu çözüp uygun girdiyi
+// bulamadığı dalları da bu biçimde zorlayabilir; geri kalan akış (çalıştırma, birleştirme, rapor) değişmez.
 
 const MARK = ' PEEL VM';
 const MAX_EVENTS = 20000;
@@ -100,6 +107,14 @@ function branchPoints(sw) {
   return out;
 }
 
+// Ek çalıştırma planı: çözücü varsa ondan, yoksa ilk sonucu tersine çeviren varsayılan strateji
+export async function concolicPlan(log, branches, solver = null, max = MAX_FORCED) {
+  if (solver?.planBranches) return (await solver.planBranches({ log, branches })).slice(0, max);
+  const first = new Map();
+  for (const [k, v] of log) if (!first.has(k)) first.set(k, v);
+  return [...first].slice(0, max).map(([k, v]) => ({ [k]: [1, !v] }));
+}
+
 const PRELUDE = (force) => `var __peelN = 0, __peelBrLog = [], __peelBrCount = {}, __peelPw = [], __peelForce = ${JSON.stringify(force)};
 function __peelMark(id, v) { if (__peelN++ < ${MAX_EVENTS} && (typeof v === "number" || typeof v === "string")) __res.push([id, v]); return v; }
 function __peelBr(id, j, v) {
@@ -122,7 +137,7 @@ function transitions(events, id) {
   return events.filter(([vmId]) => vmId === id).map(([, v]) => v);
 }
 
-export async function run(ast, { onLog, bump, sandbox, findings }) {
+export async function run(ast, { onLog, bump, sandbox, findings, solver = null }) {
   const vms = [];
   traverse(ast, {
     Loop(p) {
@@ -181,12 +196,11 @@ export async function run(ast, { onLog, bump, sandbox, findings }) {
   const base = await runOnce({}, 6000);
 
   // Madde 27: her case içi dalın ilk görülen sonucunu tersine çevirerek ek çalıştırmalar (dal zorlama)
-  const firstOutcome = new Map();
-  for (const [k, v] of base.br) if (!firstOutcome.has(k)) firstOutcome.set(k, v);
+  const branches = vms.flatMap((v, i) => v.branches.map((ifs, j) => ({ key: `${i}:${j}`, machine: i, test: gen(ifs.test).slice(0, 200) })));
   const forcedRuns = [];
-  for (const [k, v] of [...firstOutcome].slice(0, MAX_FORCED)) {
-    const r = await runOnce({ [k]: [1, !v] }, 2000);
-    forcedRuns.push({ key: k, value: !v, events: r.events });
+  for (const force of await concolicPlan(base.br, branches, solver)) {
+    const r = await runOnce(force, 2000);
+    for (const [k, [, value]] of Object.entries(force)) forcedRuns.push({ key: k, value, events: r.events });
   }
 
   const sumFns = collectSumFns(ast);

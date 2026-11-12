@@ -3,9 +3,11 @@ import { parse } from './parse.js';
 import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
 import { encodingReport } from './encodings.js';
+import { analysisReport } from '../analysis/report.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
 import { vmReport } from './vm/report.js';
 import { analyzeStringTables, crossCheck, serializeTables } from './vm/strtable.js';
+import { engineReport } from './engine-report.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
 // fingerprint okumaları ve kalite metrikleri. Statik kısım AST'den, dinamik kısım sandbox'tan gelir.
@@ -186,7 +188,7 @@ async function stringTables(code, sandbox) {
   }
 }
 
-export async function analyze({ input, text, output, events = [], sandbox = null, config = null, findings = null }) {
+export async function analyze({ input, text, output, events = [], sandbox = null, config = null, stats = null, trace = null, findings = null }) {
   const before = staticScan(text ?? input);
   const after = staticScan(output);
   const runtime = await runtimeScan(sandbox, text ?? input, config);
@@ -194,6 +196,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
   for (const e of events) passTimes[e.id] = (passTimes[e.id] ?? 0) + e.ms;
   const found = iocs(after.strings, output);
   const classes = classify({ code: output, runtime, iocs: found, apis: after.apis });
+  // E-U/E-V: semantik modeller, veri akışı ve analiz altyapısı (trace verilmişse pass kayıtları)
+  const semantics = await analysisReport({ text: text ?? input, output, sandbox, config, trace });
   return {
     fingerprint: fingerprint(input),
     iocs: found,
@@ -214,6 +218,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
     rollbacks: events.filter((e) => e.state === 'fail'),
     // VM / durum makinesi / string tablosu bulguları (E199, E660, E632–E637)
     vm: vmReport(findings, { strings: await stringTables(text ?? input, sandbox) }),
+    // çözme motoru analizleri: obfuscator ayarları, akış, bütünlük, paket modülleri (stats verilmezse ölü kod dağılımı rapor tarafında stats'tan)
+    engine: engineReport({ input, text, output, stats }),
     passTimes: Object.entries(passTimes).map(([id, ms]) => ({ id, ms })).sort((a, b) => b.ms - a.ms),
     metrics: {
       inBytes: input.length,
@@ -226,5 +232,6 @@ export async function analyze({ input, text, output, events = [], sandbox = null
       functions: after.functions,
       outputHash: fnv1a(output),
     },
+    semantics,
   };
 }

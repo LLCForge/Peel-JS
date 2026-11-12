@@ -11,7 +11,7 @@ import { compareSignatures, dynamicNames, assemble } from '../src/core/vm/semant
 import { vmReport, isaFromFinding, encoderFor } from '../src/core/vm/report.js';
 import { branchTemplate } from '../src/core/vm/sm.js';
 import { analyzeStringTables } from '../src/core/vm/strtable.js';
-import { run as stringStatic } from '../src/passes/31-string-static.js';
+import { run as stringStatic } from '../src/passes/31-static-strings.js';
 import { gen } from '../src/util/ast.js';
 import { readableInterpreter } from '../src/core/vm/readable.js';
 

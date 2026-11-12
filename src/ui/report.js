@@ -1,5 +1,6 @@
 import { t, td } from '../i18n.js';
 import { renderVmReport } from './vm/index.js';
+import { render as renderSemantics } from './analysis/semantics.js';
 
 const MAX_ROWS = 60;
 
@@ -110,6 +111,59 @@ function vmSection(data) {
   return box;
 }
 
+// Çözme motoru analizi: obfuscator ayarları, akış, bütünlük, ölü kod türleri, paket modülleri
+function engine(e, stats) {
+  const parts = [];
+  if (e.obfuscator) {
+    const dl = el('dl', { class: 'kv' });
+    for (const [k, v] of Object.entries(e.obfuscator.settings)) dl.append(el('dt', { class: 'mono' }, k), el('dd', {}, String(v)), el('dd', {}, ''));
+    parts.push(el('h4', {}, t('report.engine.obf')), dl, el('p', { class: 'rep-muted' }, e.obfuscator.evidence.join(' · ')));
+  }
+  const f = e.flow;
+  if (f) {
+    parts.push(el('h4', {}, t('report.engine.flow')), el('p', {}, t('report.engine.flowStats', {
+      f: f.functions, l: f.loops, d: f.maxDepth, c: f.complexity, b: f.dispatchersBefore ?? '–', a: f.dispatchersAfter,
+    })));
+    parts.push(el('h4', {}, t('report.engine.recursion')), f.recursion.length
+      ? el('div', { class: 'chips' }, ...f.recursion.map((r) => el('span', { class: 'chip' }, r.functions.join(' ↔ '), el('b', {}, r.kind))))
+      : muted('report.engine.recursion.none'));
+    if (f.mostComplex.length) {
+      parts.push(el('h4', {}, t('report.engine.complex')),
+        table(['Fn', '#', ''], f.mostComplex.map((x) => [x.name, x.cyclomatic, x.line ?? '']), ['mono', 'num', 'num']));
+    }
+    if (f.unresolved.length) {
+      parts.push(el('h4', {}, t('report.engine.unresolved')), ...f.unresolved.map((u) => el('details', {},
+        el('summary', {}, `${u.function} · ${u.discriminant} · ${u.states}/${u.edges}`),
+        el('pre', { class: 'mono' }, u.mermaid), el('pre', { class: 'mono' }, u.dot))));
+    }
+  }
+  const ig = e.integrity;
+  if (ig) {
+    parts.push(el('h4', {}, t('report.engine.integrity')), ig.checks.length
+      ? el('div', {}, el('p', {}, t('report.engine.integrity.summary', { n: ig.checks.length, x: ig.neutralized, r: ig.remaining })),
+        table(['', 'Fn', 'Hash', ''], ig.checks.map((c) => [c.kind, c.function ?? '–', c.hasher, c.protects]), ['mono', 'mono', 'mono', 'mono']))
+      : muted('report.engine.integrity.none'));
+    if (ig.console.length) {
+      parts.push(el('h4', {}, t('report.engine.console')), table(['', '', ''], ig.console.map((c) => [c.kind, c.where, c.detail]), ['mono', '', 'rep-muted']));
+    }
+  }
+  const dead = e.deadCode ?? Object.entries(stats ?? {}).filter(([k, v]) => k.startsWith('dead.') && v > 0)
+    .map(([k, count]) => ({ type: k.slice(5), count })).sort((a, b) => b.count - a.count);
+  parts.push(el('h4', {}, t('report.engine.dead')), dead.length
+    ? table(['', '#'], dead.map((d) => [d.type, d.count]), ['mono', 'num'])
+    : muted('report.engine.dead.none'));
+  parts.push(el('h4', {}, t('report.engine.bundle', { k: e.bundle?.kind ?? '–' })), e.bundle
+    ? table(['Modül', 'B', 'Bağımlılık'], e.bundle.modules.map((m) => [m.id, m.size, m.deps.join(', ') || '–']), ['mono', 'num', 'mono'])
+    : muted('report.engine.bundle.none'));
+  return el('div', {}, ...parts);
+}
+
+function semanticsBody(data) {
+  const box = el('div', { class: 'rep-semantics' });
+  renderSemantics(box, data);
+  return box;
+}
+
 export function renderReport(root, report, onExport, actions = {}) {
   root.textContent = '';
   if (!report) {
@@ -145,6 +199,8 @@ export function renderReport(root, report, onExport, actions = {}) {
     section('report.rollbacks', report.rollbacks.length
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])
       : muted('report.rollbacks.none')),
+    report.engine ? section('report.engine', engine(report.engine, report.stats)) : null,
+    report.semantics ? section('report.semantics', semanticsBody(report.semantics)) : null,
     exportBtn,
   ));
 }

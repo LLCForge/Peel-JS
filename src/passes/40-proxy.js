@@ -44,8 +44,49 @@ function switchOfProxy(params, stmts) {
   return isLen && isFirstArg ? { sw, index: 1 } : null;
 }
 
+// E97: function W(k) { return T[k]; }  (T sabit nesne literali)  ya da  function W(k) { return { a: f, b: g }[k]; }
+// W("a")(x) → f(x). Anahtar nesnenin kendi anahtarı değilse (toString gibi prototip adı) çağrı açılmaz.
+function readLookupProxy(fnPath) {
+  const { params, body } = fnPath.node;
+  if (params.length !== 1 || !t.isIdentifier(params[0]) || !t.isBlockStatement(body) || body.body.length !== 1) return null;
+  const ret = body.body[0];
+  const m = t.isReturnStatement(ret) && ret.argument;
+  if (!t.isMemberExpression(m) || !m.computed || !t.isIdentifier(m.property, { name: params[0].name })) return null;
+  let obj = m.object;
+  // ayrı tablo değerleri kurulum anında okunur: çağrı anında aynı kalmaları için yalnızca sabit bağlamalı adlar
+  const snapshot = t.isIdentifier(obj);
+  let tableStmt = null;
+  if (t.isIdentifier(obj)) {
+    const b = fnPath.scope.getBinding(obj.name);
+    if (!b?.constant || !b.path.isVariableDeclarator() || !t.isObjectExpression(b.path.node.init)) return null;
+    // tablo yalnızca bu proxy içinden okunmalı (başka yerde değiştirilemez)
+    if (!b.referencePaths.every((r) => r.findParent((x) => x === fnPath))) return null;
+    obj = b.path.node.init;
+    tableStmt = b.path.parentPath;
+  }
+  if (!t.isObjectExpression(obj)) return null;
+  const entries = [];
+  const keys = new Set();
+  for (const prop of obj.properties) {
+    if (!t.isObjectProperty(prop) || prop.computed) return null;
+    const key = t.isIdentifier(prop.key) ? prop.key.name : t.isStringLiteral(prop.key) || t.isNumericLiteral(prop.key) ? String(prop.key.value) : null;
+    if (key === null || key === '__proto__' || keys.has(key)) return null;
+    keys.add(key);
+    const names = valueNames(prop.value);
+    if (!names) return null;
+    for (const n of names) if (fnPath.scope.getOwnBinding(n)) return null;
+    if (snapshot && (!t.isIdentifier(prop.value) || !fnPath.scope.getBinding(prop.value.name)?.constant)) return null;
+    entries.push({ key, value: prop.value, names });
+  }
+  if (!entries.length) return null;
+  entries.tableStmt = tableStmt;
+  return entries;
+}
+
 // function V(k) { switch (k) { case "a": return X.y; ... } }
 function readProxy(fnPath) {
+  const lookup = readLookupProxy(fnPath);
+  if (lookup) return lookup;
   const { params, body } = fnPath.node;
   if (!t.isBlockStatement(body)) return null;
   const found = switchOfProxy(params, body.body);
@@ -149,8 +190,9 @@ export async function run(ast, { onLog, bump, sandbox, ctx, level = 2, findings 
     const binding = px.declScope.getBinding(px.name);
     if (!binding?.constant) continue;
 
-    const keys = await resolveKeys(px.entries.map((e) => e.testPath), { sandbox, ctx });
-    const open = keys.map((k, i) => i).filter((i) => keys[i] === undefined && px.entries[i].own && sideEffectFree(px.entries[i].testPath.node));
+    const lookup = px.entries[0].key !== undefined;
+    const keys = lookup ? px.entries.map((e) => e.key) : await resolveKeys(px.entries.map((e) => e.testPath), { sandbox, ctx });
+    const open = lookup ? [] : keys.map((k, i) => i).filter((i) => keys[i] === undefined && px.entries[i].own && sideEffectFree(px.entries[i].testPath.node));
     let tried = 0;
     if (open.length && sandbox && level >= 3) {
       const seen = await observeKeys(ast, px.entries, open, sandbox);
@@ -168,7 +210,7 @@ export async function run(ast, { onLog, bump, sandbox, ctx, level = 2, findings 
     if (findings) (findings.proxy ??= []).push({ name: px.name, entries: px.entries.length, resolved: keys.filter((k) => k !== undefined).length, byTrial: tried });
     const map = new Map();
     px.entries.forEach((e, i) => { if (keys[i] !== undefined && !map.has(keys[i])) map.set(keys[i], e); });
-    if (map.size < MIN_MAP) continue;
+    if (map.size < (lookup ? 1 : MIN_MAP)) continue;
 
     const calls = binding.referencePaths
       .map((ref) => ref.parentPath)
@@ -179,6 +221,9 @@ export async function run(ast, { onLog, bump, sandbox, ctx, level = 2, findings 
     calls.forEach((call, i) => {
       const entry = callKeys[i] !== undefined && map.get(callKeys[i]);
       if (!entry || !call.node) return;
+      // tablo, aynı fonksiyondaki çağrıdan önce kurulmuş olmalı (öncesinde orijinal TypeError verirdi)
+      const ts = px.entries.tableStmt;
+      if (ts && call.getFunctionParent() === ts.getFunctionParent() && call.node.start < ts.node.end) return;
       // Çalışma anında global nesne olduğu doğrulanan kökler (N = U() → globalThis) globalThis'e yazılır;
       // diğer her isim çağrı yerinde de aynı binding'e çözülmeli
       const roots = new Set([...entry.names].filter((name) => globalRoots.has(`${pi}:${name}`)));
@@ -186,7 +231,10 @@ export async function run(ast, { onLog, bump, sandbox, ctx, level = 2, findings 
       for (const name of entry.names) {
         if (!roots.has(name) && call.scope.getBinding(name) !== px.fnPath.scope.getBinding(name)) return;
       }
-      call.replaceWith(roots.size ? globalize(t.cloneNode(entry.value, true), roots, call.scope) : t.cloneNode(entry.value, true));
+      const value = roots.size ? globalize(t.cloneNode(entry.value, true), roots, call.scope) : t.cloneNode(entry.value, true);
+      // W("a")(x): proxy'nin döndürdüğü fonksiyon this'siz çağrılıyordu; üye ifadesi (0, X.y) ile yazılır
+      const asCallee = call.parentPath.isCallExpression({ callee: call.node }) || call.parentPath.isTaggedTemplateExpression({ tag: call.node });
+      call.replaceWith(asCallee && t.isMemberExpression(value) ? t.sequenceExpression([t.numericLiteral(0), value]) : value);
       n++;
     });
     if (!n) continue;

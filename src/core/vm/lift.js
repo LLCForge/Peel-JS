@@ -52,6 +52,7 @@ function classify(vm) {
   const names = new Set(lookups.keys());
 
   const internal = new Set();
+  const dataVars = new Set();
   const locals = new Set();
   const writeback = new Set();
   const external = new Set();
@@ -89,6 +90,9 @@ function classify(vm) {
       external.add(name);
       continue;
     }
+    // veri taşıyan değişken (x = x * 2): somut değeri yalnızca gözlenmiş bir girdiye dayanırdı → turlar arası
+    // taşınırsa (durum değişkeni olursa) gerçek değişken olarak bırakılır (makeLifter'da)
+    if (![roles.pc, roles.sp, roles.op].includes(name) && !concreteIntent(b, inRegion, roles)) dataVars.add(name);
     if (!outside.length || declInLoop) { internal.add(name); continue; }
     if ([roles.pc, roles.sp, roles.op].includes(name) || concreteIntent(b, inRegion, roles)) {
       internal.add(name);
@@ -105,11 +109,15 @@ function classify(vm) {
     if (b.referencePaths.every((r) => r.parentPath.isMemberExpression({ object: r.node }) && fnOf(r) === fnNode &&
         !(r.parentPath.parentPath.isCallExpression({ callee: r.parent })))) plainArrays.add(name);
   }
-  return { internal, locals, writeback, external, stackWriteback, stackFresh, inRegion, plainArrays };
+  return { internal, locals, writeback, external, stackWriteback, stackFresh, inRegion, plainArrays, dataVars };
 }
 
 // Döngüdeki tüm atamaları somut değer üreten (literal, sayaç, bytecode okuması) değişken
 function concreteIntent(b, inRegion, roles) {
+  // parametre ya da literal olmayan başlangıç: değer çağırandan/veriden gelir (s += "b" bir sayaç değildir)
+  if (b.kind === 'param') return false;
+  if (b.path.isVariableDeclarator() && b.path.node.init && !t.isLiteral(b.path.node.init) &&
+      !(t.isUnaryExpression(b.path.node.init) && t.isLiteral(b.path.node.init.argument))) return false;
   const ok = new Set([roles.code, roles.pc, roles.consts, roles.op, roles.sp].filter(Boolean));
   return b.constantViolations.filter(inRegion).every((p) => {
     const n = p.node;
@@ -191,7 +199,13 @@ export function makeLifter(vm, values, { used = new Set(), mode = 'lift' } = {})
     cls.internal.delete(name);
     cls.locals.add(name);
   }
-  const stateVars = stateVarsOf(vm, cls.internal);
+  let stateVars = stateVarsOf(vm, cls.internal);
+  // yalnızca kontrol değişkenleri (pc, sp, bayraklar) somut durum olabilir; veri taşıyanlar gerçek değişken kalır
+  const data = [...stateVars].filter((n) => cls.dataVars.has(n));
+  if (data.length) {
+    for (const n of data) { cls.internal.delete(n); cls.writeback.delete(n); cls.external.add(n); }
+    stateVars = stateVarsOf(vm, cls.internal);
+  }
   const gensyms = new Map();
   const L = {
     vm, mode, values, ...cls, stateVars, arrays,

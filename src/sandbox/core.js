@@ -1,4 +1,6 @@
 import { STUBS } from './stubs.js';
+import { SEMANTIC_STUBS } from './semantics-stubs.js';
+import { hostIntl, hostTzOffset, hostTzName } from './host-intl.js';
 
 const MAX_CONTEXTS = 2;
 
@@ -57,7 +59,10 @@ export function createHost(QuickJS) {
         if (/interrupted|out of memory|stack overflow/i.test(message)) tainted = true;
         return { ok: false, error: message };
       }
-      const value = vm.dump(r.value);
+      // nesneler (özellikle Promise) dump edilmez: dump Promise tutamacını kendisi serbest bırakır ve
+      // ardından gelen dispose "Lifetime not alive" ile host'u düşürür. Çağıranlar yalnızca ilkel değer okur.
+      const kind = vm.typeof(r.value);
+      const value = kind === 'object' || kind === 'function' ? undefined : vm.dump(r.value);
       r.value.dispose();
       return { ok: true, value };
     };
@@ -73,11 +78,20 @@ export function createHost(QuickJS) {
       vm.setProp(vm.global, name, fn);
       fn.dispose();
     }
+    // Intl ve IANA saat dilimi verisi QuickJS'te yok: host Intl'ine senkron köprü (yalnızca string alır/verir)
+    const bridges = { __peelHostIntl: hostIntl, __peelHostTz: (z, ms) => hostTzOffset(z, Number(ms)), __peelHostTzName: (z, ms) => hostTzName(z, Number(ms)) };
+    for (const [name, f] of Object.entries(bridges)) {
+      const fn = vm.newFunction(name, (...args) => vm.newString(f(...args.map((x) => String(vm.dump(x))))));
+      vm.setProp(vm.global, name, fn);
+      fn.dispose();
+    }
     // sandbox yapılandırması (zaman, tarayıcı profili, çerez/depolama, sahte yanıtlar): stub'lar okur
     const c = evalRaw(`globalThis.__peelConfig = ${JSON.stringify(config ?? {})};`, 500);
     if (!c.ok) { dispose(); throw new Error(`config: ${c.error}`); }
     const s = evalRaw(STUBS, 2000);
     if (!s.ok) { dispose(); throw new Error(`stubs: ${s.error}`); }
+    const sm = evalRaw(SEMANTIC_STUBS, 2000);
+    if (!sm.ok) { dispose(); throw new Error(`semantic stubs: ${sm.error}`); }
 
     const readArray = (name, fallback = []) => {
       const r = evalRaw(`JSON.stringify(${name})`, 1000);
@@ -108,6 +122,17 @@ export function createHost(QuickJS) {
         return withBox(memoryMB, config, (box) => {
           const r = box.evalRaw(`(function () {\n${code}\n})()`, timeoutMs);
           box.runJobs(Math.min(timeoutMs, 2000));
+          // olay döngüsü modeli (E516/E517): her makro görevden önce mikro kuyruk boşaltılır, reddedilen sözler denetlenir
+          if (config?.eventLoop) {
+            for (let i = 0; i < 200; i++) {
+              box.evalRaw('__peelProbe()', 500);
+              box.runJobs(500);
+              box.evalRaw('__peelCheck()', 500);
+              const tick = box.evalRaw('__peelTick()', Math.min(timeoutMs, 2000));
+              if (!tick.ok || tick.value !== true) break;
+              box.runJobs(1000);
+            }
+          }
           // analiz: program bittikten sonra zamanlayıcılar/olay işleyicileri tetiklenir (davranış karşılaştırmasında yok)
           if (post) {
             box.evalRaw(post, 2000);
@@ -117,6 +142,7 @@ export function createHost(QuickJS) {
             ok: r.ok, error: r.error, out: box.readArray('__out'), res: box.readArray('__res'),
             net: box.readArray('__peelNet'), reads: box.readArray('__peelReads', {}),
             crypto: post ? box.readArray('__peelCrypto') : [],
+            sem: config?.eventLoop ? box.readArray('__peelSem') : [],
           };
         });
 

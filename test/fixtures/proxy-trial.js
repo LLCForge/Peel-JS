@@ -12,6 +12,6 @@ var run = (function () {
 })();
 run();
 // LEVEL: 3
-// EXPECT: console.log("hi", 3)
-// EXPECT: console.warn("uyarı")
+// EXPECT: console.log)("hi", 3)
+// EXPECT: console.warn)("uyarı")
 // GONE: V("lg")
