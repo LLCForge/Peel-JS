@@ -542,6 +542,10 @@ export function fissionLoop(fn, p, ivName) {
     if ([...A.writes].some((w) => B.reads.has(w) || B.writes.has(w)) || [...B.writes].some((w) => A.reads.has(w))) continue;
     const arr = [...A.arrays.reads, ...A.arrays.writes, ...B.arrays.reads, ...B.arrays.writes];
     if (arr.some((x) => !plainArray(fn, x.object.name) || !t.isIdentifier(x.property, { name: ivName }))) continue;
+    // gruplar (IV dışında) tamamen ayrık değişkenlere dokunmalı: aynı diziyi paylaşan zincirler bölünmez
+    const touched = (G) => new Set([...G.reads, ...G.writes].filter((x) => x !== ivName));
+    const ta = touched(A);
+    if ([...touched(B)].some((x) => ta.has(x))) continue;
     return [stmts.slice(0, m), stmts.slice(m)];
   }
   return null;

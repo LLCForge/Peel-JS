@@ -11,9 +11,18 @@ import { mk } from '../symbolic/ir.js';
 //   E679 yüklemleme (boolean dallar → koşul ifadesi), E593 dallanma korelasyonu (baskın dal olgularıyla kanıt).
 
 export async function run(ast, { onLog, bump }) {
-  const st = { switch: 0, tail: 0, thread: 0, ifconv: 0, pred: 0, corr: 0 };
+  const st = { switch: 0, tail: 0, thread: 0, ifconv: 0, pred: 0, corr: 0, blocks: 0 };
   // yapısal (SSA gerektirmeyen) dönüşümler
   traverse(ast, {
+    // deyim listesindeki yalın blok: bildirim içermiyorsa açılır, boşsa silinir (açma/özelleştirme artıkları)
+    BlockStatement: {
+      exit(p) {
+        if (!Array.isArray(p.container) || p.parentPath.isLabeledStatement()) return;
+        if (p.node.body.some((s) => t.isVariableDeclaration(s) && s.kind !== 'var' || t.isFunctionDeclaration(s) || t.isClassDeclaration(s))) return;
+        if (p.node.body.length) p.replaceWithMultiple(p.node.body); else p.remove();
+        st.blocks++;
+      },
+    },
     SwitchStatement: { exit(p) { st.switch += normalizeSwitch(p); } },
     ConditionalExpression: { exit(p) { if (predicateCond(p)) st.pred++; } },
     IfStatement: {
