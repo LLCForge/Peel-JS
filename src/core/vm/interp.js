@@ -571,6 +571,10 @@ function residualCallWith(env, n, ov, pv, args, isNew) {
     calleeNode = t.memberExpression(obj, prop, computed);
   } else {
     calleeNode = use(oe, parts);
+    // f(a) çağrısında f'nin değeri o.m ise doğrudan o.m(a) yazmak this'i değiştirirdi: (0, o.m)(a)
+    if (!isNew && (t.isMemberExpression(calleeNode) || t.isOptionalMemberExpression(calleeNode))) {
+      calleeNode = t.sequenceExpression([t.numericLiteral(0), calleeNode]);
+    }
   }
   const argNodes = ae.map((e) => use(e, parts));
   const node = isNew ? t.newExpression(calleeNode, argNodes) : t.callExpression(calleeNode, argNodes);

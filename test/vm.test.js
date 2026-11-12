@@ -13,6 +13,7 @@ import { branchTemplate } from '../src/core/vm/sm.js';
 import { analyzeStringTables } from '../src/core/vm/strtable.js';
 import { run as stringStatic } from '../src/passes/31-string-static.js';
 import { gen } from '../src/util/ast.js';
+import { readableInterpreter } from '../src/core/vm/readable.js';
 
 const fixture = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
@@ -112,6 +113,19 @@ assert.equal(tpl('P += 2; break;', ['P']), 'artımlı geçiş');
 assert.equal(tpl('if (x) { P = 1; } else { P = 2; } break;', ['P']), 'koşullu sabit geçiş');
 assert.equal(tpl('return 5;', ['P']), 'çıkış (return)');
 assert.equal(tpl('P = T[i];', ['P']), 'tablo geçişi');
+
+// 8b) hibrit VM + host (E653): VM programın kendi fonksiyonunu ve native API'yi çağırıyor; çağrı this'i korunur
+const hybrid = analyzeFirst(fixture('vm-bytecode-hybrid.js'));
+assert.equal(hybrid.a.ok, true, hybrid.a.reason);
+assert.ok(hybrid.a.hostCalls.some((c) => c.name === 'helper' && c.kind === 'host'), JSON.stringify(hybrid.a.hostCalls));
+assert.ok(hybrid.a.hostCalls.some((c) => c.name === 'console.log' && c.kind === 'native'));
+assert.ok(hybrid.a.liftedCode.includes('(0,G["helper"])("kanca")'), hybrid.a.liftedCode);
+
+// 8c) okunur yorumlayıcı (E652): roller yeniden adlandırılır, handler'lar açıklanır
+const readable = readableInterpreter(fixture('vm-bytecode-stack.js'), a.handlers);
+assert.match(readable, /bytecode\[pc\+\+\]/);
+assert.match(readable, /stack\.push/);
+assert.match(readable, /ADD: pop 2 ; push s1\+s0/);
 
 // 9) string tablosu (E632–E636): statik rotasyon, kısmi kurtarma, tekilleştirme, ters kodlayıcı
 const rc4src = fixture('string-array-rc4.js');

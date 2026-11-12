@@ -118,6 +118,7 @@ if (opts.vmOut && vm) {
     if (f.ir) writeFileSync(`${base}-ir.txt`, f.ir.map((x) => `${x.pc} ${x.mnemonic}\n${x.lines.map((l) => `  ${l}`).join('\n')}`).join('\n'));
     if (f.liftedCode) writeFileSync(`${base}-lifted.js`, f.liftedCode);
     if (f.rawSource) writeFileSync(`${base}-raw.js`, f.rawSource);
+    if (f.readable) writeFileSync(`${base}-readable.js`, f.readable);
   });
   log(`${vm.bytecode.length} VM ${opts.vmOut} klasörüne yazıldı`, 'ok');
 }

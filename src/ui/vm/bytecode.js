@@ -48,6 +48,7 @@ export function renderBytecodeVm(root, f) {
   if (f.exits) root.append(el('p', { class: 'rep-muted' }, `Çıkışlar: ${[...new Set(f.exits.paths.map((x) => `${x.pc}: ${x.kind}`))].join(', ') || '–'}${f.exits.handlers.length ? ` · çıkış handler'ları ${f.exits.handlers.join(', ')}` : ''}`));
   if (f.ir?.length) root.append(details('Ara gösterim (IR)', pre(f.ir.map((x) => `${String(x.pc).padStart(5, '0')} ${x.mnemonic}\n${x.lines.map((l) => `      ${l}`).join('\n')}`).join('\n'))));
   if (f.liftedCode) root.append(details('Çevrilmiş kod', pre(f.liftedCode)));
+  if (f.readable) root.append(details('Okunur yorumlayıcı', pre(f.readable)));
   if (f.constPool?.length) root.append(details(`Sabit havuzu (${f.constPool.length})`, table(['#', 'Değer'], f.constPool.map((c) => [c.i, c.value]), ['num', 'mono'])));
   if (f.hostCalls?.length) root.append(el('h4', {}, 'VM\'nin çağırdığı API\'ler'), table(['Çağrı', 'Tür', '#'], f.hostCalls.map((c) => [c.name, c.kind, c.count]), ['mono', '', 'num']));
 
@@ -77,5 +78,6 @@ export function renderBytecodeVm(root, f) {
   root.append(el('div', { class: 'rep-actions' },
     f.bytecode !== undefined ? button('Bytecode\'u indir (.json)', () => download(`${vmName}-bytecode.json`, JSON.stringify({ kind: f.codeKind, bytecode: f.bytecode, consts: f.constPool?.map((c) => c.value) ?? [] }, null, 1))) : null,
     f.assembly ? button('Assembly indir (.asm)', () => download(`${vmName}.asm`, f.assembly, 'text/plain')) : null,
-    f.rawSource ? button('Ham yorumlayıcıyı indir', () => download(`${vmName}-ham.js`, f.rawSource, 'text/javascript')) : null));
+    f.rawSource ? button('Ham yorumlayıcıyı indir', () => download(`${vmName}-ham.js`, f.rawSource, 'text/javascript')) : null,
+    f.readable ? button('Okunur yorumlayıcıyı indir', () => download(`${vmName}-okunur.js`, f.readable, 'text/javascript')) : null));
 }

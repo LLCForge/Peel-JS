@@ -367,7 +367,7 @@ export function hostCalls(stmts, { globals = new Set(), programFns = new Set(), 
     walk(s, (n) => {
       if (t.isAssignmentExpression(n, { operator: '=' }) && t.isIdentifier(n.left) && /^_t\d+$/.test(n.left.name)) temps.set(n.left.name, n.right);
       if (t.isCallExpression(n) || t.isNewExpression(n)) {
-        let callee = n.callee;
+        let callee = t.isSequenceExpression(n.callee) ? n.callee.expressions.at(-1) : n.callee;
         if (t.isMemberExpression(callee) && !callee.computed && ['apply', 'call'].includes(callee.property.name)) callee = callee.object;
         let name = nameOf(callee);
         if (!name) return;

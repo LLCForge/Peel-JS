@@ -7,6 +7,7 @@ import { HOLE } from '../core/vm/interp.js';
 import { collectNames } from '../core/vm/lift.js';
 import { staticValues, instrument, captureRun, decodeCapture } from '../core/vm/values.js';
 import { analyzeVm, stateVarsFor } from '../core/vm/analysis.js';
+import { readableInterpreter } from '../core/vm/readable.js';
 
 // Bytecode VM'leri (jsvmp tarzı yorumlayıcılar) düz JavaScript'e çevirir (madde 31/32, E192, E649–E651).
 //
@@ -266,7 +267,8 @@ export async function run(ast, ctx) {
       };
       const a = analyzeVm(vm, g.values, { used, steps, origin });
       firstAnalysis = firstAnalysis ?? a;
-      const finding = serializable(a, { lifted: false, verified: null, raw: rawHash(vm), rawSource: gen(vm.fnPath.isProgram() ? vm.stmtPath.node : vm.fnPath.node).slice(0, 20000) });
+      const rawSource = gen(vm.fnPath.isProgram() ? vm.stmtPath.node : vm.fnPath.node).slice(0, 20000);
+      const finding = serializable(a, { lifted: false, verified: null, raw: rawHash(vm), rawSource, readable: readableInterpreter(rawSource, a.handlers) });
       found.push(finding);
       if (!a.ok) continue;
       t.addComment(a.lifted[0], 'leading', `${LIFT} | VM #${vm.id} | ${STYLE[vm.style]} | ${a.disasm.length} komut → ${a.blocksOut} blok | bytecode: ${origin.bytecode} | ham gövde: ${rawHash(vm)} | derinlik=${depth}`, false);
