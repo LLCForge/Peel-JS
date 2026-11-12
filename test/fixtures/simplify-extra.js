@@ -18,7 +18,7 @@ console.log(api.main(6, 3, "peel"), api.main(1, 1, ""));
 api.main = null;
 // EXPECT: `Merhaba dünya, ${name} 7!`
 // EXPECT: false, true, true, false, false
-// EXPECT: var flag = Boolean(name);
+// EXPECT: const flag = Boolean(name);
 // EXPECT: out.push(flag, 0, 12, 1, 0);
 // EXPECT: out.push(a | b, a & b, a * 2, 0, 0);
 // EXPECT: out.push(name);

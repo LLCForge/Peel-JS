@@ -222,7 +222,8 @@ export async function deobfuscate(input, {
       }
       trace?.checkpoint({ round, code, text, stats });
       const h = fnv1a(code);
-      if (!changed && !finishing && astPasses.some((p) => p.finish)) { finishing = true; continue; }
+      // salınım (aynı kod yeniden) de sabitlenme sayılır: okunabilirlik aşaması yine de çalışır
+      if ((!changed || seen.has(h)) && !finishing && astPasses.some((p) => p.finish)) { finishing = true; seen.add(h); continue; }
       if (!changed || seen.has(h)) break;
       seen.add(h);
     }
