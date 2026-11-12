@@ -815,7 +815,7 @@ body.focus-mode .pane-in, body.focus-mode .pane-out { grid-area: only; }
 .nm-heat-row .num { width: 48px; flex-shrink: 0; text-align: right; padding-right: 10px; color: var(--faint); user-select: none; }
 .nm-folded pre { margin: 0; white-space: pre; font-size: 12px; }
 .nm-dead summary { cursor: pointer; color: var(--warn); font: 12px var(--sans); padding: 2px 0; }
-.nm-dead pre { opacity: .6; border-left: 2px solid var(--warn); padding-left: 8px; }
+.nm-dead pre { opacity: .6; padding-left: 8px; }
 .nm-step summary { cursor: pointer; padding: 4px 0; }
 .nm-hunks { font-size: 12px; }
 .nm-hunk { border: 1px solid var(--line); border-radius: 6px; margin: 6px 0; overflow-x: auto; }
