@@ -144,6 +144,13 @@ Bench: `test/corpus/webpack/` (prod-plain, prod-plugin, prod-plugin-high, dev-ev
 dev-loader, prod-loader). Modüller ayrı dosyalara bölünmez: PEEL tek çıktı üretir; modül sınırları yorumla
 işaretlenir, adlar geri verilir.
 
+Eklenti (plugin) çıktılarında her örnekte bir geri alma vardı: webpack-obfuscator rotasyon IIFE'sini paket
+gövdesiyle tek virgül ifadesine koyar (`(function (T, n) {…push…shift…})(T, 0x57f15), (() => {…})()`).
+`static-strings` rotasyonu tanımadığı için rotasyonsuz model kuruyor, checksum çağrılarını da değiştiriyor,
+program sonsuz döngüye giriyordu (davranış kontrolü geri alıyordu). Şimdi program düzeyinde ilk ifadesi rotasyon
+olan virgül ifadesi ayrı deyime bölünür; rotasyon deyim olarak tanınmadığı hâlde dizi bir yerde karıştırılıyorsa
+model hiç kurulmaz. Fixture: `webpack-rotator-sequence`.
+
 ## 4. ben-sb/obfuscator-io-deobfuscator (Apache-2.0)
 
 Babel + `@codemod/matchers`. "Sandbox kullanmaz" ilkesiyle her şeyi statik eşleştirir; dönüşümler 50 tura kadar
@@ -273,13 +280,69 @@ dispatcher nesnesi ve girdi yerelleri, `!x;` kalıntıları, program düzeyi str
 dallarda bile bağımsız sandbox'ta çözülür; durum dizisi argüman dizisinden açılan makineler de kopyalanır.
 Fixture'lar: `jc-flatten-dispatcher`, `jc-opaque-deadcode`, `jc-low-small`, `jc-dispatcher-moved`.
 
-**Açık kalan: `jc-high`** (352 KB → 150 KB, davranış doğru, 7/7). Yüksek ayarda dispatcher'ın kendisi de CFF ile
-düzleştirilip bir kapsam nesnesi özelliğine (`scope.K.p = function (...a) { return M(seq, {…}, rt, a); }`)
-konuyor ve payload da kapsam nesnesinde tutuluyor; `new scope.K.p("ad", bayrak, ret)[anahtar]` çağrıları
-dispatcher olarak tanınmıyor, string decompress yardımcısının makineleri bu kapsam zinciri üzerinden canlı
-kaldığı için silinemiyor. `jc-high-rich` çekimine göre dalgalanıyor (bir çekimde 3/7 iğne): kapsam nesnesindeki
-bir string→string fonksiyonun çağrıları decoder sanılıyor, davranış kontrolü değişikliği geri alıyor (çıktı doğru
-ama okunur değil). Gereken: dispatcher tanımanın kapsam özelliği + payload yolu biçimine genişletilmesi.
+**Dördüncü tur (`jc-high`, OBF-24 kapandı):** 23 rastgele çekimde (190 KB – 1.2 MB) davranış aynı, tüm iğneler,
+geri alma yok; 21'i 0.9–3.2 KB'lık okunur programa iner (jc-medium/jc-cff gibi), 1.17 MB'lık çekim 9.5 KB'a.
+Bir jc-high-rich çekiminde (328 KB → 41 KB) kapsam nesnesi eksik bir iç fonksiyon makinesi kopyası (hiç
+çağrılmıyor, çağrılsa TypeError verir) global getter'ı ve dispatcher'ı canlı tutar. Yüksek ayarda `pack` tüm programı bir IIFE'ye koyar,
+programın kendi bloğu da CFF ile düzleşir: dispatcher kapsam nesnesi özelliğine
+(`scope.K.p = function (...a) { return M(seq, {K: scope.K, L: {}}, rt, a); }`), payload da kapsam nesnesine
+taşınır ve dispatcher'ın gövdesi ayrıca kendi makinesine bölünür. Neden kalıyordu ve ne yapıldı:
+
+- `cff-scope` makine kopyalarını yalnızca program düzeyinde arıyordu; pack IIFE'sinin gövdesindeki kopyalar da
+  kabuğa taşınır. Çağrı kabuğun son deyimi olabilir (`return M(seq)` IIFE gövdesinin sonunda); verilmeyen
+  argümanın varsayılanı (`scope = { K: {} }`) bildirimin başlangıcı olur, kopyanın adları kabukla çakışırsa
+  yeniden adlandırılır. Kapsam bölme bloğa girerken kurulan nesneleri (`scope.L = {}`) de böler: deyim, L'nin
+  yerellerini `undefined`'a çeken atamaya döner. Okunmayan kapsam özelliği atamaları (ölü küme), kopya kabuğa
+  taşınınca oluşan takma ad kökleri (`var S2 = { K: S.K, L: {} }`) ve fonksiyon ifadesi makinelerine geçen
+  kapsamlar varken de silinir.
+- js-confuser CFF dönüş bayrağı protokolü (`F = undefined; V = inner(); if (F) return V;`, sonunda çıplak
+  `return;` olabilir): inner'ın her değerli dönüşü bayrağı kuruyorsa gövdesi dış fonksiyonun sonuna açılır.
+- `unflatten`: tek kez atanan fonksiyon ifadesi makineleri (`V = function (states, scope = {…}) {…}`) de çağrı
+  başına kopyalanır; kopyası kabuğa taşınmış makinenin sabit durum dizisi (`var S = [n, …slice(a, b)]`)
+  statik hesaplanıp makine yerinde açılır.
+- `confuser`: rest dizisinden açılan argümanlar (`function (...R) { let a, b; [a, b = {…}] = R; }`) gerçek
+  parametre olur; dispatcher program düzeyinde olmasa da (pack IIFE'si), tek kez atanan bir fonksiyon ifadesi
+  olsa da tanınır; tablo başlangıçsız yerelde (`let fns; fns = {…}`) ya da dispatcher'ın kendi taze kapsam
+  kökünde (`S.K.fns = {…}`; fonksiyon üretme dalı makinenin içinde kalmışsa referans çağrıları açılmaz;
+  temizleme dalında başka deyim ya da okunamayan dönüş sarmalı varsa yalnızca o bayraklı çağrılar kalır),
+  bayrak testleri `true &&` ya da boş
+  fonksiyona `in` testi önekli, temizleme dalında ölü bildirimler, dönüş `ret === "…" ? {k: v} : v` biçiminde
+  olabilir. Payload çağrıdan önceki deyimde atanabilir (`P = [a, b]; return new D("k", f, r).k`); girdiler
+  payload'u atama biçimiyle (`[x, [y]] = P`) okuyabilir. Girdiler yalnızca `fns[name]()` / `.apply(this)` ile
+  çağrılıyorsa rest maskeli girdinin her indeksi yereldir; variableMasking negatif ve büyük indeksleri de açar.
+  movedDeclarations'ın hiç verilmeyen parametreye taşıdığı fonksiyon (`if (!P) P = function …`) düz atama olur.
+- `dead-code`: tek kez atanan boş fonksiyona `"k" in V` testi (her test atamadan sonra çalışıyorsa) katlanır;
+  kapsam yolundaki `"k" in S.K.f` de, `f` adına programda tek yazma (boş fonksiyon) varsa, ad başka yerde
+  anahtar/string/silme hedefi değilse ve dinamik adlı yazma yoksa (unused'un ad tabanlı ölü özellik kuralı);
+  `dead-extra`: break'siz `while (true)` sonrası erişilemez sayılır, sonucu kullanılmayan literal tablo deyimi
+  silinir.
+- `confuser-runtime`: ilk adayı `globalThis` olan getGlobal (diğer adaylar CFF/string gizlemeyle şişmiş
+  `new Function("return this")` olsa da hiç çalışmaz) ve sonucu kullanılmayan çağrısı, UTF-8 çözücü IIFE'sinin
+  kendi rest dizisine yazması etkisiz sayılır.
+- `runtime-decoders`: dispatcher (gövdesinde decoder taşısa da) decoder adayı değildir. Kapsam yolundaki az
+  çağrılı, kaynağı decoder'a benzemeyen fonksiyon ancak her çağrısında sayısal (indeks) argüman varsa, bütün
+  sonuçları global nesneyse (globalConcealing getter'ı; yerele bölünmüş getter da, dışarıya yazmıyorsa) ya da
+  yakalanan metni saf ise (dışarıya yazmıyor, çağrı içermiyor; metin yalnızca ayrıştırılır) decoder sayılır:
+  sayaç artıran string→string fonksiyonun çağrısını değerle değiştirmek yan etkisini siliyordu. Dizi/nesne
+  argümanlı dinamik çağrı (makine kopyası çağrısı) gözlemle değiştirilmez.
+- `unused`: yalnızca kendi içinden okunan, tek kez atanmış fonksiyon değişkeni (açılmış getter'ın ölü decoder
+  makinesi) silinir; `restructure`: makine açılırken dallara kopyalanan ortak kuyruk birleşir
+  (`if (c) { A; T } T` → `if (c) { A } T`; yalnızca sonek ortaksa `if (c) { A } else { B } S`); `extract`:
+  fonksiyon tanımlayan atamalar yardımcıya çıkarılmaz (henüz açılmamış kapsam deposunu sonraki turlardan
+  saklıyordu). Kapsam bölme anahtar başına yapılır: değer olarak başka makineye geçen anahtar (`{ P: S.P }`)
+  yerinde kalır, diğer taze anahtarlar bölünür. Global getter'ın yalnızca global nesneye çözülen çağrıları
+  değiştirilir; kapsam yolundaki dispatcher, yakalanan metni ayrıştırılarak tanınır ve decoder sayılmaz.
+- `pipeline`: büyük çekimler katman katman açıldığı için tur sınırı 25 → 40 (değişiklik durunca biter),
+  derin (davranış) doğrulama sınırı 1 MB → 2 MB (1.1 MB'lık çekimler de doğrulanır).
+
+`jc-high-rich` çekimlerinin bazılarında js-confuser'ın kendi çıktısı `#secret` özel alanını bozar (`"hidden"`
+yerine başka değer basılır). `test/bench.js` bunu (yalnızca o satır farklıysa) algılar, satırı
+`jc-high-rich (#secret bozuk)` olarak gösterir: beklenen davranış gizlenmiş kodunkidir, `"hidden"` iğnesi aranmaz.
+Fixture'lar: `jc-dispatcher-scoped`, `jc-dispatcher-expression`, `jc-dispatcher-moved-fn`, `jc-pack-machine`,
+`jc-return-flag`, `jc-getglobal-helper`, `jc-global-getter`, `jc-variable-masking-locals`, `jc-scope-string-fn`,
+`dead-endless-loop`, `restructure-tail-merge`, `restructure-tail-else`, `unused-self-ref`, `dead-in-property`,
+`extract-fn-defs`, `jc-dispatcher-scope-table`, `jc-global-getter-partial`, `jc-scope-partial-split`;
+açıklama boyutu için `annotate-compact`.
 
 Doğası gereği geri alınamayanlar (bkz. yol haritası işaretleri):
 
@@ -366,6 +429,10 @@ jsfuck-parent, aaencode, aaencode-unicode, jjencode, jjencode-gv).
 | `dead-code` | `src/passes/80-dead-code.js` | 2 | 0.x selfDefending kalıpları |
 | `unused` | `src/passes/90-unused.js` | 3 | for başlığındaki kullanılmayan alias |
 | `rename` | `src/passes/95-rename.js` | 4 | class bildiriminin çift adlandırılması hatası |
+| `static-strings` | `src/passes/31-static-strings.js`, `src/core/obfio.js` | 2 | virgül ifadesindeki rotasyon IIFE'si (webpack-obfuscator) |
+| `dead-extra` | `src/passes/82-dead-extra.js` | 2 | break'siz sonsuz döngü sonrası, etkisiz literal tablo ve `Object.create(null)` deyimleri |
+| `restructure` | `src/passes/86-restructure.js` | 2 | dala kopyalanmış ortak kuyruk birleştirme |
+| `annotate` | `src/passes/99-annotate.js` | 4 | kalıp özet yazılmaz, bilgi yoksa JSDoc eklenmez, boş deyim bölüm başlığı almaz, hesaplanan değişkenler ana akışta |
 
 Fixture'lar: `jfogs-default`, `jfogs-reverse`, `jfogs-zero`, `jsfuck-eval`, `aaencode`, `jjencode`,
 `eval-inline`, `webpack-bundle`, `webpack-loader`, `io-index-string`, `io018-self-defending`, `jc-integrity`,

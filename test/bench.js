@@ -222,7 +222,21 @@ for (const [name, opts] of Object.entries(CONFUSER)) {
   const { source, expect, needles } = pick(opts);
   const res = await JsConfuser.obfuscate(source, strip(opts));
   const code = typeof res === 'string' ? res : res.code;
+  // js-confuser 2.1.3'ün CFF'si bazı çekimlerde sınıf özel alanını (#secret = "hidden") bozar: gizlenmiş programın
+  // kendi davranışıdır. Yalnızca bu satır farklıysa (self ön ayarları gibi) beklenen çıktı gizlenmiş kodunkidir
+  // ve "hidden" iğnesi aranmaz; diğer her fark gerçek hata olarak kalır.
+  const own = opts.self ? null : runNode(code);
+  if (own !== null && own !== expect && privateFieldCorrupted(own, expect)) {
+    await bench(`${name} (#secret bozuk)`, code, { expect: own, needles: needles.filter((n) => n !== '"hidden"') });
+    continue;
+  }
   await bench(name, code, { expect: opts.self ? runNode(code) : expect, needles });
+}
+function privateFieldCorrupted(own, expect) {
+  const a = own.split('\n');
+  const b = expect.split('\n');
+  return a.length === b.length && a.every((l, i) => l === b[i] || (b[i].endsWith(' hidden') && l.startsWith(b[i].slice(0, -'hidden'.length)) &&
+    !l.slice(b[i].length - 'hidden'.length).includes(' ')));
 }
 if (existsSync(CORPUS)) {
   for (const tool of readdirSync(CORPUS).sort()) {
