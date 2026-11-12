@@ -110,7 +110,8 @@ function readDecoder(fnNode, name, holder) {
   t.traverseFast(fnNode.body, (n) => {
     if (t.isStringLiteral(n) && ALPHABET.test(n.value) && new Set(n.value).size === 65) alphabet = n.value;
   });
-  const rc4 = Boolean(alphabet) && /0x100|\b256\b/.test(src) && /\^/.test(src) && Boolean(kp);
+  // RC4 adımı XOR kullanır; yalnız base64 çözücüsünde ^ yoktur (sayılar ifadeye çevrilmiş olabilir: 0x100 aranmaz)
+  const rc4 = Boolean(alphabet) && /\^/.test(src) && /charCodeAt/.test(src) && Boolean(kp);
   const encoding = !alphabet ? 'none' : rc4 ? 'rc4' : 'base64';
   if (encoding === 'none' && fnNode.body.body.length > 4) return null; // tanınmayan gövde
   return {
@@ -146,8 +147,11 @@ function readRotator(stmt, holder, decoder) {
     });
     const ti = fn.params.findIndex((p) => t.isIdentifier(p, { name: targetParam }));
     const target = ti >= 0 && e.arguments[ti];
-    if (!expr || !t.isNumericLiteral(target) || !decoder) return null;
-    return { kind: 'checksum', expr, target: target.value, stmt };
+    if (!expr || !target || !decoder) return null;
+    let value;
+    try { value = evaluate(target, {}); } catch (err) { if (err instanceof Unsupported) return null; throw err; }
+    if (typeof value !== 'number') return null;
+    return { kind: 'checksum', expr, target: value, stmt };
   }
   // eski biçim: f(++n) ve while (--k) arr.push(arr.shift())
   if (!/while\(--/.test(src.replace(/\s+/g, ''))) return null;
@@ -215,6 +219,35 @@ export function evaluate(n, env) {
   return unsupported(`değerlendirilemeyen: ${n.type}`);
 }
 
+// Gövdesi tek `return D(...)` olan ve argümanları parametre/literal aritmetiğinden oluşan fonksiyonlar.
+// Aynı adla farklı gövdeli birden çok fonksiyon varsa ad belirsizdir: alınmaz.
+function wrapperFns(ast, decoders) {
+  const found = new Map();
+  const ambiguous = new Set();
+  const pureArg = (n, params) => (t.isIdentifier(n) ? params.has(n.name) : t.isNumericLiteral(n) || t.isStringLiteral(n) ||
+    (t.isUnaryExpression(n) && ['-', '+'].includes(n.operator) && pureArg(n.argument, params)) ||
+    (t.isBinaryExpression(n) && ['+', '-', '*'].includes(n.operator) && pureArg(n.left, params) && pureArg(n.right, params)));
+  t.traverseFast(ast, (n) => {
+    const fn = t.isFunctionDeclaration(n) ? n : null;
+    if (!fn || !fn.id || fn.body.body.length !== 1 || !t.isReturnStatement(fn.body.body[0])) return;
+    const call = fn.body.body[0].argument;
+    if (!t.isCallExpression(call) || !t.isIdentifier(call.callee) || !decoders.has(call.callee.name)) return;
+    if (!fn.params.every((x) => t.isIdentifier(x))) return;
+    const params = new Set(fn.params.map((x) => x.name));
+    if (!call.arguments.every((a) => pureArg(a, params))) return;
+    const key = fn.id.name;
+    if (found.has(key) && gen(found.get(key)) !== gen(fn)) ambiguous.add(key);
+    found.set(key, fn);
+  });
+  const out = new Map();
+  for (const [name, fn] of found) {
+    if (ambiguous.has(name) || decoders.has(name)) continue;
+    const call = fn.body.body[0].argument;
+    out.set(name, (env) => (args) => evaluate(call, { ...env, vars: Object.fromEntries(fn.params.map((x, i) => [x.name, args[i]])) }));
+  }
+  return out;
+}
+
 // ── giriş noktası ───────────────────────────────────────
 
 /**
@@ -257,6 +290,8 @@ export function analyzeStringArray(ast) {
     // checksum içinde decoder takma adlarla çağrılabilir (stringArrayWrappersType: 'variable')
     const aliasScan = (node) => t.traverseFast(node, (n) => { if (t.isVariableDeclarator(n) && isAlias(n)) env.decoders.set(n.id.name, model.decode); });
     if (rotator) aliasScan(rotator.stmt);
+    // fonksiyon sarmalayıcıları (rotasyon içindekiler dahil): function w(a, b) { return D(b - 0x1f0, a); }
+    for (const [name, w] of wrapperFns(ast, env.decoders)) env.decoders.set(name, w(env));
     for (const s of body.slice(0, Math.max(0, rotIndex))) if (t.isVariableDeclaration(s)) aliasScan(s);
     let rotations = 0;
     if (rotator?.kind === 'count') {

@@ -91,20 +91,23 @@ function nonNegativeFinite(p, n) {
 // break/continue hedefi verilen döngü olan deyim var mı (iç döngü/switch içindekiler hariç)
 function hasOwnJump(body) {
   let found = false;
-  const walk = (n, depth) => {
+  // switch yalnızca break'i yakalar: içindeki continue yine dıştaki döngüyü hedefler
+  const walk = (n, breakDepth, contDepth) => {
     if (!n || typeof n !== 'object' || found) return;
     if (t.isFunction(n)) return;
-    if ((t.isBreakStatement(n) || t.isContinueStatement(n))) {
-      if (n.label || depth === 0) found = true;
+    if (t.isBreakStatement(n) || t.isContinueStatement(n)) {
+      if (n.label || (t.isBreakStatement(n) ? breakDepth : contDepth) === 0) found = true;
       return;
     }
-    const nested = t.isLoop(n) || t.isSwitchStatement(n);
+    const loop = t.isLoop(n);
+    const b = loop || t.isSwitchStatement(n) ? breakDepth + 1 : breakDepth;
+    const c = loop ? contDepth + 1 : contDepth;
     for (const k of t.VISITOR_KEYS[n.type] ?? []) {
       const v = n[k];
-      if (Array.isArray(v)) v.forEach((c) => walk(c, nested ? depth + 1 : depth)); else walk(v, nested ? depth + 1 : depth);
+      if (Array.isArray(v)) v.forEach((x) => walk(x, b, c)); else walk(v, b, c);
     }
   };
-  walk(body, 0);
+  walk(body, 0, 0);
   return found;
 }
 

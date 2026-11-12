@@ -4,6 +4,7 @@ import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
 import { encodingReport } from './encodings.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
+import { engineReport } from './engine-report.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
 // fingerprint okumaları ve kalite metrikleri. Statik kısım AST'den, dinamik kısım sandbox'tan gelir.
@@ -171,7 +172,7 @@ async function runtimeScan(sandbox, text, config) {
   };
 }
 
-export async function analyze({ input, text, output, events = [], sandbox = null, config = null }) {
+export async function analyze({ input, text, output, events = [], sandbox = null, config = null, stats = null }) {
   const before = staticScan(text ?? input);
   const after = staticScan(output);
   const runtime = await runtimeScan(sandbox, text ?? input, config);
@@ -197,6 +198,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
     regexes: after.regexes,
     runtime,
     rollbacks: events.filter((e) => e.state === 'fail'),
+    // çözme motoru analizleri: obfuscator ayarları, akış, bütünlük, paket modülleri (stats verilmezse ölü kod dağılımı rapor tarafında stats'tan)
+    engine: engineReport({ input, text, output, stats }),
     passTimes: Object.entries(passTimes).map(([id, ms]) => ({ id, ms })).sort((a, b) => b.ms - a.ms),
     metrics: {
       inBytes: input.length,

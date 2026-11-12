@@ -25,12 +25,14 @@ import * as confuser from '../passes/37-confuser.js';
 import * as indirection from '../passes/42-indirection.js';
 import * as flow from '../passes/78-flow.js';
 import * as deadExtra from '../passes/82-dead-extra.js';
+import * as sourcemap from '../passes/05-sourcemap.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
 // needs: 'sandbox' ise sandbox yokken pass atlanır (diğerleri bağlam varsa onu kullanır, yoksa da çalışır)
 export const PASSES = [
   { id: 'normalize',    level: 1, kind: 'text', needs: null,      mod: normalize },
+  { id: 'sourcemap',    level: 1, kind: 'text', needs: null,      mod: sourcemap },
   { id: 'unpack',       level: 1, kind: 'text', needs: null,      mod: unpack },
   { id: 'predecoders',  level: 1, kind: 'text', needs: 'sandbox', mod: predecoders },
   { id: 'integrity',    level: 1, kind: 'ast',  needs: 'sandbox', mod: integrity },
