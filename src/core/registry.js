@@ -20,6 +20,8 @@ import * as simplify from '../passes/85-simplify.js';
 import * as unused from '../passes/90-unused.js';
 import * as rename from '../passes/95-rename.js';
 import * as staticDecode from '../passes/26-static-decode.js';
+import * as restructure from '../passes/86-restructure.js';
+import * as dispatcher from '../passes/77-dispatcher.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
@@ -47,6 +49,8 @@ export const PASSES = [
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
   { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },
   { id: 'static-decode', level: 1, kind: 'ast', needs: null,      mod: staticDecode },
+  { id: 'restructure',  level: 2, kind: 'ast',  needs: null,      mod: restructure },
+  { id: 'dispatcher',   level: 2, kind: 'ast',  needs: null,      mod: dispatcher },
 ];
 
 export const byId = (id) => PASSES.find((p) => p.id === id);
