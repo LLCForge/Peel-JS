@@ -1,4 +1,5 @@
 import { t, td } from '../i18n.js';
+import { mountRuntime } from './runtime/mount.js';
 import { render as renderSemantics } from './analysis/semantics.js';
 
 const MAX_ROWS = 60;
@@ -161,6 +162,7 @@ export function renderReport(root, report, onExport, actions = {}) {
   root.textContent = '';
   if (!report) {
     root.append(el('p', { class: 'placeholder' }, t('report.empty')));
+    mountRuntime(root, null);
     return;
   }
   const { runtime } = report;
@@ -195,4 +197,6 @@ export function renderReport(root, report, onExport, actions = {}) {
     report.semantics ? section('report.semantics', semanticsBody(report.semantics)) : null,
     exportBtn,
   ));
+  // çalışma anı, doğrulama ve sandbox ayarları (src/ui/runtime)
+  mountRuntime(root, report);
 }

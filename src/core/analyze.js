@@ -3,6 +3,7 @@ import { parse } from './parse.js';
 import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
 import { encodingReport } from './encodings.js';
+import { runtimeExtras } from '../verify/run.js';
 import { analysisReport } from '../analysis/report.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
 import { engineReport } from './engine-report.js';
@@ -183,7 +184,7 @@ export async function analyze({ input, text, output, events = [], sandbox = null
   const classes = classify({ code: output, runtime, iocs: found, apis: after.apis });
   // E-U/E-V: semantik modeller, veri akışı ve analiz altyapısı (trace verilmişse pass kayıtları)
   const semantics = await analysisReport({ text: text ?? input, output, sandbox, config, trace });
-  return {
+  const report = {
     fingerprint: fingerprint(input),
     iocs: found,
     threat: {
@@ -217,4 +218,7 @@ export async function analyze({ input, text, output, events = [], sandbox = null
     },
     semantics,
   };
+  // çalışma anı (coverage, taint, worker, WASM…) ve doğrulama (güven, pass riski, denetimler) bölümleri
+  Object.assign(report, await runtimeExtras({ report, input, text, output, events, sandbox, config }));
+  return report;
 }

@@ -2,7 +2,8 @@ import { STUBS } from './stubs.js';
 import { SEMANTIC_STUBS } from './semantics-stubs.js';
 import { hostIntl, hostTzOffset, hostTzName } from './host-intl.js';
 
-const MAX_CONTEXTS = 2;
+const MAX_CONTEXTS = 4;
+const TELEMETRY_MAX = 200;
 
 // İfadeyi değerlendirip yalnızca primitive sonucu JSON olarak döndüren sarmalayıcı.
 const VALUE_OF = (code) => `(function () {
@@ -25,12 +26,23 @@ function decodeValue(r) {
   return { ok: true, type: t, opaque: true };
 }
 
-// Tek bir QuickJS modülü üzerinde mesaj işleyici. Worker da Node testi de bunu kullanır.
-export function createHost(QuickJS) {
-  const contexts = new Map();
-  let tokenSeq = 0;
+// E750: eklenti = { name, prelude?: sandbox kodu (stub'lardan sonra), collect?: JSON döndüren sandbox ifadesi }.
+// Serileştirilebilir olduğu için worker mesajıyla da gelir; createHost(Q, { plugins }) ile host'a kalıcı eklenir.
+function validPlugins(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((p) => p && typeof p.name === 'string' && /^[\w.-]{1,40}$/.test(p.name) &&
+    (p.prelude == null || typeof p.prelude === 'string') && (p.collect == null || typeof p.collect === 'string')).slice(0, 16);
+}
 
-  function make(memoryMB, config = null) {
+// Tek bir QuickJS modülü üzerinde mesaj işleyici. Worker da Node testi de bunu kullanır.
+export function createHost(QuickJS, options = {}) {
+  const contexts = new Map();
+  const hostPlugins = validPlugins(options.plugins);
+  let tokenSeq = 0;
+  // E749: motor telemetrisi — istek türü başına sayaç, süre, bellek tepe değeri, kesme ve sızan runtime sayısı
+  const telemetry = { started: Date.now(), messages: {}, interrupts: 0, leaked: 0, peakMemory: 0, recent: [] };
+
+  function make(memoryMB, config = null, plugins = []) {
     const rt = QuickJS.newRuntime();
     rt.setMemoryLimit(memoryMB * 1024 * 1024);
     rt.setMaxStackSize(1 << 20);
@@ -42,6 +54,7 @@ export function createHost(QuickJS) {
     // böyle bir runtime'ı serbest bırakmak assert ile tüm WASM modülünü düşürür.
     // shortcut: kirlenen runtime serbest bırakılmaz (en fazla memoryMB sızar); sızıntı büyürse worker'ı yeniden başlat.
     let tainted = false;
+    let interrupted = false;
     const evalRaw = (src, ms) => {
       deadline = Date.now() + ms;
       let r;
@@ -57,6 +70,7 @@ export function createHost(QuickJS) {
         r.error.dispose();
         const message = e?.message ?? String(e);
         if (/interrupted|out of memory|stack overflow/i.test(message)) tainted = true;
+        if (/interrupted/i.test(message)) { interrupted = true; telemetry.interrupts++; }
         return { ok: false, error: message };
       }
       // nesneler (özellikle Promise) dump edilmez: dump Promise tutamacını kendisi serbest bırakır ve
@@ -66,8 +80,21 @@ export function createHost(QuickJS) {
       r.value.dispose();
       return { ok: true, value };
     };
+    const memory = () => {
+      if (tainted) return null;
+      try {
+        const h = rt.computeMemoryUsage();
+        const m = rt.context.dump(h);
+        h.dispose();
+        const used = m.memory_used_size ?? 0;
+        telemetry.peakMemory = Math.max(telemetry.peakMemory, used);
+        return { used, limit: memoryMB * 1024 * 1024, objects: m.obj_count ?? 0 };
+      } catch {
+        return null;
+      }
+    };
     const dispose = () => {
-      if (tainted) return;
+      if (tainted) { telemetry.leaked++; return; }
       vm.dispose();
       rt.dispose();
     };
@@ -92,10 +119,25 @@ export function createHost(QuickJS) {
     if (!s.ok) { dispose(); throw new Error(`stubs: ${s.error}`); }
     const sm = evalRaw(SEMANTIC_STUBS, 2000);
     if (!sm.ok) { dispose(); throw new Error(`semantic stubs: ${sm.error}`); }
+    const all = [...hostPlugins, ...plugins];
+    for (const p of all) {
+      if (!p.prelude) continue;
+      const r = evalRaw(p.prelude, 2000);
+      if (!r.ok) { dispose(); throw new Error(`eklenti ${p.name}: ${r.error}`); }
+    }
 
     const readArray = (name, fallback = []) => {
       const r = evalRaw(`JSON.stringify(${name})`, 1000);
       return r.ok && typeof r.value === 'string' ? JSON.parse(r.value) : fallback;
+    };
+    const collect = () => {
+      const out = {};
+      for (const p of all) {
+        if (!p.collect) continue;
+        const r = evalRaw(`JSON.stringify(${p.collect})`, 2000);
+        try { out[p.name] = r.ok && typeof r.value === 'string' ? JSON.parse(r.value) : { error: r.error ?? 'boş' }; } catch (e) { out[p.name] = { error: e.message }; }
+      }
+      return out;
     };
     // Promise geri çağrıları (fetch().then, async fonksiyonların devamı) ancak iş kuyruğu boşaltılınca çalışır
     const runJobs = (ms) => {
@@ -106,21 +148,41 @@ export function createHost(QuickJS) {
         tainted = true;
       }
     };
-    return { evalRaw, readArray, runJobs, dispose };
+    return { evalRaw, readArray, runJobs, dispose, memory, collect, interrupted: () => interrupted };
   }
 
-  function withBox(memoryMB, config, fn) {
-    const box = make(memoryMB, config);
+  function withBox(memoryMB, config, plugins, fn) {
+    const box = make(memoryMB, config, plugins);
     try { return fn(box); } finally { box.dispose(); }
   }
 
   function handle(msg) {
+    const t0 = Date.now();
+    let result;
+    try {
+      result = dispatch(msg);
+    } catch (e) {
+      result = { ok: false, error: e?.message ?? String(e) };
+    }
+    const ms = Date.now() - t0;
+    const m = (telemetry.messages[msg.type] ??= { count: 0, ms: 0, failed: 0 });
+    m.count++;
+    m.ms += ms;
+    if (!result.ok) m.failed++;
+    telemetry.recent.push({ type: msg.type, ms, ok: result.ok, mem: result.mem?.used ?? null });
+    if (telemetry.recent.length > TELEMETRY_MAX) telemetry.recent.shift();
+    return msg.type === 'telemetry' ? result : { ...result, ms };
+  }
+
+  function dispatch(msg) {
     const { type, code, list, token, timeoutMs = 4000, memoryMB = 64, config = null, post = null } = msg;
+    const plugins = validPlugins(msg.plugins);
 
     switch (type) {
       case 'run':
-        return withBox(memoryMB, config, (box) => {
+        return withBox(memoryMB, config, plugins, (box) => {
           const r = box.evalRaw(`(function () {\n${code}\n})()`, timeoutMs);
+          const timedOut = box.interrupted();
           box.runJobs(Math.min(timeoutMs, 2000));
           // olay döngüsü modeli (E516/E517): her makro görevden önce mikro kuyruk boşaltılır, reddedilen sözler denetlenir
           if (config?.eventLoop) {
@@ -139,15 +201,18 @@ export function createHost(QuickJS) {
             box.runJobs(1000);
           }
           return {
-            ok: r.ok, error: r.error, out: box.readArray('__out'), res: box.readArray('__res'),
+            ok: r.ok, error: r.error, timedOut, out: box.readArray('__out'), res: box.readArray('__res'),
             net: box.readArray('__peelNet'), reads: box.readArray('__peelReads', {}),
             crypto: post ? box.readArray('__peelCrypto') : [],
+            // dışarıdan gözlenebilir etkiler (E706/E711): davranış karşılaştırması ve rapor için
+            effects: box.readArray('__peelEffects'),
+            extra: box.collect(), mem: box.memory(),
             sem: config?.eventLoop ? box.readArray('__peelSem') : [],
           };
         });
 
       case 'batch':
-        return withBox(memoryMB, config, (box) => ({
+        return withBox(memoryMB, config, plugins, (box) => ({
           ok: true,
           results: list.map((expr) => decodeValue(box.evalRaw(VALUE_OF(expr), 500))),
         }));
@@ -158,12 +223,13 @@ export function createHost(QuickJS) {
           contexts.get(oldest).dispose();
           contexts.delete(oldest);
         }
-        const box = make(96);
+        const box = make(msg.memoryMB ?? 96, config, plugins);
         // Global kapsamda çalıştır: üst seviye fonksiyon/değişkenler sonraki ifadelerden erişilebilir kalsın
         const r = box.evalRaw(code, timeoutMs);
+        if (msg.jobs) box.runJobs(Math.min(timeoutMs, 2000));
         const id = `ctx${++tokenSeq}`;
         contexts.set(id, box);
-        return { ok: true, token: id, runError: r.ok ? null : r.error };
+        return { ok: true, token: id, runError: r.ok ? null : r.error, timedOut: box.interrupted() };
       }
 
       case 'cbatch': {
@@ -172,10 +238,22 @@ export function createHost(QuickJS) {
         return { ok: true, results: list.map((expr) => decodeValue(box.evalRaw(VALUE_OF(expr), 1500))) };
       }
 
+      // Bağlamda deyim çalıştırır, iş kuyruğunu boşaltır; değer JSON'a çevrilebiliyorsa döner (oturum/replay adımı)
+      case 'ceval': {
+        const box = contexts.get(token);
+        if (!box) return { ok: false, error: 'bağlam yok' };
+        const r = box.evalRaw(code, timeoutMs);
+        box.runJobs(Math.min(timeoutMs, 1000));
+        return { ok: r.ok, error: r.error, value: r.value === undefined ? null : r.value, mem: box.memory(), extra: box.collect() };
+      }
+
       case 'close':
         contexts.get(token)?.dispose();
         contexts.delete(token);
         return { ok: true };
+
+      case 'telemetry':
+        return { ok: true, telemetry: { ...structuredCloneSafe(telemetry), contexts: contexts.size, uptimeMs: Date.now() - telemetry.started } };
 
       default:
         return { ok: false, error: `bilinmeyen istek: ${type}` };
@@ -185,6 +263,8 @@ export function createHost(QuickJS) {
   return { handle };
 }
 
+const structuredCloneSafe = (o) => JSON.parse(JSON.stringify(o));
+
 // Worker istemcisi ve Node testinin paylaştığı API yüzeyi
 export function sandboxApi(send) {
   return {
@@ -192,6 +272,8 @@ export function sandboxApi(send) {
     batch: (list, opts = {}) => send({ type: 'batch', list, ...opts }),
     open: (code, opts = {}) => send({ type: 'open', code, ...opts }),
     batchIn: (token, list) => send({ type: 'cbatch', token, list }),
+    evalIn: (token, code, opts = {}) => send({ type: 'ceval', token, code, ...opts }),
     close: (token) => send({ type: 'close', token }),
+    telemetry: () => send({ type: 'telemetry' }),
   };
 }
