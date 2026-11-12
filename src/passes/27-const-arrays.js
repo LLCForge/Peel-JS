@@ -31,6 +31,27 @@ function pathOf(n) {
   return null;
 }
 
+// *.name[sabit] okumaları (kök fark etmez); ad atama hedefi dışında okuma olmayan bir biçimde kullanılıyorsa
+// (eleman yazma, push, fonksiyona verme) dizi değişebilir: hiçbiri alınmaz
+function aliasReads(ast, name, len) {
+  const out = [];
+  let ok = true;
+  traverse(ast, {
+    MemberExpression(q) {
+      if (!ok || q.node.computed || !t.isIdentifier(q.node.property, { name })) return;
+      if (q.parentPath.isAssignmentExpression({ left: q.node, operator: '=' }) && t.isArrayExpression(q.parent.right)) return;
+      if (!isRead(q.parentPath, q.node)) { ok = false; q.stop(); return; }
+      if (isFixed(q.parentPath, len)) out.push(q.parentPath);
+    },
+    // { name: [...] } ya da sınıf alanı: aynı ad başka bir diziye bağlanabilir
+    'ObjectProperty|ObjectMethod|ClassProperty|ClassMethod'(q) {
+      const k = q.node.key;
+      if (!q.node.computed && (t.isIdentifier(k, { name }) || t.isStringLiteral(k, { value: name }))) { ok = false; q.stop(); }
+    },
+  });
+  return ok ? out : [];
+}
+
 function propertyUsed(ast, name, except) {
   let used = false;
   traverse(ast, {
@@ -110,12 +131,15 @@ async function scopeArrays(ast, { onLog, sandbox, level }) {
     });
     if (!ok) continue;
     const fixed = reads.filter((m) => isFixed(m, c.elements.length));
+    // ad hep aynı içerikle yazılıyor: başka köklerden ({ X: scope.X } ile geçen) okumalar da aynı diziyi görür
+    const alias = aliasReads(ast, c.path.split('.').pop(), c.elements.length).filter((m) => !fixed.includes(m));
+    fixed.push(...alias);
     if (!fixed.length) continue;
     for (const m of fixed) m.replaceWith(t.cloneNode(c.elements[m.node.property.value], true));
     n += fixed.length;
     // dizi başka kapsam nesnelerine de geçer ({ X: scope.X }) ve orada başka kökle okunur: ad hiçbir yerde kalmadıysa sil
-    if (fixed.length === reads.length && !propertyUsed(ast, c.path.split('.').pop(), c.p.node.left)) stmt.remove();
-    onLog(`const-arrays: ${c.path} (${c.elements.length} literal) ${fixed.length}/${reads.length} okuma yerine yazıldı`, 'info');
+    if (!propertyUsed(ast, c.path.split('.').pop(), c.p.node.left)) stmt.remove();
+    onLog(`const-arrays: ${c.path} (${c.elements.length} literal) ${fixed.length} okuma yerine yazıldı (${alias.length} başka kökten)`, 'info');
   }
   return n;
 }

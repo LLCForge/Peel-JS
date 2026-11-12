@@ -48,10 +48,14 @@ function __peelSrcOk(id) {
   var f = __peelFns[id];
   return typeof f === "function" && /${DECODER_SRC}/.test(Function.prototype.toString.call(f));
 }
+// yan etki gözlenirse (console çıktısı, ağ isteği) decoder sayılmaz
+var __peelImpure = {};
 function __peelEval(id, args) {
   var f = __peelFns[id];
   if (!f) return null;
+  var o = __out.length, n = __peelNet.length;
   var a = f.apply(undefined, args);
+  if (__out.length !== o || __peelNet.length !== n) { __peelImpure[id] = true; return null; }
   var b = f.apply(undefined, args);
   if (a !== b) return null;
   return typeof a === "string" ? a : __peelGlobalName(a);
@@ -263,8 +267,8 @@ async function resolveCalls(ast, ctx) {
       // (js-confuser decoder'ı CFF sarmalayıcısının arkasında olabilir, kaynağı ipucu vermez)
       if (g.memberPath) {
         const numeric = g.calls.filter((c) => c.node.arguments.some((a) => typeof literalValue(a).value === 'number')).length;
-        const ok = numeric >= MIN_CALLS || (await sandbox.batchIn(opened.token, [`__peelSrcOk(${g.id})`])).results?.[0]?.value === true;
-        if (!ok) continue;
+        // eşik altındaki gruplar: her çağrı string vermeli ve değerlendirmede yan etki gözlenmemeli (aşağıda)
+        g.strict = numeric < MIN_CALLS && (await sandbox.batchIn(opened.token, [`__peelSrcOk(${g.id})`])).results?.[0]?.value !== true;
       }
       const unique = [...new Set(g.calls.map(argsKey))];
       const r = await sandbox.batchIn(opened.token, unique.map((args) => `__peelEval(${g.id}, ${args})`));
@@ -275,6 +279,10 @@ async function resolveCalls(ast, ctx) {
         if (v?.ok && v.type === 'string') values.set(args, v.value);
       });
       if (values.size < unique.length * MIN_STRING_RATIO) continue;
+      if (g.strict) {
+        const imp = await sandbox.batchIn(opened.token, [`__peelImpure[${g.id}] === true`]);
+        if (values.size < unique.length || !imp.ok || imp.results[0]?.value !== false) continue;
+      }
       decoders.add(g);
 
       let n = 0;
