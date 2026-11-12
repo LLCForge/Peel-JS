@@ -33,7 +33,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js",
+    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js && node test/solver.test.js && node test/symbolic.test.js && node test/patch.test.js && node test/sandbox-runtime.test.js && node test/replay.test.js && node test/verify.test.js && node test/sandbox-escape.test.js && node test/runtime-ui.test.js && node test/sbom.test.js",
+    "sbom": "node scripts/sbom.js --prod -o peel-sbom.cdx.json",
     "bench": "node test/bench.js"
   },
   "dependencies": {

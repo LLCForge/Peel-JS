@@ -26,3 +26,4 @@ tmp-*
 
 # benchmark çıktıları
 test/bench-out/
+peel-sbom.cdx.json
