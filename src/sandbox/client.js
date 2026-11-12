@@ -1,4 +1,5 @@
 import { sandboxApi } from './core.js';
+import { applySettings, getSettings } from './settings.js';
 
 // Ana thread tarafı: sandbox worker'ına RPC. kill() çalışan her şeyi keser.
 let worker = null;
@@ -32,7 +33,8 @@ function send(msg) {
   return new Promise((resolve) => {
     const id = ++seq;
     pending.set(id, resolve);
-    ensure().postMessage({ id, ...msg });
+    // arayüz ayarları (profil, zaman, depolama, sınırlar) her isteğe aynı biçimde uygulanır
+    ensure().postMessage({ id, ...applySettings(msg, getSettings()) });
   });
 }
 
