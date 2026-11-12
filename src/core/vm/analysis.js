@@ -40,7 +40,7 @@ export function analyzeVm(vm, values, { used = new Set(), steps = null, origin =
   const ctx = { consts: vm.roles.consts, regs: vm.roles.regs };
   const handlers = vm.handlers.map((h, i) => {
     const sem = handlerSemantics(vm, values, h);
-    return { key: h.key, index: i, shape: shapeOf(lists[i]), sem, source: lists[i].length ? gen(t.blockStatement(ownStmts(lists[i]))).slice(0, 600) : '' };
+    return { key: h.key, index: i, shape: shapeOf(lists[i], vm.roles), sem, source: lists[i].length ? gen(t.blockStatement(ownStmts(lists[i]))).slice(0, 600) : '' };
   });
   const result = {
     ...base,
@@ -80,7 +80,10 @@ export function analyzeVm(vm, values, { used = new Set(), steps = null, origin =
     const dis = disassemble(L, ex, names);
     const consts = vm.roles.consts ? values.arrays.get(vm.roles.consts) : null;
     const isa = isaOf(dis, names);
-    result.disasm = dis.list.map((x) => ({ ...x, mnemonic: isa.mnemonic.get(x.op) ?? x.mnemonic }));
+    const rawAt = (i) => (typeof code === 'string' ? code.charCodeAt(i) : code[i]);
+    // opcode bytecode'da kodlanmış olabilir (ör. XOR): ham değer ↔ çözülmüş opcode eşlemesi assembler için
+    result.disasm = dis.list.map((x) => ({ ...x, raw: rawAt(x.reads[0]), mnemonic: isa.mnemonic.get(x.op) ?? x.mnemonic }));
+    result.opcodeMap = [...new Map(result.disasm.map((x) => [x.op, x.raw]))].map(([op, raw]) => ({ op, raw }));
     result.gaps = dis.gaps;
     result.listing = formatDisasm({ ...dis, list: result.disasm }, (x) => constComment(x, consts));
     result.assembly = toAssembly(dis, code, isa);

@@ -33,7 +33,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js",
+    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js && node test/vm.test.js",
     "bench": "node test/bench.js"
   },
   "dependencies": {

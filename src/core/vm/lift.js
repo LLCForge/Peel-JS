@@ -283,7 +283,10 @@ export function runIteration(L, env, first) {
       if (vm.update) evalStatementExpr(lf.env, vm.update);
       return finishIteration(L, lf.env);
     }
-    if (lf.end === 'exit' || lf.end === 'ret') return lf;
+    if (lf.end === 'exit' || lf.end === 'ret') {
+      if (vm.opVar && lf.env.conc.has(vm.opVar)) L.noteOp(lf.env.conc.get(vm.opVar));
+      return lf;
+    }
     return fail(`beklenmeyen kontrol akışı: ${lf.end}`);
   });
 }

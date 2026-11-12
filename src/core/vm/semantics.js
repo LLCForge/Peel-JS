@@ -197,16 +197,25 @@ export function agrees(stat, dyn) {
 // ── kümeleme ve imzalar ─────────────────────────────────
 
 // Handler gövdesinin biçim özeti: tanımlayıcılar ilk görülme sırasıyla yeniden adlandırılır
-export function shapeOf(stmts) {
+export function shapeOf(stmts, roles = {}) {
+  // VM rolleri (bytecode, pc, yığın…) sabit adlarla, diğer yereller handler içinde ilk görülme sırasıyla adlandırılır:
+  // opcode numaraları karıştırılsa da aynı handler aynı özeti verir
+  const roleOf = new Map(Object.entries(roles).filter(([k, v]) => typeof v === 'string' && k !== 'isString').map(([k, v]) => [v, `$${k}`]));
   const names = new Map();
   const norm = (node) => {
     const copy = t.cloneNode(node, true);
-    walk(copy, (n) => {
-      if (t.isIdentifier(n)) {
-        if (!names.has(n.name)) names.set(n.name, `v${names.size}`);
-        n.name = names.get(n.name);
+    walk(copy, (n, parent, key) => {
+      if (t.isIdentifier(n) && !((t.isMemberExpression(parent) && key === 'property' && !parent.computed) ||
+          (t.isObjectProperty(parent) && key === 'key' && !parent.computed))) {
+        if (roleOf.has(n.name)) n.name = roleOf.get(n.name);
+        else {
+          if (!names.has(n.name)) names.set(n.name, `v${names.size}`);
+          n.name = names.get(n.name);
+        }
       }
-      delete n.leadingComments; delete n.trailingComments; delete n.innerComments;
+      n.leadingComments = null;
+      n.trailingComments = null;
+      n.innerComments = null;
     });
     return gen(copy);
   };
@@ -309,11 +318,11 @@ export function assemble(text, isa, opcodeEncode = (op) => op) {
     const m = line.match(/^(\.?[\w$]+)\s*(.*)$/);
     if (!m) { errors.push(`${lineNo + 1}: çözümlenemedi`); return; }
     const [, word, rest] = m;
+    if (word === '.code') { kind = String(rest).split(/\s+/)[0] === 'string' ? 'string' : 'array'; return; }
     let args = [];
     if (rest) {
       try { args = JSON.parse(`[${rest}]`); } catch { errors.push(`${lineNo + 1}: işlenen okunamadı`); return; }
     }
-    if (word === '.code') { kind = String(rest).split(/\s+/)[0] === 'string' ? 'string' : 'array'; return; }
     if (word === '.data') { out.push(...args); return; }
     let op = isa.opcode.get(word);
     if (op === undefined && /^OP_/.test(word)) op = Number(word.slice(3));
