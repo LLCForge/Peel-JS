@@ -204,15 +204,15 @@ Integrity (en son).
 | preparation (her zaman) | `o.x` → `o["x"]`, `{x:1}` → `{["x"]:1}`, tek deyimleri bloklara | — | `literals`, `simplify` |
 | `objectExtraction` | Sabit nesneyi ayrı değişkenlere böler: `var o={a:1}` → `var o_a=1` | — | davranış aynı, okunur |
 | `flatten` | Fonksiyon gövdesi program düzeyine taşınır, dış değişkenlere getter/setter/`typeof`/çağrı yöntemli "düz nesne" ile erişilir; kabuk `function f(...A){var O={…};return F(O,A)}` | `F(O, [name])` | **`flat-fns`** (yeni) |
-| `lock.selfDefending` | Her fonksiyona `new RegExp("\n").test(f)` ise `while(true){}` | — | **`locks`** (yeni) |
+| `lock.selfDefending` | Her fonksiyona `new RegExp("\n").test(f)` ise `while(true){}` | — | **`integrity`** (main ile birleştirildi) |
 | `lock.antiDebug` | `debugger;` deyimleri | — | `dead-code` |
-| `lock.integrity` | Fonksiyon kopyası `G`'nin `toString()` özeti (cyrb53) hesaplanır; `if (h === 6542284030023826) {…} else {karşı önlem}` | — | **`locks`** (yeni): özet testi özgün dalla değiştirilir, `function F(){return G(...arguments)}` kabuğu `G`'nin gövdesine döner |
+| `lock.integrity` | Fonksiyon kopyası `G`'nin `toString()` özeti (cyrb53) hesaplanır; `if (h === 6542284030023826) {…} else {karşı önlem}` | — | **`integrity`**: özet çağrısı değerlendirme bağlamında hesaplanır, özet testi özgün dalla değiştirilir, `function F(){return G(...arguments)}` kabuğu `G`'nin gövdesine döner |
 | `lock.tamperProtection` | Yerel fonksiyon denetimi (`{ [native code] }`) ve katı kip tespiti | — | gerçek davranış, dokunulmaz (okunur) |
 | `lock.domainLock` | `if (!new RegExp("example.com").test(location.href)) while(true){}` | — | gerçek davranış, dokunulmaz |
 | `lock.startDate/endDate` | `Date.now()` karşılaştırması | — | gerçek davranış, dokunulmaz |
 | `lock.countermeasures`, `customLocks`, `defaultMaxCount` | Karşı önlem fonksiyonu adı, özel kilitler | — | karşı önlem kodu kalır |
 | `rgf` | Fonksiyon gövdeleri string olarak bir diziye konur, `eval` ile üretilir; kabuk `R[k].apply(this,[R,arguments])` | `E('function X(){var[R,A]=arguments;…}X;')` | **`rgf`** (yeni) |
-| `dispatcher` | Fonksiyonlar tek dağıtıcının nesnesine, argümanlar global payload dizisiyle; referans/`new` bayrakları | `(P=["PEEL"], D("k1"))` | **`dispatcher`** (yeni) |
+| `dispatcher` | Fonksiyonlar tek dağıtıcının nesnesine, argümanlar global payload dizisiyle; referans/`new` bayrakları | `(P=["PEEL"], D("k1"))` | **`confuser`** (main'in dispatcher çözücüsü; bu çalışmanın ayrı pass'i onunla birleştirildi) |
 | `deadCode` | Şablonlardan (`deadCodeTemplates`) ölü fonksiyonlar ve opak dallar | — | `dead-code`, `opaque`, `unused` |
 | `calculator` | İkili işlemler `calc(op, a, b)` switch fonksiyonuna | — | `proxy`, `runtime-functions` |
 | `globalConcealing` | Global adlar `getGlobal("dZGlvoH")` ile | — | `runtime-decoders` (global adı döner) |
@@ -220,7 +220,7 @@ Integrity (en son).
 | `stringSplitting` | `"abc"` → `"a"+"bc"` | — | `const-fold` |
 | `stringConcealing`, `customStringEncodings` | Base91 türevi rastgele alfabe + LZ-string sıkıştırma; decoder kapsam nesnelerinde | — | `runtime-decoders`, `runtime-functions` |
 | `stringEncoding` | `\x`/`\u` kaçışları | — | `literals` |
-| `variableMasking` (1.x'teki "stack") | Parametre ve yerel değişkenler tek rest dizisinin elemanlarına | `function f(...M){return M[0]+M.a}` | **`var-mask`** (yeni) |
+| `variableMasking` (1.x'teki "stack") | Parametre ve yerel değişkenler tek rest dizisinin elemanlarına | `function f(...M){return M[0]+M.a}` | **`confuser`** (A-21; bu çalışmanın var-mask mantığı main'in rest+length çözücüsünün yerine geçti: adlı anahtarlar ve length deyimsiz biçim de açılır) |
 | `duplicateLiteralsRemoval` | Tekrarlanan literal'ler diziye | — | `const-arrays` |
 | `controlFlowFlattening` | Gövde parçalara bölünüp `while`+`switch` durum makinesine; `with` kapsamları, durum değişkenleri | — | `unflatten`, `state-var`, `vm`, `control-flow` |
 | `movedDeclarations` | Değişkenler kullanılmayan parametrelere taşınır | — | `unused`, `simplify` |
@@ -229,7 +229,7 @@ Integrity (en son).
 | `astScrambler` | Deyimleri virgül ifadelerine katlar | — | `dead-code` (sequence bölme) |
 | `renameVariables`, `renameGlobals`, `identifierGenerator` (hexadecimal/randomized/zeroWidth/mangled/number/chinese) | Ad üretimi | — | özgün adlar kayıp; `rename` yalnızca `_0x…` biçimini adlandırır |
 | `hexadecimalNumbers`, `compact` | Sayı biçimi | — | `literals` |
-| `preserveFunctionLength` | `Object.defineProperty(fn, "length", …)` yardımcısı | — | `dead-code` (length sarmalayıcısı); `rgf`/`flat-fns`/`var-mask` açtığı fonksiyonun length'i zaten parametre sayısı olur |
+| `preserveFunctionLength` | `Object.defineProperty(fn, "length", …)` yardımcısı | — | `dead-code` (length sarmalayıcısı); `rgf`/`flat-fns`/`confuser` açtığı fonksiyonun length'i zaten parametre sayısı olur |
 | `pack` | Tüm program `new Function` / IIFE içine, globaller bir nesne üzerinden | — | `unpack`, kalan IIFE kabuğu korunur |
 | preset `low/medium/high` | Birleşimler | — | yukarıdakiler |
 
@@ -243,7 +243,7 @@ Kalan açıklar:
 - `stringConcealing`'in sıkıştırma yardımcısı (LZ-string benzeri `bufferToString` şablonu) düşük/orta
   hazır ayarlarda, decoder'ın kendisi CFF ile düzleştirildiğinde yer yer kalıyor (çağrılar çözülse de
   yardımcı kodun kendisi silinemiyor).
-- `rgf`/`flat-fns`/`var-mask`/integrity kabuğu açılınca fonksiyonun `length` değeri özgün kaynaktaki parametre
+- `rgf`/`flat-fns`/`confuser` (variableMasking)/integrity kabuğu açılınca fonksiyonun `length` değeri özgün kaynaktaki parametre
   sayısına döner (gizlenmiş kodda 0'dı). Bu, PEEL'in mevcut length-sarmalayıcısı kuralıyla aynı kabuldür.
 - dispatcher ile adları kaybolan fonksiyonlar `fn_<anahtar>` olarak adlandırılır.
 
@@ -305,13 +305,12 @@ jsfuck-parent, aaencode, aaencode-unicode, jjencode, jjencode-gv).
 
 | Pass | Dosya | Seviye | Ne yapar |
 |---|---|---|---|
-| `locks` | `src/passes/82-locks.js` | 2 | js-confuser selfDefending IIFE'si ve integrity özet testi (AST pass'lerinin en başında; özet metne bağlı) |
-| `iife-args` | `src/passes/26-iife-args.js` | 2 | jfogs parametre taşıma IIFE'si, çözücü önsöz sandbox'ta |
-| `eval-inline` | `src/passes/37-eval-inline.js` | 2 | Fonksiyonun tek deyimi olan sabit `eval("…")` |
-| `rgf` | `src/passes/38-rgf.js` | 2 | js-confuser RGF tablosu ve kabukları |
-| `var-mask` | `src/passes/46-var-mask.js` | 2 | js-confuser variableMasking |
+| `integrity` | `src/passes/24-integrity.js` | 1 | main'in özet denetimi çözücüsü + bu çalışmadan js-confuser selfDefending IIFE'si ve integrity kabuğunun birleştirilmesi |
+| `iife-args` | `src/passes/23-iife-args.js` | 2 | jfogs parametre taşıma IIFE'si, çözücü önsöz sandbox'ta |
+| `eval-inline` | `src/passes/38-eval-inline.js` | 2 | Fonksiyonun tek deyimi olan sabit `eval("…")` |
+| `rgf` | `src/passes/39-rgf.js` | 2 | js-confuser RGF tablosu ve kabukları |
+| `confuser` | `src/passes/37-confuser.js` | 2 | main'in dispatcher/rest-parametre/__generator pass'i; variableMasking mantığı bu çalışmadan |
 | `flat-fns` | `src/passes/47-flat-fns.js` | 2 | js-confuser flatten |
-| `dispatcher` | `src/passes/48-dispatcher.js` | 2 | js-confuser dispatcher |
 | `webpack` | `src/passes/93-webpack.js` | 2 | webpack modül tablosu ve runtime adları |
 | `predecoders` | `src/passes/20-predecoders.js` | 1 | JSFuck/AAEncode/JJEncode düzeltmeleri |
 | `runtime-decoders` | `src/passes/35-runtime-decoders.js` | 2 | hex string indeks, kodlamasız indeks decoder'ı, gövde içi altyapı |
@@ -321,4 +320,4 @@ jsfuck-parent, aaencode, aaencode-unicode, jjencode, jjencode-gv).
 
 Fixture'lar: `jfogs-default`, `jfogs-reverse`, `jfogs-zero`, `jsfuck-eval`, `aaencode`, `jjencode`,
 `eval-inline`, `webpack-bundle`, `webpack-loader`, `io-index-string`, `io018-self-defending`, `jc-integrity`,
-`jc-lock-selfdefending`, `jc-rgf`, `jc-variable-masking`, `jc-flatten`, `jc-dispatcher`.
+`jc-integrity-collapse`, `jc-lock-selfdefending`, `jc-rgf`, `jc-variable-masking`, `jc-flatten`, `jc-dispatcher-small`.

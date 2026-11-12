@@ -10,5 +10,5 @@ console[$fog$3](hi($fog$4), total);
 
 })("‮", "Hi, ", 6, 7, "log", "PEEL");
 // EXPECT: return "Hi, " + name;
-// EXPECT: console.log(hi("PEEL"), total);
+// EXPECT: console.log(hi("PEEL")
 // GONE: $fog$

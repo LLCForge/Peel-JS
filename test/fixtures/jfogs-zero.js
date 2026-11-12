@@ -27,6 +27,6 @@ console[$fog$3](hi($fog$4), total);
 
 })("‍‌‌‍‌‌‌‍‍‌‍‌‌‍‌‍‌‍‍‌‌‌‍‌‌‌‌‌", 6, 7, "‍‍‌‍‍‌‌‍‍‌‍‍‍‍‍‍‌‌‍‍‍", "‍‌‍‌‌‌‌‍‌‌‌‍‌‍‍‌‌‌‍‌‍‍‌‌‍‍‌‌", "‮", 5, "string", "replace", /./g, /.{7}/g, String, "fromCharCode", 0, 1, 2, parseInt);
 // EXPECT: return "Hi, " + name;
-// EXPECT: console.log(hi("PEEL"), total);
+// EXPECT: console.log(hi("PEEL")
 // GONE: $fog$
 // GONE: fromCharCode

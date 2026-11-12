@@ -4,7 +4,8 @@ import { traverse } from '../util/ast.js';
 // webpack 4/5 paketi: modül tablosu ({ 944(o) {...} } ya da [function (o, t, e) {...}]) ve
 // require fonksiyonu (function e(n) { ... t[n] = { exports: {} } ... o[n](s, s.exports, e) ... }).
 // Küçültülmüş paketlerde adlar tek harftir; webpack'in kendi adları geri verilir ve her modülün başına
-// kimliği yorum olarak yazılır. Yalnızca yeniden adlandırma: davranış değişmez.
+// kimliği yorum olarak yazılır. Yalnızca yeniden adlandırma: davranış değişmez. Modülleri ayrı dosyalara bölme
+// (webpack/browserify/esbuild/parcel) src/core/bundle.js'tedir; bu pass paketi yerinde okunur kılar.
 
 const MODULE_PARAMS = ['module', 'exports', '__webpack_require__'];
 // yalnızca küçültücü/obfuscator adları (e, t, _0x1a2b, a0_0x3f) değiştirilir; okunur adlara dokunulmaz

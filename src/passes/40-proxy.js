@@ -44,8 +44,49 @@ function switchOfProxy(params, stmts) {
   return isLen && isFirstArg ? { sw, index: 1 } : null;
 }
 
+// E97: function W(k) { return T[k]; }  (T sabit nesne literali)  ya da  function W(k) { return { a: f, b: g }[k]; }
+// W("a")(x) → f(x). Anahtar nesnenin kendi anahtarı değilse (toString gibi prototip adı) çağrı açılmaz.
+function readLookupProxy(fnPath) {
+  const { params, body } = fnPath.node;
+  if (params.length !== 1 || !t.isIdentifier(params[0]) || !t.isBlockStatement(body) || body.body.length !== 1) return null;
+  const ret = body.body[0];
+  const m = t.isReturnStatement(ret) && ret.argument;
+  if (!t.isMemberExpression(m) || !m.computed || !t.isIdentifier(m.property, { name: params[0].name })) return null;
+  let obj = m.object;
+  // ayrı tablo değerleri kurulum anında okunur: çağrı anında aynı kalmaları için yalnızca sabit bağlamalı adlar
+  const snapshot = t.isIdentifier(obj);
+  let tableStmt = null;
+  if (t.isIdentifier(obj)) {
+    const b = fnPath.scope.getBinding(obj.name);
+    if (!b?.constant || !b.path.isVariableDeclarator() || !t.isObjectExpression(b.path.node.init)) return null;
+    // tablo yalnızca bu proxy içinden okunmalı (başka yerde değiştirilemez)
+    if (!b.referencePaths.every((r) => r.findParent((x) => x === fnPath))) return null;
+    obj = b.path.node.init;
+    tableStmt = b.path.parentPath;
+  }
+  if (!t.isObjectExpression(obj)) return null;
+  const entries = [];
+  const keys = new Set();
+  for (const prop of obj.properties) {
+    if (!t.isObjectProperty(prop) || prop.computed) return null;
+    const key = t.isIdentifier(prop.key) ? prop.key.name : t.isStringLiteral(prop.key) || t.isNumericLiteral(prop.key) ? String(prop.key.value) : null;
+    if (key === null || key === '__proto__' || keys.has(key)) return null;
+    keys.add(key);
+    const names = valueNames(prop.value);
+    if (!names) return null;
+    for (const n of names) if (fnPath.scope.getOwnBinding(n)) return null;
+    if (snapshot && (!t.isIdentifier(prop.value) || !fnPath.scope.getBinding(prop.value.name)?.constant)) return null;
+    entries.push({ key, value: prop.value, names });
+  }
+  if (!entries.length) return null;
+  entries.tableStmt = tableStmt;
+  return entries;
+}
+
 // function V(k) { switch (k) { case "a": return X.y; ... } }
 function readProxy(fnPath) {
+  const lookup = readLookupProxy(fnPath);
+  if (lookup) return lookup;
   const { params, body } = fnPath.node;
   if (!t.isBlockStatement(body)) return null;
   const found = switchOfProxy(params, body.body);
@@ -65,7 +106,7 @@ function readProxy(fnPath) {
     if (!names) return;
     // değer proxy'nin kendi parametresine/yereline bağlıysa çağrı yerine taşınamaz
     for (const n of names) if (fnPath.scope.getOwnBinding(n)) return;
-    entries.push({ testPath: fnPath.get(`body.body.${index}.cases.${i}.test`), value, names });
+    entries.push({ testPath: fnPath.get(`body.body.${index}.cases.${i}.test`), value, names, ret: cons[0], own: i === j, disc: sw.discriminant });
   });
   return entries.length >= MIN_MAP ? entries : null;
 }
@@ -90,7 +131,45 @@ async function resolveKeys(paths, { sandbox, ctx }) {
   return keys;
 }
 
-export async function run(ast, { onLog, bump, sandbox, ctx }) {
+// E637: anahtarı statik çözülemeyen case'ler (closure değişkeni, hesaplanan sabit) programı bir kez çalıştırıp
+// proxy'nin hangi anahtarla hangi case'ten döndüğü gözlenerek tamamlanır. Yalnızca case testi yan etkisiz
+// (çağrı/atama içermeyen) ve düşmesiz case'ler; her anahtar tek case'e, her case tek anahtara eşlenmeli.
+const sideEffectFree = (node) => {
+  let ok = true;
+  const visit = (n) => {
+    if (!n || typeof n !== 'object' || !ok) return;
+    if (t.isCallExpression(n) || t.isNewExpression(n) || t.isAssignmentExpression(n) || t.isUpdateExpression(n) ||
+        t.isFunction(n) || t.isAwaitExpression(n) || t.isYieldExpression(n) || t.isTaggedTemplateExpression(n)) { ok = false; return; }
+    for (const k of t.VISITOR_KEYS[n.type] ?? []) {
+      const v = n[k];
+      if (Array.isArray(v)) v.forEach(visit); else visit(v);
+    }
+  };
+  visit(node);
+  return ok;
+};
+
+async function observeKeys(ast, entries, idx, sandbox) {
+  const undo = [];
+  for (const i of idx) {
+    const e = entries[i];
+    const arg = e.ret.argument;
+    e.ret.argument = t.callExpression(t.identifier('__peelPxR'), [t.numericLiteral(i), t.cloneNode(e.disc, true), arg]);
+    undo.push(() => { e.ret.argument = arg; });
+  }
+  const code = gen(ast);
+  undo.forEach((u) => u());
+  const prelude = `var __peelPxSeen = {};
+function __peelPxR(i, k, v) {
+  var s = typeof k === "string" || typeof k === "number" ? String(k) : null;
+  if (!(i in __peelPxSeen)) __peelPxSeen[i] = s; else if (__peelPxSeen[i] !== s) __peelPxSeen[i] = null;
+  return v;
+}`;
+  const r = await sandbox.run(`${prelude}\ntry {\n${code}\n} catch (e) {}\n__res.push(__peelPxSeen);`, { timeoutMs: 6000 });
+  return r.res?.[0] ?? {};
+}
+
+export async function run(ast, { onLog, bump, sandbox, ctx, level = 2, findings }) {
   const proxies = [];
   traverse(ast, {
     FunctionDeclaration(p) {
@@ -111,10 +190,27 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
     const binding = px.declScope.getBinding(px.name);
     if (!binding?.constant) continue;
 
-    const keys = await resolveKeys(px.entries.map((e) => e.testPath), { sandbox, ctx });
+    const lookup = px.entries[0].key !== undefined;
+    const keys = lookup ? px.entries.map((e) => e.key) : await resolveKeys(px.entries.map((e) => e.testPath), { sandbox, ctx });
+    const open = lookup ? [] : keys.map((k, i) => i).filter((i) => keys[i] === undefined && px.entries[i].own && sideEffectFree(px.entries[i].testPath.node));
+    let tried = 0;
+    if (open.length && sandbox && level >= 3) {
+      const seen = await observeKeys(ast, px.entries, open, sandbox);
+      const used = new Set(keys.filter((k) => k !== undefined));
+      const counts = new Map();
+      for (const i of open) if (typeof seen[i] === 'string') counts.set(seen[i], (counts.get(seen[i]) ?? 0) + 1);
+      for (const i of open) {
+        const k = seen[i];
+        if (typeof k !== 'string' || used.has(k) || counts.get(k) !== 1) continue;
+        keys[i] = k;
+        tried++;
+      }
+      if (tried) onLog(`proxy ${px.name}: ${tried} anahtar çalıştırılarak bulundu (tablo denemeyle tamamlandı)`, 'info');
+    }
+    if (findings) (findings.proxy ??= []).push({ name: px.name, entries: px.entries.length, resolved: keys.filter((k) => k !== undefined).length, byTrial: tried });
     const map = new Map();
     px.entries.forEach((e, i) => { if (keys[i] !== undefined && !map.has(keys[i])) map.set(keys[i], e); });
-    if (map.size < MIN_MAP) continue;
+    if (map.size < (lookup ? 1 : MIN_MAP)) continue;
 
     const calls = binding.referencePaths
       .map((ref) => ref.parentPath)
@@ -125,6 +221,9 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
     calls.forEach((call, i) => {
       const entry = callKeys[i] !== undefined && map.get(callKeys[i]);
       if (!entry || !call.node) return;
+      // tablo, aynı fonksiyondaki çağrıdan önce kurulmuş olmalı (öncesinde orijinal TypeError verirdi)
+      const ts = px.entries.tableStmt;
+      if (ts && call.getFunctionParent() === ts.getFunctionParent() && call.node.start < ts.node.end) return;
       // Çalışma anında global nesne olduğu doğrulanan kökler (N = U() → globalThis) globalThis'e yazılır;
       // diğer her isim çağrı yerinde de aynı binding'e çözülmeli
       const roots = new Set([...entry.names].filter((name) => globalRoots.has(`${pi}:${name}`)));
@@ -132,7 +231,10 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
       for (const name of entry.names) {
         if (!roots.has(name) && call.scope.getBinding(name) !== px.fnPath.scope.getBinding(name)) return;
       }
-      call.replaceWith(roots.size ? globalize(t.cloneNode(entry.value, true), roots, call.scope) : t.cloneNode(entry.value, true));
+      const value = roots.size ? globalize(t.cloneNode(entry.value, true), roots, call.scope) : t.cloneNode(entry.value, true);
+      // W("a")(x): proxy'nin döndürdüğü fonksiyon this'siz çağrılıyordu; üye ifadesi (0, X.y) ile yazılır
+      const asCallee = call.parentPath.isCallExpression({ callee: call.node }) || call.parentPath.isTaggedTemplateExpression({ tag: call.node });
+      call.replaceWith(asCallee && t.isMemberExpression(value) ? t.sequenceExpression([t.numericLiteral(0), value]) : value);
       n++;
     });
     if (!n) continue;

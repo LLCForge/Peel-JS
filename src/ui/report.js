@@ -1,4 +1,8 @@
 import { t, td } from '../i18n.js';
+import { mountRuntime } from './runtime/mount.js';
+import { renderVmReport } from './vm/index.js';
+import { render as renderSemantics } from './analysis/semantics.js';
+import { render as renderSecurity } from './security/index.js';
 
 const MAX_ROWS = 60;
 
@@ -103,10 +107,128 @@ function threat(th, runtime, actions) {
       btn('action.masked', actions.masked)));
 }
 
+// Sembolik/derleyici analizleri (report.symbolic): yalnızca dolu alt bölümler gösterilir
+function symbolic(sym) {
+  if (!sym || sym.skipped) return muted('report.sym.none');
+  const parts = [];
+  const sub = (key, node) => { if (node) parts.push(el('h4', {}, t(key)), node); };
+  const rows = (list) => Array.isArray(list) && list.length ? list : null;
+  const st = sym.static ?? {};
+  if (rows(sym.opaque)) sub('report.sym.opaque', table(['#', 'koşul', '≡', 'kanıt'], sym.opaque.map((o) => [`${o.where}:${o.line}`, o.cond, String(o.value), o.proof]), ['num', 'mono', 'mono', 'rep-muted']));
+  if (rows(st.unreachable)) sub('report.sym.unreachable', table(['fn', '#', 'koşul', 'kanıt'], st.unreachable.map((u) => [u.fn, u.line, u.cond, u.proof]), ['mono', 'num', 'mono', 'rep-muted']));
+  const conc = Array.isArray(sym.concolic) ? sym.concolic : [];
+  const runs = conc.flatMap((c) => c.runs.filter((r) => r.newCoverage).map((r) => [c.target ?? 'program', JSON.stringify(r.minimized ?? r.inputs), (r.out ?? []).join(' | ').slice(0, 120), `${Math.round(c.coverage.ratio * 100)}%`]));
+  if (runs.length) sub('report.sym.concolic', table(['hedef', 'girdi', 'çıktı', 'kapsam'], runs, ['mono', 'mono', 'mono', 'num']));
+  const regex = conc.flatMap((c) => c.regexes ?? []);
+  if (regex.length) sub('report.sym.regex', table(['girdi', '#', 'dal', 'regex'], regex.map((r) => [r.input, r.line, String(r.taken), r.regex]), ['mono', 'num', 'mono', 'mono']));
+  const corr = conc.flatMap((c) => c.correlations ?? []);
+  if (corr.length) sub('report.sym.correlations', table(['A', 'B', 'ilişki', 'kanıt'], corr.map((x) => [x.lineA, x.lineB, x.relation, x.proven ? 'çözücü' : `${x.runs} koşu`]), ['num', 'num', '', 'rep-muted']));
+  const fns = sym.symbolic?.functions;
+  if (rows(fns)) sub('report.sym.functions', table(['fn', 'yol', 'ön koşul', 'son koşul'], fns.map((f) => [`${f.name}${f.exact ? '' : ' ~'}`, f.paths, f.precondition, (f.postcondition ?? []).join(' ; ')]), ['mono', 'num', 'mono', 'mono']));
+  const tr = sym.symbolic?.sampleTrace;
+  if (tr?.steps?.length) sub('report.sym.trace', el('p', { class: 'mono rep-muted' }, `${tr.fn}: ${tr.steps.map((s) => `${s.kind}@${s.line}${s.taken === undefined ? '' : s.taken ? '+' : '-'}`).join(' → ')}`));
+  if (rows(st.taint)) sub('report.sym.taint', table(['#', 'kaynak', 'havuz'], st.taint.map((x) => [x.line, x.sources.join(', '), x.sink]), ['num', 'mono', 'mono']));
+  if (rows(st.effects)) sub('report.sym.effects', table(['fn', 'saf', 'etkiler'], st.effects.map((e) => [e.name, e.pure ? '✓' : '–', [...e.writesGlobal.map((g) => `yaz:${g}`), e.writesHeap ? 'yığın' : '', ...e.callsUnknown, ...e.nondet, e.throws ? 'throw' : ''].filter(Boolean).join(', ')]), ['mono', '', 'rep-muted']));
+  if (rows(st.aliases)) sub('report.sym.alias', table(['a', 'b', 'nesne'], st.aliases.map((a) => [a.a, a.b, a.objects.join(', ')]), ['mono', 'mono', 'rep-muted']));
+  if (rows(st.shapes)) sub('report.sym.shapes', table(['yer', 'şekil', 'kaçış'], st.shapes.map((s) => [s.site, s.shape, (st.escape ?? []).find((e) => e.site === s.site)?.escapes ? 'evet' : 'hayır']), ['mono', 'mono', '']));
+  if (rows(st.variables)) sub('report.sym.vars', table(['fn', 'ad', 'tip', 'aralık / uzunluk', 'null'], st.variables.map((v) => [v.fn, v.name, v.types.join('|'), v.range ? `[${v.range.map((x) => x ?? '∞').join(', ')}]` : v.length ? `len [${v.length.map((x) => x ?? '∞').join(', ')}]` : '–', v.nullable]), ['mono', 'mono', 'mono', 'mono', '']));
+  const dyn = sym.dynamic;
+  if (dyn?.ok) {
+    const inv = dyn.invariants.flatMap((f) => f.items.map((i) => [f.fn, i.at ?? 'giriş', i.expr]));
+    const asserts = (dyn.assertions ?? []).filter((a) => a.valid).map((a) => [a.fn, a.at, a.assertion]);
+    if (inv.length || asserts.length) sub('report.sym.invariants', table(['fn', '', 'ifade'], [...inv.slice(0, 30), ...asserts.slice(0, 20)], ['mono', '', 'mono']));
+    if (rows(dyn.specs)) sub('report.sym.specs', table(['kural', 'tür', 'destek'], dyn.specs.map((s) => [s.rule, s.kind, s.support]), ['mono', '', 'num']));
+  }
+  if (sym.solver) parts.push(el('p', { class: 'rep-muted' }, `${t('report.sym.solver')}: ${sym.solver.calls} sorgu · ${sym.solver.sat} sat · ${sym.solver.unsat} unsat · ${sym.solver.unknown} ? · ${sym.ms} ms`));
+  return parts.length ? el('div', {}, ...parts) : muted('report.sym.none');
+}
+
+function vmSection(data) {
+  const box = el('div');
+  renderVmReport(box, data);
+  return box;
+}
+
+// Çözme motoru analizi: obfuscator ayarları, akış, bütünlük, ölü kod türleri, paket modülleri
+function engine(e, stats) {
+  const parts = [];
+  if (e.obfuscator) {
+    const dl = el('dl', { class: 'kv' });
+    for (const [k, v] of Object.entries(e.obfuscator.settings)) dl.append(el('dt', { class: 'mono' }, k), el('dd', {}, String(v)), el('dd', {}, ''));
+    parts.push(el('h4', {}, t('report.engine.obf')), dl, el('p', { class: 'rep-muted' }, e.obfuscator.evidence.join(' · ')));
+  }
+  const f = e.flow;
+  if (f) {
+    parts.push(el('h4', {}, t('report.engine.flow')), el('p', {}, t('report.engine.flowStats', {
+      f: f.functions, l: f.loops, d: f.maxDepth, c: f.complexity, b: f.dispatchersBefore ?? '–', a: f.dispatchersAfter,
+    })));
+    parts.push(el('h4', {}, t('report.engine.recursion')), f.recursion.length
+      ? el('div', { class: 'chips' }, ...f.recursion.map((r) => el('span', { class: 'chip' }, r.functions.join(' ↔ '), el('b', {}, r.kind))))
+      : muted('report.engine.recursion.none'));
+    if (f.mostComplex.length) {
+      parts.push(el('h4', {}, t('report.engine.complex')),
+        table(['Fn', '#', ''], f.mostComplex.map((x) => [x.name, x.cyclomatic, x.line ?? '']), ['mono', 'num', 'num']));
+    }
+    if (f.unresolved.length) {
+      parts.push(el('h4', {}, t('report.engine.unresolved')), ...f.unresolved.map((u) => el('details', {},
+        el('summary', {}, `${u.function} · ${u.discriminant} · ${u.states}/${u.edges}`),
+        el('pre', { class: 'mono' }, u.mermaid), el('pre', { class: 'mono' }, u.dot))));
+    }
+  }
+  const ig = e.integrity;
+  if (ig) {
+    parts.push(el('h4', {}, t('report.engine.integrity')), ig.checks.length
+      ? el('div', {}, el('p', {}, t('report.engine.integrity.summary', { n: ig.checks.length, x: ig.neutralized, r: ig.remaining })),
+        table(['', 'Fn', 'Hash', ''], ig.checks.map((c) => [c.kind, c.function ?? '–', c.hasher, c.protects]), ['mono', 'mono', 'mono', 'mono']))
+      : muted('report.engine.integrity.none'));
+    if (ig.console.length) {
+      parts.push(el('h4', {}, t('report.engine.console')), table(['', '', ''], ig.console.map((c) => [c.kind, c.where, c.detail]), ['mono', '', 'rep-muted']));
+    }
+  }
+  const dead = e.deadCode ?? Object.entries(stats ?? {}).filter(([k, v]) => k.startsWith('dead.') && v > 0)
+    .map(([k, count]) => ({ type: k.slice(5), count })).sort((a, b) => b.count - a.count);
+  parts.push(el('h4', {}, t('report.engine.dead')), dead.length
+    ? table(['', '#'], dead.map((d) => [d.type, d.count]), ['mono', 'num'])
+    : muted('report.engine.dead.none'));
+  parts.push(el('h4', {}, t('report.engine.bundle', { k: e.bundle?.kind ?? '–' })), e.bundle
+    ? table(['Modül', 'B', 'Bağımlılık'], e.bundle.modules.map((m) => [m.id, m.size, m.deps.join(', ') || '–']), ['mono', 'num', 'mono'])
+    : muted('report.engine.bundle.none'));
+  return el('div', {}, ...parts);
+}
+
+// report.symbolic tembel bir fonksiyondur (analyze.js lazySymbolic): bölüm açılınca hesaplanır;
+// sonuç report.symbolicData'ya yazılır (JSON dışa aktarımına girer). Düz nesne de kabul edilir.
+function lazySymbolic(report) {
+  const s = report.symbolic;
+  if (typeof s !== 'function') return symbolic(s);
+  if (s.data) return symbolic(s.data);
+  const body = el('div', {}, muted('report.sym.pending'));
+  const box = el('details', { class: 'rep-lazy' }, el('summary', {}, t('report.sym.open')), body);
+  box.addEventListener('toggle', () => {
+    if (!box.open || box.dataset.loading) return;
+    box.dataset.loading = '1';
+    body.textContent = '';
+    body.append(muted('report.sym.loading'));
+    s().then((data) => {
+      report.symbolicData = data;
+      body.textContent = '';
+      body.append(symbolic(data));
+    });
+  });
+  return box;
+}
+
+function semanticsBody(data) {
+  const box = el('div', { class: 'rep-semantics' });
+  renderSemantics(box, data);
+  return box;
+}
+
 export function renderReport(root, report, onExport, actions = {}) {
   root.textContent = '';
   if (!report) {
     root.append(el('p', { class: 'placeholder' }, t('report.empty')));
+    mountRuntime(root, null);
     return;
   }
   const { runtime } = report;
@@ -133,10 +255,20 @@ export function renderReport(root, report, onExport, actions = {}) {
       ? table([t('report.enc.value'), t('report.enc.kind'), t('report.enc.decoded')],
         report.encodings.map((e) => [e.value, e.best.key ? `${e.best.encoding} (${e.best.key})` : e.best.encoding, e.best.text]), ['mono', 'mono', 'mono'])
       : muted('report.encodings.none')),
+    report.vm ? section('report.vm', vmSection(report.vm)) : null,
     section('report.passes', passTimes(report.passTimes)),
     section('report.rollbacks', report.rollbacks.length
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])
       : muted('report.rollbacks.none')),
+    report.engine ? section('report.engine', engine(report.engine, report.stats)) : null,
+    report.semantics ? section('report.semantics', semanticsBody(report.semantics)) : null,
+    'symbolic' in report ? section('report.sym', lazySymbolic(report)) : null,
     exportBtn,
   ));
+  // çalışma anı, doğrulama ve sandbox ayarları (src/ui/runtime)
+  mountRuntime(root, report);
+  // güvenlik, kripto, motor bulguları ve araçlar (src/ui/security): dışa aktarma düğmesinden önce
+  const sec = document.createDocumentFragment();
+  renderSecurity(sec, report, actions.security);
+  exportBtn.before(sec);
 }

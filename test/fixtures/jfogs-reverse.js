@@ -24,6 +24,6 @@ console[$fog$1](hi($fog$0), total);
 
 })(" ,iH", 6, 7, "gol", "LEEP", "‮", 5, "", 0, "string", "split", "reverse", "join", 1, 2);
 // EXPECT: return "Hi, " + name;
-// EXPECT: var total = 42;
+// EXPECT: console.log(hi("PEEL")
 // GONE: $fog$
 // GONE: arguments

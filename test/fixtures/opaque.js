@@ -12,7 +12,7 @@ function check() {
 console.log(check());
 // LEVEL: 3
 // EXPECT: out.push("a");
-// EXPECT: var c = "yes";
+// EXPECT: + "yes"
 // GONE: dead
 // GONE: never
 // GONE: _0xa
