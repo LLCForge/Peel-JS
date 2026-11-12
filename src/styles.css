@@ -405,7 +405,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .cm-hit { background: var(--hit); outline: 1px solid var(--accent-line); border-radius: 2px; }
 .cm-map { background: var(--hit-strong); border-radius: 2px; }
 .cm-map-approx { background: color-mix(in srgb, var(--accent) 6%, transparent); }
-.cm-map-line { background: var(--hit) !important; box-shadow: inset 3px 0 0 var(--accent); }
+.cm-map-line { background: var(--hit) !important; }
 .cm-flash { background: var(--hit-strong); border-radius: 2px; animation: flash 1.4s var(--ease) forwards; }
 @keyframes flash { 0% { background: var(--hit-strong); } 100% { background: transparent; } }
 .cm-scope-0 { color: var(--scope-0) !important; } .cm-scope-1 { color: var(--scope-1) !important; }
