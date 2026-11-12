@@ -1,4 +1,5 @@
 import { t, td } from '../i18n.js';
+import { mountRuntime } from './runtime/mount.js';
 
 const MAX_ROWS = 60;
 
@@ -107,6 +108,7 @@ export function renderReport(root, report, onExport, actions = {}) {
   root.textContent = '';
   if (!report) {
     root.append(el('p', { class: 'placeholder' }, t('report.empty')));
+    mountRuntime(root, null);
     return;
   }
   const { runtime } = report;
@@ -139,4 +141,6 @@ export function renderReport(root, report, onExport, actions = {}) {
       : muted('report.rollbacks.none')),
     exportBtn,
   ));
+  // çalışma anı, doğrulama ve sandbox ayarları (src/ui/runtime)
+  mountRuntime(root, report);
 }

@@ -7,7 +7,8 @@ import { differentialFuzz, mutationScore } from './fuzz.js';
 import { failureReport } from './failure.js';
 import { trustScore, passRisk, successMetric, observedRanges } from './trust.js';
 import { rationaleLog } from './rationale.js';
-import { analysisConfig } from '../sandbox/dynamic.js';
+import { analysisConfig, dynamicReport } from '../sandbox/dynamic.js';
+import { getSettings } from '../sandbox/settings.js';
 
 // E719/E720/E723: doğrulama orkestrasyonu. İstenen seviyeden başlanır; risk sinyali (geri alma, gözleme dayalı
 // dönüşüm, düşük coverage, etki ayrışması) oldukça seviye kademeli yükseltilir; tüm denetimler bütçe içinde kalır,
@@ -75,5 +76,22 @@ export function verificationSummary({ input, text, output, events, metrics, cove
     rationale: rationaleLog(events),
     observed: observedRanges(output, events, text ?? input),
     verification,
+  };
+}
+
+// Analiz raporuna eklenen çalışma anı ve doğrulama bölümleri (analyze.js çağırır)
+export async function runtimeExtras({ report, input, text, output, events = [], sandbox = null, config = null }) {
+  const src = text ?? input;
+  const level = getSettings().verifyLevel;
+  const dynamic = await dynamicReport({ sandbox, text: src, output, config });
+  const verifyLevel = events.some((e) => e.verifiedBy === 'effects') ? 'effects' : events.some((e) => e.verifiedBy === 'behaviour') ? 'behaviour' : 'parse';
+  let verification = null;
+  if (sandbox && levelIndex(level) >= levelIndex('behaviour')) {
+    verification = await runVerification({ sandbox, text: src, output, events, level, coverage: dynamic.coverage, verified: verifyLevel !== 'parse', config })
+      .catch((e) => ({ level, checks: {}, skipped: [], errors: [{ check: 'orkestrasyon', error: e.message }], failure: { ok: true, failures: [], suspects: [], reproduce: [] } }));
+  }
+  return {
+    dynamic,
+    verification: verificationSummary({ input, text: src, output, events, metrics: report.metrics, coverage: dynamic.coverage, verification, verifyLevel }),
   };
 }
