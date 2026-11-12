@@ -14,6 +14,10 @@ import { literalValue } from '../util/pure.js';
 const MIN_CALLS = 3;
 const MIN_STRING_RATIO = 0.8;
 const MAX_ARGS = 3;
+// js-confuser her fonksiyona kendi decoder kopyasını koyar (tek çağrılık). Eşiği yalnızca gövdesi
+// string çözen fonksiyonlarda indir: aksi halde pad(5) gibi sıradan fonksiyonlar da sabitlenirdi.
+const DECODER_BODY = /fromCharCode|fromCodePoint|charCodeAt|\batob\b|\.slice\(|\.substr(ing)?\(|decodeURIComponent/;
+const DECODER_SRC = DECODER_BODY.source;
 
 const PRELUDE = `
 var __peelFns = {};
@@ -39,6 +43,10 @@ function __peelGlobalName(v) {
     try { if (globalThis[k] === v) return "\\u0000global:" + k; } catch (e) {}
   }
   return null;
+}
+function __peelSrcOk(id) {
+  var f = __peelFns[id];
+  return typeof f === "function" && /${DECODER_SRC}/.test(Function.prototype.toString.call(f));
 }
 function __peelEval(id, args) {
   var f = __peelFns[id];
@@ -127,16 +135,40 @@ function removeInfrastructure(ast, decoderNames) {
   return connected.size;
 }
 
+function pathOf(n) {
+  if (t.isIdentifier(n)) return n.name;
+  if (t.isMemberExpression(n) && !n.computed && t.isIdentifier(n.property)) {
+    const base = pathOf(n.object);
+    return base && `${base}.${n.property.name}`;
+  }
+  return null;
+}
+
 function collectGroups(ast) {
   const groups = new Map();
+  const pathGroups = new Map();
   traverse(ast, {
     CallExpression(p) {
       const { callee, arguments: args } = p.node;
-      if (!t.isIdentifier(callee) || !args.length || args.length > MAX_ARGS) return;
+      if (!args.length || args.length > MAX_ARGS) return;
       if (args.some((a) => t.isSpreadElement(a))) return;
       if (inRotation(p)) return;
       // sonucu kullanılmayan çağrı decoder değildir, yan etki için yapılıyordur
       if (p.parentPath.isExpressionStatement()) return;
+      // js-confuser: decoder kapsam nesnesinde, this'siz çağrılır: (1, scope.X.decode)(1956, 9)
+      if (t.isSequenceExpression(callee) && callee.expressions.length === 2 && literalValue(callee.expressions[0]).ok &&
+          t.isMemberExpression(callee.expressions[1])) {
+        const path = pathOf(callee.expressions[1]);
+        const root = path && p.scope.getBinding(path.split('.')[0]);
+        if (!root) return;
+        let byPath = pathGroups.get(root);
+        if (!byPath) pathGroups.set(root, (byPath = new Map()));
+        let g = byPath.get(path);
+        if (!g) byPath.set(path, (g = { name: path, memberPath: true, calls: [], dynamic: [] }));
+        (args.map(literalValue).every((l) => l.ok) ? g.calls : g.dynamic).push(p);
+        return;
+      }
+      if (!t.isIdentifier(callee)) return;
       let b = p.scope.getBinding(callee.name);
       if (!b) return;
       // var v22 = v1; v22(154) → kök decoder'ın grubuna say (fonksiyon içi alias'lar tek tek eşiğe takılmasın)
@@ -158,17 +190,17 @@ function collectGroups(ast) {
     },
   });
   // js-confuser CFF: decoder anahtarı durum değişkenine bağlı, hiçbir çağrı literal değil (yalnızca dinamik)
-  return [...groups.values()].filter((g) => {
+  const byBinding = [...groups.values()].filter((g) => {
     if ((g.calls.length > 0 || g.dynamic.length > 0) && looksLikeDecoder(g.binding)) return true;
     if ((g.numeric ?? 0) < MIN_CALLS) return false;
     g.calls = g.calls.filter((c) => c.node.arguments.some((a) => typeof literalValue(a).value === 'number'));
     return true;
   });
+  // yol gruplarının decoder olup olmadığı çalışma anında, yakalanan fonksiyonun kaynağından anlaşılır
+  const byPath = [...pathGroups.values()].flatMap((m) => [...m.values()]);
+  return [...byBinding, ...byPath].map((g, id) => Object.assign(g, { id }));
 }
 
-// js-confuser her fonksiyona kendi decoder kopyasını koyar (tek çağrılık). Eşiği yalnızca gövdesi
-// string çözen fonksiyonlarda indir: aksi halde pad(5) gibi sıradan fonksiyonlar da sabitlenirdi.
-const DECODER_BODY = /fromCharCode|fromCodePoint|charCodeAt|\batob\b|\.slice\(|\.substr(ing)?\(|decodeURIComponent/;
 function looksLikeDecoder(b) {
   const fns = [];
   if (t.isFunction(b.path.node)) fns.push(b.path.node);
@@ -227,6 +259,13 @@ async function resolveCalls(ast, ctx) {
     let total = 0;
     const decoders = new Set();
     for (const g of groups) {
+      // yol grubu: gövdesi string çözüyorsa ya da sayısal literal argümanla en az MIN_CALLS kez çağrılıyorsa
+      // (js-confuser decoder'ı CFF sarmalayıcısının arkasında olabilir, kaynağı ipucu vermez)
+      if (g.memberPath) {
+        const numeric = g.calls.filter((c) => c.node.arguments.some((a) => typeof literalValue(a).value === 'number')).length;
+        const ok = numeric >= MIN_CALLS || (await sandbox.batchIn(opened.token, [`__peelSrcOk(${g.id})`])).results?.[0]?.value === true;
+        if (!ok) continue;
+      }
       const unique = [...new Set(g.calls.map(argsKey))];
       const r = await sandbox.batchIn(opened.token, unique.map((args) => `__peelEval(${g.id}, ${args})`));
       if (!r.ok) continue;
@@ -269,7 +308,7 @@ async function resolveCalls(ast, ctx) {
       total += n;
       if (n) onLog(`runtime-decoders: ${n}/${sites.length} dinamik çağrı çalışma anı gözlemiyle çözüldü`, 'info');
     }
-    ctx.decoderNames = [...decoders].map((g) => g.binding.identifier.name);
+    ctx.decoderNames = [...decoders].filter((g) => !g.memberPath).map((g) => g.binding.identifier.name);
     bump('runtimeDecoder', total);
   } finally {
     await sandbox.close(opened.token);
