@@ -17,6 +17,11 @@ function hasDynamicScope(ast) {
 function isInertInit(path) {
   const n = path.node;
   if (isLiteralTree(n) || t.isFunction(n) || t.isClassExpression(n) && !n.superClass) return true;
+  // literal anahtarlı nesne: değerleri de yan etkisizse (getter/metotlar tanım anında çalışmaz)
+  if (t.isObjectExpression(n)) {
+    return path.get('properties').every((p) => (p.isObjectMethod() || p.isObjectProperty()) && !p.node.computed &&
+      (p.isObjectMethod() || isInertInit(p.get('value'))));
+  }
   if (t.isIdentifier(n)) return Boolean(path.scope.getBinding(n.name)) || n.name === 'undefined';
   // Object.create(null) / Object.create({...}): yeni boş nesne, yan etkisiz
   if (t.isCallExpression(n) && n.arguments.length === 1 && t.isMemberExpression(n.callee) && !n.callee.computed &&

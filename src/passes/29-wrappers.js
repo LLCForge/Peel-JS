@@ -38,7 +38,54 @@ function substitute(node, map) {
   return copy;
 }
 
+// Parametrelerin dönüş çağrısındaki kullanım sırası (soldan sağa değerlendirme sırası)
+function paramOrder(call, params) {
+  const order = [];
+  t.traverseFast(t.arrayExpression(call.arguments), (x) => { if (t.isIdentifier(x) && params.includes(x.name)) order.push(x.name); });
+  return order;
+}
+
+// E109: literal olmayan argümanlarla açma. Her parametre dönüş ifadesinde tam bir kez ve parametre sırasıyla
+// kullanılıyorsa argümanlar orijinaldeki sırayla değerlendirilir; kullanılmayan/fazla argümanlar literal olmalı.
+function inlineableArgs(args, params, order) {
+  if (args.every((a) => !t.isSpreadElement(a) && literalValue(a).ok)) return true;
+  if (args.some((a) => t.isSpreadElement(a))) return false;
+  if (order.length !== params.length || new Set(order).size !== order.length || order.some((x, i) => x !== params[i])) return false;
+  return args.slice(params.length).every((a) => literalValue(a).ok);
+}
+
+// E99: zincir — açılan argümanlardaki literal aritmetiği katla ki bir sonraki sarmalayıcı aynı pass'te açılabilsin
+const NUM_OPS = {
+  '+': (a, b) => a + b, '-': (a, b) => a - b, '*': (a, b) => a * b, '|': (a, b) => a | b, '&': (a, b) => a & b,
+  '^': (a, b) => a ^ b, '<<': (a, b) => a << b, '>>': (a, b) => a >> b, '>>>': (a, b) => a >>> b,
+};
+const FOLD_OPS = new Set(Object.keys(NUM_OPS));
+function foldNumeric(node) {
+  if (t.isBinaryExpression(node) && FOLD_OPS.has(node.operator)) {
+    node.left = foldNumeric(node.left);
+    node.right = foldNumeric(node.right);
+    const l = literalValue(node.left);
+    const r = literalValue(node.right);
+    if (l.ok && r.ok && typeof l.value === 'number' && typeof r.value === 'number') {
+      const v = NUM_OPS[node.operator](l.value, r.value);
+      if (Number.isFinite(v) && !Object.is(v, -0)) return v < 0 ? t.unaryExpression('-', t.numericLiteral(-v)) : t.numericLiteral(v);
+    }
+  }
+  return node;
+}
+
 export async function run(ast, { onLog, bump }) {
+  let n = 0;
+  // zincirler (w2 → w1 → decoder) tek pass'te açılsın: değişiklik durana kadar tekrar
+  for (let pass = 0; pass < 8; pass++) {
+    const before = n;
+    n += unwrapOnce(ast, onLog);
+    if (n === before) break;
+  }
+  bump('wrapper', n);
+}
+
+function unwrapOnce(ast, onLog) {
   let n = 0;
   traverse(ast, {
     FunctionDeclaration(p) {
@@ -49,16 +96,21 @@ export async function run(ast, { onLog, bump }) {
       const target = p.scope.getBinding(call.callee.name);
       if (!target) return;
       const params = p.node.params.map((x) => x.name);
+      const order = paramOrder(call, params);
       let done = 0;
       for (const r of b.referencePaths) {
         const site = r.parentPath;
         if (!site.isCallExpression({ callee: r.node })) continue;
         const args = site.node.arguments;
-        if (!args.every((a) => !t.isSpreadElement(a) && literalValue(a).ok)) continue;
+        if (!inlineableArgs(args, params, order)) continue;
+        // literal olmayan argümanda hedef ad argümanlardan önce okunur: sabit bağlama olmalı
+        if (!target.constant && !args.every((a) => literalValue(a).ok)) continue;
         // çağrı yerinde hedef ad aynı fonksiyona bağlı olmalı (gölgeleme yok)
         if (site.scope.getBinding(call.callee.name) !== target) continue;
         const map = new Map(params.map((name, i) => [name, args[i] ?? t.unaryExpression('void', t.numericLiteral(0))]));
-        site.replaceWith(substitute(call, map));
+        const out = substitute(call, map);
+        out.arguments = out.arguments.map(foldNumeric);
+        site.replaceWith(out);
         done++;
       }
       if (!done) return;
@@ -66,5 +118,5 @@ export async function run(ast, { onLog, bump }) {
       onLog(`wrappers: ${p.node.id.name} → ${call.callee.name} (${done} çağrı açıldı)`, 'info');
     },
   });
-  bump('wrapper', n);
+  return n;
 }

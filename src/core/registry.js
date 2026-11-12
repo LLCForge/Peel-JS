@@ -22,6 +22,7 @@ import * as rename from '../passes/95-rename.js';
 import * as staticStrings from '../passes/31-static-strings.js';
 import * as integrity from '../passes/24-integrity.js';
 import * as confuser from '../passes/37-confuser.js';
+import * as indirection from '../passes/42-indirection.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
@@ -41,6 +42,7 @@ export const PASSES = [
   { id: 'runtime-functions', level: 3, kind: 'ast', needs: 'sandbox', mod: runtimeFunctions },
   { id: 'confuser',     level: 2, kind: 'ast',  needs: null,      mod: confuser },
   { id: 'proxy',        level: 2, kind: 'ast',  needs: null,      mod: proxy },
+  { id: 'indirection',  level: 2, kind: 'ast',  needs: null,      mod: indirection },
   { id: 'const-fold',   level: 1, kind: 'ast',  needs: 'sandbox', mod: constFold },
   { id: 'dead-code',    level: 2, kind: 'ast',  needs: null,      mod: deadCode },
   { id: 'opaque',       level: 2, kind: 'ast',  needs: null,      mod: opaque },
