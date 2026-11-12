@@ -15,7 +15,10 @@ const where = (n, what) => `${what}@${n.loc?.start.line ?? '?'}`;
  *   await x            → __peelResume(await __peelAwait(x, "await@L"), "await@L")
  *   async function f   → f = __peelTrackFn(f, …) (bulunduğu gövdenin başında)
  *   async () => …      → __peelTrackFn(async () => …, …)
- * Sınıf/nesne async yöntemleri sarılmaz (super bağlamı); onların dönüş sözleri then türevleriyle izlenir.
+ *   async m(p) { B }   → m(...a) { return __peelTrack((async (p) => { B })(...a), …) }  (sınıf/nesne yöntemi:
+ *                        ok fonksiyon this/super/arguments/new.target'ı yöntemden alır, sözü doğrudan izlenir)
+ *   try { B } catch    → try { try { B } catch (e) { throw __peelV8Err(e); } } catch …  (E518: motorun fırlattığı
+ *                        hatanın stack'i programın yakaladığı noktada V8 biçimine getirilir; değer aynı nesnedir)
  */
 export function instrumentForSemantics(code) {
   let ast;
@@ -31,8 +34,32 @@ export function instrumentForSemantics(code) {
       p.replaceWith(t.callExpression(t.identifier('__peelResume'), [inner, w]));
     },
     ForOfStatement(p) { if (p.node.await && ownerOf(p)?.isProgram()) topLevelAwait = true; },
+    TryStatement(p) {
+      if (!p.node.handler || p.node.__peel) return;
+      p.node.__peel = true;
+      const e = t.identifier('__peelE');
+      const inner = t.tryStatement(p.node.block, t.catchClause(e, t.blockStatement([
+        t.throwStatement(t.callExpression(t.identifier('__peelV8Err'), [t.identifier('__peelE')]))])));
+      inner.__peel = true;
+      p.node.block = t.blockStatement([inner]);
+    },
+    Method(p) {
+      const n = p.node;
+      if (!n.async || n.generator || n.__peel || n.kind !== 'method') return;
+      n.__peel = true;
+      const key = t.isIdentifier(n.key) ? n.key.name : t.isPrivateName(n.key) ? `#${n.key.id.name}` : 'yöntem';
+      const label = t.stringLiteral(where(n, `async ${key}`));
+      const args = t.identifier('__peelArgs');
+      const arrow = t.arrowFunctionExpression(n.params, n.body, true);
+      arrow.__peel = true;
+      n.params = [t.restElement(args)];
+      n.async = false;
+      n.body = t.blockStatement([t.returnStatement(t.callExpression(t.identifier('__peelTrack'),
+        [t.callExpression(arrow, [t.spreadElement(t.identifier('__peelArgs'))]), label]))]);
+    },
     Function(p) {
       if (!p.node.async || p.node.__peel) return;
+      if (p.isMethod()) return;
       p.node.__peel = true;
       const label = t.stringLiteral(where(p.node, `async ${p.node.id?.name ?? 'anonim'}`));
       if (p.isFunctionDeclaration() && p.node.id && (p.parentPath.isProgram() || p.parentPath.isBlockStatement())) {

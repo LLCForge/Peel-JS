@@ -1,5 +1,6 @@
 import { STUBS } from './stubs.js';
 import { SEMANTIC_STUBS } from './semantics-stubs.js';
+import { hostIntl, hostTzOffset, hostTzName } from './host-intl.js';
 
 const MAX_CONTEXTS = 2;
 
@@ -71,6 +72,13 @@ export function createHost(QuickJS) {
     // atob/btoa QuickJS'te yok: host'unkini bağla
     for (const name of ['atob', 'btoa']) {
       const fn = vm.newFunction(name, (x) => vm.newString(globalThis[name](String(vm.dump(x)))));
+      vm.setProp(vm.global, name, fn);
+      fn.dispose();
+    }
+    // Intl ve IANA saat dilimi verisi QuickJS'te yok: host Intl'ine senkron köprü (yalnızca string alır/verir)
+    const bridges = { __peelHostIntl: hostIntl, __peelHostTz: (z, ms) => hostTzOffset(z, Number(ms)), __peelHostTzName: (z, ms) => hostTzName(z, Number(ms)) };
+    for (const [name, f] of Object.entries(bridges)) {
+      const fn = vm.newFunction(name, (...args) => vm.newString(f(...args.map((x) => String(vm.dump(x))))));
       vm.setProp(vm.global, name, fn);
       fn.dispose();
     }

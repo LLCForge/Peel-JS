@@ -131,4 +131,123 @@ var th = { then: function (r) { r(1); } };
   assert.ok(!r.differences.some((d) => d.pattern === '/x+/g'));
 }
 
+// E530: tüm tarih biçimlendirme seçenekleri ve IANA dilimleri — host V8 Intl ile birebir
+{
+  const T = Date.UTC(2023, 6, 9, 21, 4, 5, 123);
+  const locales = ['en-US', 'tr-TR', 'de-DE', 'fr-FR', 'ru-RU', 'ja-JP', 'ar-EG', 'zh-CN'];
+  const optionSets = [
+    undefined, { dateStyle: 'full', timeStyle: 'long' }, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' },
+    { era: 'short', year: '2-digit', month: 'narrow', day: '2-digit' }, { era: 'long', year: 'numeric' },
+    { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'shortOffset' },
+    { timeZone: 'America/New_York', timeZoneName: 'long', hour: 'numeric' }, { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' },
+    { month: 'short', weekday: 'narrow', fractionalSecondDigits: 3, second: 'numeric' }, { dayPeriod: 'long', hour: 'numeric' },
+    { hourCycle: 'h11', hour: 'numeric', minute: 'numeric' }, { timeZoneName: 'longGeneric', timeZone: 'Europe/Paris' },
+    { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Pacific/Auckland' },
+  ];
+  for (const loc of locales) {
+    for (const o of optionSets) {
+      for (const method of ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString']) {
+        if (o && ((method === 'toLocaleDateString' && o.timeStyle) || (method === 'toLocaleTimeString' && o.dateStyle))) continue;
+        const hostOpts = { timeZone: 'UTC', ...(o ?? {}) };
+        const expected = new Date(T)[method](loc, hostOpts);
+        const got = await val(`new Date(${T}).${method}(${JSON.stringify(loc)}${o ? `, ${JSON.stringify(o)}` : ''})`);
+        assert.equal(got, expected, `${method} ${loc} ${JSON.stringify(o)}`);
+      }
+    }
+  }
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', dateStyle: 'full' }).formatToParts(T).map((p) => p.type).join();
+  assert.equal(await val(`new Intl.DateTimeFormat("en-US", { dateStyle: "full" }).formatToParts(${T}).map(function (p) { return p.type; }).join()`), parts);
+  assert.equal(await val(`new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Tokyo" }).resolvedOptions().timeZone`), 'Asia/Tokyo');
+  assert.equal(await val('(function(){ try { new Date(0).toLocaleDateString("en", { timeStyle: "short" }); } catch (e) { return e.name; } })()'), 'TypeError');
+  assert.equal(await val('(function(){ try { new Intl.DateTimeFormat("en", { timeZone: "Mars/Base" }); } catch (e) { return e.name; } })()'), 'RangeError');
+  // IANA saat dilimiyle Date yerel saati (yaz saati dahil)
+  const ny = { tz: 'America/New_York' };
+  assert.equal(await val(`new Date(${Date.UTC(2023, 6, 1, 12)}).getTimezoneOffset()`, ny), 240);
+  assert.equal(await val(`new Date(${Date.UTC(2023, 0, 1, 12)}).getTimezoneOffset()`, ny), 300);
+  assert.equal(await val(`new Date(${Date.UTC(2023, 0, 1, 12)}).getHours()`, ny), 7);
+  assert.equal(await val('new Date(2023, 6, 1, 8).getTime()', ny), Date.UTC(2023, 6, 1, 12));
+  assert.equal(await val(`new Date(${Date.UTC(2023, 0, 1, 12)}).toString()`, ny), 'Sun Jan 01 2023 07:00:00 GMT-0500 (Eastern Standard Time)');
+  assert.equal(await val(`new Date(${T}).toLocaleString("en-US")`, ny), new Date(T).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+}
+
+// E531: unit, scientific, engineering, compact — tüm desteklenen yerel ayarlarda host V8 ile birebir
+{
+  const locales = ['en-US', 'tr-TR', 'de-DE', 'fr-FR', 'ru-RU', 'ja-JP', 'ar-EG', 'hi-IN'];
+  const cases = [
+    [{ style: 'unit', unit: 'kilometer-per-hour' }, 1234.5], [{ style: 'unit', unit: 'liter', unitDisplay: 'long' }, 2],
+    [{ style: 'unit', unit: 'byte', notation: 'compact', unitDisplay: 'narrow' }, 1536000], [{ notation: 'scientific' }, 123456.789],
+    [{ notation: 'engineering' }, 0.000123], [{ notation: 'compact' }, 1234], [{ notation: 'compact', compactDisplay: 'long' }, 98765432],
+    [{ notation: 'compact' }, -0.5], [{ style: 'currency', currency: 'EUR', currencyDisplay: 'name' }, 3.5],
+    [{ style: 'currency', currency: 'USD', currencySign: 'accounting' }, -12], [{ roundingMode: 'floor', maximumFractionDigits: 1 }, 2.79],
+    [{ minimumSignificantDigits: 3, maximumSignificantDigits: 5 }, 1.5], [{ signDisplay: 'negative' }, -0],
+  ];
+  for (const loc of locales) {
+    for (const [o, n] of cases) {
+      const expected = new Intl.NumberFormat(loc, o).format(n);
+      const got = await val(`new Intl.NumberFormat(${JSON.stringify(loc)}, ${JSON.stringify(o)}).format(${Object.is(n, -0) ? '-0' : n})`);
+      assert.equal(got, expected, `${loc} ${JSON.stringify(o)} ${n}`);
+    }
+  }
+  assert.equal(await val('new Intl.NumberFormat("en", { notation: "compact" }).format(12345678901234567890n)'), new Intl.NumberFormat('en', { notation: 'compact' }).format(12345678901234567890n));
+  assert.equal(await val('new Intl.PluralRules("ru").select(3)'), 'few');
+  assert.equal(await val('new Intl.RelativeTimeFormat("tr", { numeric: "auto" }).format(-1, "day")'), new Intl.RelativeTimeFormat('tr', { numeric: 'auto' }).format(-1, 'day'));
+  assert.equal(await val('"ä".localeCompare("z", "de")'), 'ä'.localeCompare('z', 'de'));
+}
+
+// E517: async sınıf/nesne yöntemlerinin sözü doğrudan izlenir
+{
+  const r = await semanticRuntime(sandbox, `
+class S { async m(x) { throw new Error("cm" + x); } static async s() { throw new Error("cs"); } async #p() { throw new Error("cp"); } run() { this.#p(); } }
+var o = { async om() { throw new Error("om"); }, async ok() { return super.toString ? 1 : 0; } };
+new S().m(1); S.s(); new S().run(); o.om(); o.ok();
+(async function () { try { await new S().m(2); } catch (e) {} })();`);
+  assert.deepEqual(r.unhandled.map((u) => u.reason).sort(), ['cm1', 'cp', 'cs', 'om']);
+  assert.ok(r.unhandled.every((u) => /^async /.test(u.where)));
+}
+
+// E518: motorun fırlattığı hata programın yakaladığı yerde V8 biçiminde
+{
+  const r = await semanticRuntime(sandbox, `
+var a; try { null.x; } catch (e) { a = e.stack.split("\\n")[0]; }
+if (a.indexOf("TypeError: ") !== 0) throw new Error("catch: " + a);
+var b; try { try { undefinedFn(); } finally { } } catch ({ stack }) { b = stack; }
+if (b.indexOf("ReferenceError: ") !== 0) throw new Error("desen: " + b);
+Promise.resolve().then(function () { return [].x.y; }).catch(function (e) { if (e.stack.indexOf("TypeError: ") !== 0) throw new Error("ret"); });
+(async function () { try { await Promise.reject(new RangeError("q")); } catch (e) { if (e.stack.indexOf("RangeError: q") !== 0) throw new Error("await"); } })();`);
+  assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+  assert.equal(r.unhandled.length, 0, JSON.stringify(r.unhandled));
+  assert.ok(r.stacks.filter((s) => /stack$/.test(s.api)).length >= 4);
+}
+
+// E538: ArrayBuffer ayırma (transfer, transferToFixedLength, structuredClone, postMessage)
+{
+  assert.equal(await val(`(function () {
+  var b = new ArrayBuffer(8), u = new Uint8Array(b), dv = new DataView(b), sub = u.subarray(2);
+  u[0] = 7;
+  var n = b.transfer(), out = [];
+  out.push(b.byteLength, b.detached, n.byteLength, n.detached, new Uint8Array(n)[0], u.length, u.byteLength, u.byteOffset, u[0], sub.length, 0 in u, Object.keys(u).length);
+  u[1] = 5; out.push(u[1]);
+  [function () { u.fill(1); }, function () { dv.getUint8(0); }, function () { return dv.byteLength; }, function () { b.slice(0); }, function () { b.transfer(); },
+   function () { new Uint8Array(b); }, function () { new DataView(b); }, function () { for (var x of u) {} }].forEach(function (f) {
+    try { f(); out.push("ok"); } catch (e) { out.push(e.name); }
+  });
+  return out.join();
+})()`), [0, true, 8, false, 7, 0, 0, 0, undefined, 0, false, 0, undefined, ...Array(8).fill('TypeError')].map((x) => (x === undefined ? '' : String(x))).join());
+  assert.equal(await val(`(function () {
+  var b = new ArrayBuffer(4); new Uint8Array(b)[0] = 9;
+  var c = structuredClone({ buf: b, list: [b], m: new Map([[1, new Date(5)]]) }, { transfer: [b] });
+  var r = [b.byteLength, c.buf.byteLength, c.list[0] === c.buf, new Uint8Array(c.buf)[0], c.m.get(1).getTime()];
+  try { structuredClone(function () {}); } catch (e) { r.push(e.name); }
+  try { structuredClone(b); } catch (e) { r.push(e.name); }
+  var u = new Uint16Array([1, 2, 3]), k = u.buffer.transferToFixedLength(2);
+  r.push(u.length, new Uint16Array(k).length, ArrayBuffer.isView(u), Object.prototype.toString.call(u), u instanceof Uint16Array, u.constructor === Uint16Array);
+  var got = null; addEventListener("message", function (e) { got = e.data; });
+  var pb = new ArrayBuffer(2); postMessage({ x: pb }, "*", [pb]);
+  r.push(pb.byteLength, got && got.x.byteLength);
+  return r.join();
+})()`), '0,4,true,9,5,DataCloneError,DataCloneError,0,1,true,[object Uint16Array],true,true,0,2');
+  // ayrılmamış görünümde normal davranış ve tür denetimleri bozulmaz
+  assert.equal(await val('(function(){ var a = new Uint8Array([3, 1, 2]); a.sort(); var m = a.map(function (x) { return x * 2; }); return [a.join(), m.join(), m instanceof Uint8Array, Array.from(a).length, String.fromCharCode.apply(null, new Uint8Array([72, 105]))].join("|"); })()'), '1,2,3|2,4,6|true|3|Hi');
+}
+
 console.log('analysis-runtime: ok');

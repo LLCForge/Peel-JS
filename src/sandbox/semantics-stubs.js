@@ -1,6 +1,6 @@
-// Sandbox semantik modelleri (E516–E519, E529–E531, E534, E539, E540). STUBS'tan sonra yüklenir.
+// Sandbox semantik modelleri (E516–E519, E529–E531, E534, E538–E540). STUBS'tan sonra yüklenir.
 // QuickJS'te olmayan ya da host'a bağlı (saat dilimi) davranışlar tarayıcı (V8) semantiğine göre, deterministik kurulur.
-// __peelConfig: { tz: dakika (getTimezoneOffset değeri, varsayılan 0), perfStep: ms (varsayılan 1),
+// __peelConfig: { tz: dakika (getTimezoneOffset değeri, varsayılan 0) ya da IANA adı, perfStep: ms (varsayılan 1),
 //                 locale: varsayılan yerel ayar, eventLoop: true → kuyruk tabanlı olay döngüsü + kayıt (__peelSem) }
 export const SEMANTIC_STUBS = `
 (function () {
@@ -15,18 +15,39 @@ export const SEMANTIC_STUBS = `
   if (globalThis.performance) globalThis.performance.now = function now() { perfT += perfStep; return perfT; };
 
   // ---------------------------------------------------------------- E529 saat dilimi
-  var TZ = typeof cfg.tz === "number" && isFinite(cfg.tz) ? Math.trunc(cfg.tz) : 0;
+  // tz: dakika (getTimezoneOffset değeri, sabit) ya da IANA adı (ör. "Europe/Istanbul"; yaz saati dahil, host Intl verisiyle)
+  var TZ_NAME = typeof cfg.tz === "string" && cfg.tz ? cfg.tz : null;
+  var TZ_FIXED = typeof cfg.tz === "number" && isFinite(cfg.tz) ? Math.trunc(cfg.tz) : 0;
+  if (TZ_NAME !== null && (typeof __peelHostTz !== "function" || String(__peelHostTz(TZ_NAME, "0"))[0] === "!")) TZ_NAME = null;
+  function offAt(t) {
+    if (TZ_NAME === null || t !== t) return TZ_FIXED;
+    return -Number(__peelHostTz(TZ_NAME, String(t)));
+  }
   var StubDate = globalThis.Date, NativeDate = Object.getPrototypeOf(StubDate);
   var N = NativeDate.prototype;
   var getTime = function (d) { return N.getTime.call(d); };
-  var wall = function (t) { return new NativeDate(t - TZ * 60000); };
+  var wall = function (t) { return new NativeDate(t - offAt(t) * 60000); };
+  // duvar saati (UTC gibi okunan ms) → gerçek an: dilim kayması iki adımda yakınsar
+  function fromWall(w) {
+    if (w !== w) return NaN;
+    var t = w + offAt(w) * 60000;
+    return w + offAt(t) * 60000;
+  }
   var DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   var pad = function (n, w) { var s = String(Math.abs(n)); while (s.length < (w || 2)) s = "0" + s; return (n < 0 ? "-" : "") + s; };
-  function zoneText() {
-    var off = -TZ, sign = off < 0 ? "-" : "+", a = Math.abs(off);
-    var hhmm = pad(Math.floor(a / 60)) + pad(a % 60);
-    return "GMT" + sign + hhmm + " (" + (TZ === 0 ? "Coordinated Universal Time" : "GMT" + sign + pad(Math.floor(a / 60)) + ":" + pad(a % 60)) + ")";
+  function zoneText(t) {
+    var off = -offAt(t), sign = off < 0 ? "-" : "+", a = Math.abs(off);
+    var name = TZ_NAME !== null ? String(__peelHostTzName(TZ_NAME, String(t)))
+      : TZ_FIXED === 0 ? "Coordinated Universal Time" : "GMT" + sign + pad(Math.floor(a / 60)) + ":" + pad(a % 60);
+    return "GMT" + sign + pad(Math.floor(a / 60)) + pad(a % 60) + " (" + name + ")";
+  }
+  // Intl için varsayılan saat dilimi
+  function defaultZone() {
+    if (TZ_NAME !== null) return TZ_NAME;
+    if (TZ_FIXED === 0) return "UTC";
+    var off = -TZ_FIXED, a = Math.abs(off);
+    return (off < 0 ? "-" : "+") + pad(Math.floor(a / 60)) + ":" + pad(a % 60);
   }
   function yearText(y) { return y < 0 ? "-" + pad(-y, 6) : pad(y, 4); }
   var LOCAL = { FullYear: "getUTCFullYear", Month: "getUTCMonth", Date: "getUTCDate", Day: "getUTCDay", Hours: "getUTCHours",
@@ -39,22 +60,22 @@ export const SEMANTIC_STUBS = `
     } });
   });
   Object.defineProperty(P, "getYear", { configurable: true, writable: true, value: function () { var y = this.getFullYear(); return y !== y ? NaN : y - 1900; } });
-  Object.defineProperty(P, "getTimezoneOffset", { configurable: true, writable: true, value: function () { var t = getTime(this); return t !== t ? NaN : TZ; } });
+  Object.defineProperty(P, "getTimezoneOffset", { configurable: true, writable: true, value: function () { var t = getTime(this); return t !== t ? NaN : offAt(t); } });
   ["FullYear", "Month", "Date", "Hours", "Minutes", "Seconds", "Milliseconds"].forEach(function (k) {
     var setUTC = N["setUTC" + k];
     Object.defineProperty(P, "set" + k, { configurable: true, writable: true, value: function () {
       var t = getTime(this);
       if (t !== t && k !== "FullYear") { N.setTime.call(this, NaN); return NaN; }
-      var w = wall(t !== t ? TZ * 60000 : t);
+      var w = t !== t ? new NativeDate(0) : wall(t);
       var r = setUTC.apply(w, arguments);
-      return N.setTime.call(this, r !== r ? NaN : r + TZ * 60000);
+      return N.setTime.call(this, fromWall(r));
     } });
   });
   Object.defineProperty(P, "setYear", { configurable: true, writable: true, value: function (y) {
     y = Number(y); if (y === y && y >= 0 && y <= 99) y += 1900; return this.setFullYear(y);
   } });
   function dateText(d) { var w = wall(getTime(d)); return DAYS[N.getUTCDay.call(w)] + " " + MONTHS[N.getUTCMonth.call(w)] + " " + pad(N.getUTCDate.call(w)) + " " + yearText(N.getUTCFullYear.call(w)); }
-  function timeText(d) { var w = wall(getTime(d)); return pad(N.getUTCHours.call(w)) + ":" + pad(N.getUTCMinutes.call(w)) + ":" + pad(N.getUTCSeconds.call(w)) + " " + zoneText(); }
+  function timeText(d) { var t = getTime(d), w = wall(t); return pad(N.getUTCHours.call(w)) + ":" + pad(N.getUTCMinutes.call(w)) + ":" + pad(N.getUTCSeconds.call(w)) + " " + zoneText(t); }
   var invalid = function (d) { var t = getTime(d); return t !== t; };
   Object.defineProperty(P, "toString", { configurable: true, writable: true, value: function toString() { return invalid(this) ? "Invalid Date" : dateText(this) + " " + timeText(this); } });
   Object.defineProperty(P, "toDateString", { configurable: true, writable: true, value: function toDateString() { return invalid(this) ? "Invalid Date" : dateText(this); } });
@@ -68,7 +89,7 @@ export const SEMANTIC_STUBS = `
     if (host !== host || EXPLICIT_ZONE.test(s) || DATE_ONLY.test(s)) return host;
     // host yerel saatiyle yorumlandı: duvar saatine çevir, modeldeki dilime yerleştir
     var hostOff = N.getTimezoneOffset.call(new NativeDate(host));
-    return host - hostOff * 60000 + TZ * 60000;
+    return fromWall(host - hostOff * 60000);
   }
   function D() {
     var a = Array.prototype.slice.call(arguments);
@@ -77,7 +98,7 @@ export const SEMANTIC_STUBS = `
       var n = a.map(Number);
       var y = n[0]; if (y === y && Math.trunc(y) >= 0 && Math.trunc(y) <= 99) y = 1900 + Math.trunc(y);
       var u = NativeDate.UTC(y, n[1], n.length > 2 ? n[2] : 1, n.length > 3 ? n[3] : 0, n.length > 4 ? n[4] : 0, n.length > 5 ? n[5] : 0, n.length > 6 ? n[6] : 0);
-      a = [u !== u ? NaN : u + TZ * 60000];
+      a = [fromWall(u)];
     } else if (a.length === 1 && typeof a[0] === "string") a = [parseDate(a[0])];
     return Reflect.construct(StubDate, a, new.target);
   }
@@ -89,238 +110,128 @@ export const SEMANTIC_STUBS = `
   Object.defineProperty(D, "name", { value: "Date" });
   globalThis.Date = D;
 
-  // ---------------------------------------------------------------- E531 Intl.NumberFormat (yerel ayar tablosu)
-  var NBSP = "\\u00a0", NNBSP = "\\u202f";
-  var LOCALES = {
-    en: { tag: "en-US", group: ",", decimal: ".", cur: "pre", pct: "post", sym: { USD: "$", EUR: "€", GBP: "£", JPY: "¥", CNY: "CN¥", INR: "₹", CAD: "CA$", AUD: "A$" } },
-    tr: { tag: "tr-TR", group: ".", decimal: ",", cur: "pre", pct: "pre", sym: { TRY: "₺", USD: "$", EUR: "€", GBP: "£", JPY: "¥" } },
-    de: { tag: "de-DE", group: ".", decimal: ",", cur: "post", pct: "post-space", sym: { EUR: "€", USD: "$", GBP: "£", JPY: "¥" } },
-    fr: { tag: "fr-FR", group: NNBSP, decimal: ",", cur: "post", pct: "post-narrow", sym: { EUR: "€", USD: "$US", GBP: "£GB", JPY: "JPY" } },
-    ru: { tag: "ru-RU", group: NBSP, decimal: ",", cur: "post", pct: "post-space", sym: { RUB: "₽", USD: "$", EUR: "€" } },
-    ja: { tag: "ja-JP", group: ",", decimal: ".", cur: "pre", pct: "post", sym: { JPY: "￥", USD: "$", EUR: "€" } },
-  };
-  var CUR_DIGITS = { JPY: 0, KRW: 0, VND: 0, CLP: 0, ISK: 0, HUF: 2, BHD: 3, KWD: 3, OMR: 3, JOD: 3, TND: 3 };
-  var COMPACT_EN = [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]];
-  function canonical(tag) {
-    var parts = String(tag).split(/[-_]/);
-    if (!/^[a-z]{2,3}$/i.test(parts[0])) throw new RangeError("Incorrect locale information provided");
-    return parts.map(function (p, i) { return i === 0 ? p.toLowerCase() : p.length === 2 ? p.toUpperCase() : p.length === 4 ? p[0].toUpperCase() + p.slice(1).toLowerCase() : p.toLowerCase(); }).join("-");
-  }
-  function localeList(locales) {
-    if (locales === undefined) return [];
-    var list = typeof locales === "string" ? [locales] : Array.prototype.slice.call(Object(locales));
-    return list.map(canonical);
-  }
+  // ---------------------------------------------------------------- E530/E531 Intl (host Intl'ine senkron köprü)
   function defaultLocale() {
     // navigator izlenen bir Proxy: okumak rapordaki "okunan özellikler"i kirletir, profil yapılandırmasından alınır
-    var l = cfg.locale || (cfg.profile && cfg.profile.navigator && cfg.profile.navigator.language) || "en-US";
-    try { return canonical(l); } catch (e) { return "en-US"; }
+    return cfg.locale || (cfg.profile && cfg.profile.navigator && cfg.profile.navigator.language) || "en-US";
   }
-  function resolveLocale(locales) {
-    var list = localeList(locales).concat([defaultLocale(), "en-US"]);
-    for (var i = 0; i < list.length; i++) {
-      var lang = list[i].split("-")[0];
-      if (LOCALES[lang]) return { data: LOCALES[lang], locale: list[i].split("-").length > 1 && i < list.length - 1 ? list[i] : LOCALES[lang].tag };
+  function hostCall(req) {
+    var r = JSON.parse(__peelHostIntl(JSON.stringify(req, function (k, v) {
+      // JSON NaN/±Infinity/-0/BigInt taşıyamaz
+      if (typeof v === "bigint") return { $bigint: String(v) };
+      if (typeof v === "number" && (v !== v || v === Infinity || v === -Infinity || (v === 0 && 1 / v < 0))) return { $num: v === 0 ? "-0" : String(v) };
+      return v;
+    })));
+    if (!r.ok) {
+      var C = r.name === "RangeError" ? RangeError : r.name === "TypeError" ? TypeError : r.name === "SyntaxError" ? SyntaxError : Error;
+      throw new C(r.message);
     }
-    return { data: LOCALES.en, locale: "en-US" };
+    log({ k: "intl", api: (req.ctor || "Intl") + "." + (req.method || req.static) });
+    return r.value;
   }
-  function opt(o, k, allowed, def) {
-    var v = o[k];
-    if (v === undefined) return def;
-    v = String(v);
-    if (allowed && allowed.indexOf(v) < 0) throw new RangeError("Value " + v + " out of range for Intl.NumberFormat options property " + k);
-    return v;
-  }
-  function num(o, k, min, max, def) {
-    var v = o[k];
-    if (v === undefined) return def;
-    v = Number(v);
-    if (v !== v || v < min || v > max) throw new RangeError(k + " value is out of range.");
-    return Math.floor(v);
-  }
-  function NumberFormat(locales, options) {
-    if (!new.target) return new NumberFormat(locales, options);
-    var o = options === undefined ? {} : Object(options);
-    var loc = resolveLocale(locales);
-    var style = opt(o, "style", ["decimal", "percent", "currency", "unit"], "decimal");
-    if (style === "unit") throw new RangeError("PEEL sandbox: Intl.NumberFormat unit stili modellenmedi");
-    var currency = o.currency === undefined ? undefined : String(o.currency).toUpperCase();
-    if (currency !== undefined && !/^[A-Z]{3}$/.test(currency)) throw new RangeError("Invalid currency code : " + o.currency);
-    if (style === "currency" && currency === undefined) throw new TypeError("Currency code is required with currency style.");
-    var currencyDisplay = opt(o, "currencyDisplay", ["code", "symbol", "narrowSymbol", "name"], "symbol");
-    var notation = opt(o, "notation", ["standard", "scientific", "engineering", "compact"], "standard");
-    if (notation === "scientific" || notation === "engineering") throw new RangeError("PEEL sandbox: " + notation + " gösterimi modellenmedi");
-    if (notation === "compact" && loc.data !== LOCALES.en) throw new RangeError("PEEL sandbox: compact gösterim yalnızca en için modellendi");
-    var cd = style === "currency" ? (Object.prototype.hasOwnProperty.call(CUR_DIGITS, currency) ? CUR_DIGITS[currency] : 2) : 0;
-    var minInt = num(o, "minimumIntegerDigits", 1, 21, 1);
-    var minSig = num(o, "minimumSignificantDigits", 1, 21, undefined);
-    var maxSig = num(o, "maximumSignificantDigits", minSig || 1, 21, undefined);
-    if (minSig !== undefined && maxSig === undefined) maxSig = 21;
-    if (maxSig !== undefined && minSig === undefined) minSig = 1;
-    var minFD = num(o, "minimumFractionDigits", 0, 100, undefined);
-    var maxFD = num(o, "maximumFractionDigits", 0, 100, undefined);
-    var defMin = style === "currency" ? cd : 0, defMax = style === "currency" ? Math.max(cd, minFD || 0) : style === "percent" ? Math.max(0, minFD || 0) : Math.max(3, minFD || 0);
-    if (minFD === undefined) minFD = Math.min(defMin, maxFD === undefined ? defMin : maxFD);
-    if (maxFD === undefined) maxFD = Math.max(defMax, minFD);
-    if (minFD > maxFD) throw new RangeError("maximumFractionDigits value is out of range.");
-    var ug = o.useGrouping;
-    var useGrouping = ug === undefined ? (notation === "compact" ? "min2" : "auto") : ug === false || ug === "false" ? false : ug === true || ug === "true" ? "always" : String(ug);
-    var signDisplay = opt(o, "signDisplay", ["auto", "never", "always", "exceptZero", "negative"], "auto");
-    var compactDisplay = opt(o, "compactDisplay", ["short", "long"], "short");
-    this.__s = { loc: loc, style: style, currency: currency, currencyDisplay: currencyDisplay, notation: notation, minInt: minInt, minSig: minSig, maxSig: maxSig,
-      minFD: minFD, maxFD: maxFD, useGrouping: useGrouping, signDisplay: signDisplay, compactDisplay: compactDisplay,
-      explicitDigits: o.minimumFractionDigits !== undefined || o.maximumFractionDigits !== undefined || minSig !== undefined };
-    Object.defineProperty(this, "__s", { enumerable: false });
-  }
-  // Sayının en kısa ondalık gösterimi (ICU/V8 Intl yuvarlamayı bu basamaklar üzerinde yapar: 1.005 → "1.01")
-  function exact(x) {
-    var m = String(x).match(/^([0-9]+)(?:[.]([0-9]+))?(?:e([-+][0-9]+))?$/);
-    var all = m[1] + (m[2] || ""), point = m[1].length + (m[3] ? Number(m[3]) : 0);
-    if (point <= 0) return { int: "0", frac: ("0".repeat(-point) + all).replace(/0+$/, "") };
-    if (point >= all.length) return { int: (all + "0".repeat(point - all.length)).replace(/^0+(?=[0-9])/, ""), frac: "" };
-    return { int: all.slice(0, point).replace(/^0+(?=[0-9])/, ""), frac: all.slice(point).replace(/0+$/, "") };
-  }
-  function incr(s) {
-    var a = s.split(""), i = a.length - 1;
-    for (; i >= 0; i--) { if (a[i] === "9") a[i] = "0"; else { a[i] = String.fromCharCode(a[i].charCodeAt(0) + 1); break; } }
-    if (i < 0) a.unshift("1");
-    return a.join("");
-  }
-  // yarı uzağa (halfExpand) yuvarlama, f kesir basamağı (negatifse tam sayı kısmında)
-  function roundFrac(ex, f) {
-    if (f < 0) {
-      var k = -f, int0 = ex.int, keepLen = int0.length - k;
-      if (keepLen < 0) return { int: "0", frac: "" };
-      var head = int0.slice(0, keepLen) || "0";
-      if (int0.charCodeAt(keepLen) >= 53) head = incr(head);
-      return { int: (head + "0".repeat(k)).replace(/^0+(?=[0-9])/, ""), frac: "" };
-    }
-    if (ex.frac.length <= f) return { int: ex.int, frac: ex.frac + "0".repeat(f - ex.frac.length) };
-    var s = ex.int + ex.frac.slice(0, f);
-    if (ex.frac.charCodeAt(f) >= 53) s = incr(s);
-    var intLen = s.length - f;
-    return { int: s.slice(0, intLen) || "0", frac: s.slice(intLen) };
-  }
-  // shift: ondalık noktayı sola kaydırır (compact ölçekleme tam değer üzerinde yapılır)
-  function digits(x, s, shift) {
-    var ex = exact(x), r;
-    if (shift) {
-      var all = ex.int;
-      while (all.length <= shift) all = "0" + all;
-      ex = { int: all.slice(0, all.length - shift), frac: (all.slice(all.length - shift) + ex.frac).replace(/0+$/, "") };
-    }
-    if (s.minSig !== undefined) {
-      if (x === 0) r = { int: "0", frac: s.minSig > 1 ? "0".repeat(s.minSig - 1) : "" };
-      else {
-        var intDigits = ex.int.replace(/^0+/, "").length;
-        var mag = intDigits ? intDigits : -(ex.frac.match(/^0*/)[0].length);
-        r = roundFrac(ex, s.maxSig - mag);
-        var count = function (q) { return (q.int + q.frac).replace(/^0+/, "").length; };
-        while (r.frac.length && r.frac.slice(-1) === "0" && count(r) > s.minSig) r.frac = r.frac.slice(0, -1);
-      }
-    } else {
-      r = roundFrac(ex, s.maxFD);
-      while (r.frac.length > s.minFD && r.frac.slice(-1) === "0") r.frac = r.frac.slice(0, -1);
-    }
-    var int = r.int;
-    while (int.length < s.minInt) int = "0" + int;
-    return { int: int, frac: r.frac };
-  }
-  function group(int, s) {
-    var g = s.useGrouping;
-    if (g === false || int.length < 4) return [int];
-    if (g === "min2" && int.length < 5) return [int];
-    var out = [], i = int.length % 3 || 3;
-    out.push(int.slice(0, i));
-    for (; i < int.length; i += 3) out.push(int.slice(i, i + 3));
+  // CanonicalizeLocaleList: geçerlilik denetimi host'ta; undefined → sandbox varsayılanı
+  function locList(locales, fallback) {
+    if (locales === undefined) return fallback ? [defaultLocale()] : [];
+    var o = typeof locales === "string" ? [locales] : Object(locales), n = o.length >>> 0, out = [];
+    for (var i = 0; i < n; i++) if (i in o) { var v = o[i]; if (typeof v !== "string" && (v === null || typeof v !== "object")) throw new TypeError("Language ID should be string or object."); out.push(String(v)); }
+    // desteklenmeyen yerel ayarda host'un değil sandbox'un varsayılanına düşülsün
+    if (fallback && out.indexOf(defaultLocale()) < 0) out.push(defaultLocale());
     return out;
   }
-  function parts(nf, value) {
-    var s = nf.__s, d = s.loc.data, out = [];
-    var big = typeof value === "bigint";
-    var x = big ? value : Number(value);
-    var neg = big ? x < 0n : (x < 0 || Object.is(x, -0));
-    var abs = big ? (neg ? -x : x) : Math.abs(x);
-    if (!big && s.style === "percent") abs = abs * 100;
-    var isZero = big ? abs === 0n : abs === 0;
-    var sign = "";
-    if (s.signDisplay === "auto") sign = neg && !(isZero && !Object.is(x, -0) && !big) ? "-" : "";
-    else if (s.signDisplay === "always") sign = neg ? "-" : "+";
-    else if (s.signDisplay === "exceptZero") sign = isZero ? "" : neg ? "-" : "+";
-    else if (s.signDisplay === "negative") sign = neg && !isZero ? "-" : "";
-    var body = [];
-    if (!big && abs !== abs) body.push({ type: "nan", value: "NaN" });
-    else if (!big && abs === Infinity) body.push({ type: "infinity", value: "∞" });
-    else {
-      var compact = "", pre = null;
-      if (s.notation === "compact" && !big) {
-        for (var i = 0; i < COMPACT_EN.length; i++) {
-          // 999.5 → yuvarlanınca 1000 olur: bir üst birime geçer
-          if (abs >= COMPACT_EN[i][0] - 0.5 * COMPACT_EN[i][0] / 1000) {
-            var shift = 3 * (COMPACT_EN.length - i);
-            var st = s.explicitDigits ? s : { minInt: 1, minSig: 1, maxSig: 2, minFD: 0, maxFD: 0 };
-            if (!s.explicitDigits && abs / COMPACT_EN[i][0] >= 100) st = { minInt: 1, minFD: 0, maxFD: 0 };
-            pre = digits(abs, st, shift);
-            compact = s.compactDisplay === "long" ? " " + ["trillion", "billion", "million", "thousand"][i] : COMPACT_EN[i][1];
-            break;
-          }
-        }
-        if (!compact && !s.explicitDigits) pre = digits(abs, abs >= 100 ? { minInt: s.minInt, minFD: 0, maxFD: 0 } : { minInt: s.minInt, minSig: 1, maxSig: 2 });
-      }
-      var dgt = big ? { int: abs.toString(), frac: s.minFD ? "0".repeat(s.minFD) : "" } : pre || digits(abs, s);
-      if (big) while (dgt.int.length < s.minInt) dgt.int = "0" + dgt.int;
-      var gs = group(dgt.int, s);
-      gs.forEach(function (g, k) { if (k) body.push({ type: "group", value: d.group }); body.push({ type: "integer", value: g }); });
-      if (dgt.frac) { body.push({ type: "decimal", value: d.decimal }); body.push({ type: "fraction", value: dgt.frac }); }
-      if (compact) body.push({ type: "compact", value: compact.trim() === compact ? compact : compact.trim() });
-      if (compact && compact[0] === " ") body.splice(body.length - 1, 0, { type: "literal", value: " " });
-    }
-    var signPart = sign ? [{ type: sign === "-" ? "minusSign" : "plusSign", value: sign }] : [];
-    if (s.style === "percent") {
-      var pc = { type: "percentSign", value: "%" };
-      if (d.pct === "pre") out = signPart.concat([pc], body);
-      else if (d.pct === "post-space") out = signPart.concat(body, [{ type: "literal", value: NBSP }, pc]);
-      else if (d.pct === "post-narrow") out = signPart.concat(body, [{ type: "literal", value: NNBSP }, pc]);
-      else out = signPart.concat(body, [pc]);
-    } else if (s.style === "currency") {
-      var symbol = s.currencyDisplay === "code" ? s.currency : (d.sym[s.currency] || s.currency);
-      if (s.currencyDisplay === "narrowSymbol") symbol = { USD: "$", EUR: "€", GBP: "£", JPY: "¥", TRY: "₺", RUB: "₽", INR: "₹", CNY: "¥" }[s.currency] || symbol;
-      if (s.currencyDisplay === "name") return signPart.concat(body, [{ type: "literal", value: " " }, { type: "currency", value: s.currency }]);
-      var cp = { type: "currency", value: symbol };
-      var spaced = /^[A-Z]{3}$/.test(symbol) || /[A-Z]$/.test(symbol);
-      if (d.cur === "pre") out = signPart.concat([cp], spaced ? [{ type: "literal", value: NBSP }] : [], body);
-      else out = signPart.concat(body, [{ type: "literal", value: NBSP }, cp]);
-    } else out = signPart.concat(body);
-    return out;
-  }
-  Object.defineProperty(NumberFormat.prototype, "format", { configurable: true, get: function () {
-    var self = this;
-    if (!self || !self.__s) throw new TypeError("Method get Intl.NumberFormat.prototype.format called on incompatible receiver");
-    return function (v) { log({ k: "intl", api: "NumberFormat.format" }); return parts(self, typeof v === "bigint" ? v : Number(v)).map(function (p) { return p.value; }).join(""); };
-  } });
-  NumberFormat.prototype.formatToParts = function formatToParts(v) { return parts(this, typeof v === "bigint" ? v : Number(v)); };
-  NumberFormat.prototype.resolvedOptions = function resolvedOptions() {
-    var s = this.__s, r = { locale: s.loc.locale, numberingSystem: "latn", style: s.style };
-    if (s.style === "currency") { r.currency = s.currency; r.currencyDisplay = s.currencyDisplay; r.currencySign = "standard"; }
-    r.minimumIntegerDigits = s.minInt;
-    if (s.minSig !== undefined) { r.minimumSignificantDigits = s.minSig; r.maximumSignificantDigits = s.maxSig; }
-    else { r.minimumFractionDigits = s.minFD; r.maximumFractionDigits = s.maxFD; }
-    r.useGrouping = s.useGrouping; r.notation = s.notation;
-    if (s.notation === "compact") r.compactDisplay = s.compactDisplay;
-    r.signDisplay = s.signDisplay; r.roundingIncrement = 1; r.roundingMode = "halfExpand"; r.roundingPriority = "auto"; r.trailingZeroDisplay = "auto";
-    return r;
+  var OPTS = {
+    NumberFormat: ["localeMatcher", "numberingSystem", "style", "currency", "currencyDisplay", "currencySign", "unit", "unitDisplay", "minimumIntegerDigits",
+      "minimumFractionDigits", "maximumFractionDigits", "minimumSignificantDigits", "maximumSignificantDigits", "roundingIncrement", "roundingMode",
+      "roundingPriority", "trailingZeroDisplay", "notation", "compactDisplay", "useGrouping", "signDisplay"],
+    DateTimeFormat: ["localeMatcher", "calendar", "numberingSystem", "hour12", "hourCycle", "timeZone", "weekday", "era", "year", "month", "day",
+      "dayPeriod", "hour", "minute", "second", "fractionalSecondDigits", "timeZoneName", "formatMatcher", "dateStyle", "timeStyle"],
+    PluralRules: ["localeMatcher", "type", "minimumIntegerDigits", "minimumFractionDigits", "maximumFractionDigits", "minimumSignificantDigits",
+      "maximumSignificantDigits", "roundingIncrement", "roundingMode", "roundingPriority", "trailingZeroDisplay"],
+    Collator: ["usage", "localeMatcher", "collation", "numeric", "caseFirst", "sensitivity", "ignorePunctuation"],
+    RelativeTimeFormat: ["localeMatcher", "numberingSystem", "style", "numeric"],
+    ListFormat: ["localeMatcher", "type", "style"],
   };
-  Object.defineProperty(NumberFormat.prototype, Symbol.toStringTag, { value: "Intl.NumberFormat", configurable: true });
-  NumberFormat.supportedLocalesOf = function supportedLocalesOf(l) { return localeList(l).filter(function (x) { return Boolean(LOCALES[x.split("-")[0]]); }); };
-  if (!globalThis.Intl) {
+  function readOpts(name, options) {
+    var out = {};
+    if (options === undefined) return out;
+    if (options === null) throw new TypeError("Cannot convert undefined or null to object");
+    var o = Object(options);
+    OPTS[name].forEach(function (k) {
+      var v = o[k];
+      if (v === undefined) return;
+      out[k] = typeof v === "boolean" || typeof v === "number" ? v : typeof v === "bigint" ? Number(v) : String(v);
+    });
+    return out;
+  }
+  function timeValue(d) {
+    if (d === undefined) return D.now();
+    if (d !== null && typeof d === "object") { try { return getTime(d); } catch (e) { /* Date değil */ } }
+    return Number(d);
+  }
+  var CONV = {
+    NumberFormat: function (m, a) { return a.map(function (x) { return typeof x === "bigint" || typeof x === "string" ? x : Number(x); }); },
+    DateTimeFormat: function (m, a) { return a.map(timeValue); },
+    PluralRules: function (m, a) { return a.map(Number); },
+    Collator: function (m, a) { return a.slice(0, 2).map(String); },
+    RelativeTimeFormat: function (m, a) { return [Number(a[0]), String(a[1])]; },
+    ListFormat: function (m, a) { var list = []; for (var x of a[0] === undefined ? [] : a[0]) { if (typeof x !== "string") throw new TypeError("Iterable yielded " + String(x) + " which is not a string"); list.push(x); } return [list]; },
+  };
+  var METHODS = {
+    NumberFormat: ["formatToParts", "formatRange", "formatRangeToParts", "resolvedOptions"],
+    DateTimeFormat: ["formatToParts", "formatRange", "formatRangeToParts", "resolvedOptions"],
+    PluralRules: ["select", "selectRange", "resolvedOptions"],
+    Collator: ["resolvedOptions"],
+    RelativeTimeFormat: ["format", "formatToParts", "resolvedOptions"],
+    ListFormat: ["format", "formatToParts", "resolvedOptions"],
+  };
+  var BOUND = { NumberFormat: "format", DateTimeFormat: "format", Collator: "compare" };
+  var CALLABLE = { NumberFormat: true, DateTimeFormat: true, Collator: true };
+  function intlCtor(name) {
+    var C = function () {
+      var locales = arguments[0], options = arguments[1];
+      if (!new.target) {
+        if (!CALLABLE[name]) throw new TypeError("Constructor Intl." + name + " requires 'new'");
+        return new C(locales, options);
+      }
+      var o = readOpts(name, options);
+      if (name === "DateTimeFormat" && o.timeZone === undefined) o.timeZone = defaultZone();
+      var loc = locList(locales, true);
+      hostCall({ ctor: name, locales: loc, options: o, method: "resolvedOptions", args: [] });
+      Object.defineProperty(this, "__intl", { value: { loc: loc, opt: o } });
+    };
+    Object.defineProperty(C, "name", { value: name });
+    var state = function (self, m) {
+      var s = self !== null && typeof self === "object" ? self.__intl : undefined;
+      if (!s) throw new TypeError("Method Intl." + name + ".prototype." + m + " called on incompatible receiver");
+      return s;
+    };
+    var call = function (self, m, args) {
+      var s = state(self, m);
+      return hostCall({ ctor: name, locales: s.loc, options: s.opt, method: m, args: CONV[name](m, args) });
+    };
+    METHODS[name].forEach(function (m) {
+      Object.defineProperty(C.prototype, m, { configurable: true, writable: true, value: function () { return call(this, m, Array.prototype.slice.call(arguments)); } });
+    });
+    if (BOUND[name]) {
+      Object.defineProperty(C.prototype, BOUND[name], { configurable: true, get: function () {
+        var self = this; state(self, BOUND[name]);
+        return function () { return call(self, BOUND[name], Array.prototype.slice.call(arguments)); };
+      } });
+    }
+    Object.defineProperty(C.prototype, Symbol.toStringTag, { value: "Intl." + name, configurable: true });
+    C.supportedLocalesOf = function supportedLocalesOf(l, o) { return hostCall({ static: "supportedLocalesOf", ctor: name, locales: locList(l, false), options: o === undefined ? undefined : { localeMatcher: Object(o).localeMatcher === undefined ? undefined : String(Object(o).localeMatcher) } }); };
+    return C;
+  }
+  if (!globalThis.Intl && typeof __peelHostIntl === "function") {
     var Intl = {};
     Object.defineProperty(Intl, Symbol.toStringTag, { value: "Intl", configurable: true });
-    Intl.NumberFormat = NumberFormat;
-    Intl.getCanonicalLocales = function getCanonicalLocales(l) { return localeList(l).filter(function (x, i, a) { return a.indexOf(x) === i; }); };
+    Object.keys(OPTS).forEach(function (n) { Intl[n] = intlCtor(n); });
+    Intl.getCanonicalLocales = function getCanonicalLocales(l) { return hostCall({ static: "getCanonicalLocales", locales: locList(l, false) }); };
+    Intl.supportedValuesOf = function supportedValuesOf(key) { return hostCall({ static: "supportedValuesOf", key: String(key) }); };
     globalThis.Intl = Intl;
   }
+  var NumberFormat = globalThis.Intl.NumberFormat, DateTimeFormat = globalThis.Intl.DateTimeFormat;
 
-  // ---------------------------------------------------------------- E530 toLocaleString
+  // ---------------------------------------------------------------- E530 toLocaleString (Intl üzerinden, V8 ile aynı varsayılanlar)
   Number.prototype.toLocaleString = function toLocaleString(l, o) {
     var v = Number.prototype.valueOf.call(this);
     return new NumberFormat(l, o).format(v);
@@ -331,36 +242,30 @@ export const SEMANTIC_STUBS = `
     for (var i = 0; i < n; i++) { var e = a[i]; out.push(e === undefined || e === null ? "" : String(e.toLocaleString(l, o))); }
     return out.join(",");
   };
-  // tarih biçimleri: yerel ayarın varsayılan (seçeneksiz) kalıbı; timeZone: "UTC" ve hour12 desteklenir
-  var DATE_FMT = {
-    en: function (f) { return [f.M + "/" + f.D + "/" + f.Y, f.h12 + ":" + pad(f.m) + ":" + pad(f.s) + " " + f.ap, ", "]; },
-    tr: function (f) { return [pad(f.D) + "." + pad(f.M) + "." + f.Y, pad(f.H) + ":" + pad(f.m) + ":" + pad(f.s), " "]; },
-    de: function (f) { return [f.D + "." + f.M + "." + f.Y, pad(f.H) + ":" + pad(f.m) + ":" + pad(f.s), ", "]; },
-    fr: function (f) { return [pad(f.D) + "/" + pad(f.M) + "/" + f.Y, pad(f.H) + ":" + pad(f.m) + ":" + pad(f.s), " "]; },
-    ru: function (f) { return [pad(f.D) + "." + pad(f.M) + "." + f.Y, pad(f.H) + ":" + pad(f.m) + ":" + pad(f.s), ", "]; },
-    ja: function (f) { return [f.Y + "/" + f.M + "/" + f.D, f.H + ":" + pad(f.m) + ":" + pad(f.s), " "]; },
+  String.prototype.localeCompare = function localeCompare(that, l, o) {
+    if (this === null || this === undefined) throw new TypeError("String.prototype.localeCompare called on null or undefined");
+    return new globalThis.Intl.Collator(l, o).compare(String(this), String(that));
   };
-  function dateFields(d, o) {
+  // ToDateTimeOptions (ECMA-402): istenen alan yoksa varsayılan alanlar eklenir
+  function toDTO(options, required, defaults) {
+    var o = readOpts("DateTimeFormat", options), need = true;
+    if ((required === "date" || required === "any") && ["weekday", "year", "month", "day"].some(function (k) { return o[k] !== undefined; })) need = false;
+    if ((required === "time" || required === "any") && ["dayPeriod", "hour", "minute", "second", "fractionalSecondDigits"].some(function (k) { return o[k] !== undefined; })) need = false;
+    if (o.dateStyle !== undefined || o.timeStyle !== undefined) need = false;
+    if (required === "date" && o.timeStyle !== undefined) throw new TypeError("Invalid option : timeStyle");
+    if (required === "time" && o.dateStyle !== undefined) throw new TypeError("Invalid option : dateStyle");
+    if (need && (defaults === "date" || defaults === "all")) { o.year = "numeric"; o.month = "numeric"; o.day = "numeric"; }
+    if (need && (defaults === "time" || defaults === "all")) { o.hour = "numeric"; o.minute = "numeric"; o.second = "numeric"; }
+    return o;
+  }
+  function dateLocale(d, l, o, required, defaults) {
     var t = getTime(d);
-    var utc = o && o.timeZone !== undefined && /^(utc|etc\\/utc|gmt)$/i.test(String(o.timeZone));
-    if (o && o.timeZone !== undefined && !utc) throw new RangeError("PEEL sandbox: timeZone " + o.timeZone + " modellenmedi");
-    var w = new NativeDate(utc ? t : t - TZ * 60000);
-    var H = N.getUTCHours.call(w);
-    return { Y: N.getUTCFullYear.call(w), M: N.getUTCMonth.call(w) + 1, D: N.getUTCDate.call(w), H: H, m: N.getUTCMinutes.call(w), s: N.getUTCSeconds.call(w),
-      h12: H % 12 === 0 ? 12 : H % 12, ap: H < 12 ? "AM" : "PM" };
+    if (t !== t) return "Invalid Date";
+    return new DateTimeFormat(l, toDTO(o, required, defaults)).format(t);
   }
-  function dateLocale(d, l, o, which) {
-    log({ k: "intl", api: "Date." + which });
-    if (invalid(d)) return "Invalid Date";
-    var lang = resolveLocale(l).locale.split("-")[0];
-    var f = dateFields(d, o);
-    var r = DATE_FMT[lang](f);
-    if (o && o.hour12 !== undefined) r[1] = o.hour12 ? f.h12 + ":" + pad(f.m) + ":" + pad(f.s) + " " + f.ap : pad(f.H) + ":" + pad(f.m) + ":" + pad(f.s);
-    return which === "date" ? r[0] : which === "time" ? r[1] : r[0] + r[2] + r[1];
-  }
-  Object.defineProperty(P, "toLocaleString", { configurable: true, writable: true, value: function toLocaleString(l, o) { return dateLocale(this, l, o, "both"); } });
-  Object.defineProperty(P, "toLocaleDateString", { configurable: true, writable: true, value: function toLocaleDateString(l, o) { return dateLocale(this, l, o, "date"); } });
-  Object.defineProperty(P, "toLocaleTimeString", { configurable: true, writable: true, value: function toLocaleTimeString(l, o) { return dateLocale(this, l, o, "time"); } });
+  Object.defineProperty(P, "toLocaleString", { configurable: true, writable: true, value: function toLocaleString(l, o) { return dateLocale(this, l, o, "any", "all"); } });
+  Object.defineProperty(P, "toLocaleDateString", { configurable: true, writable: true, value: function toLocaleDateString(l, o) { return dateLocale(this, l, o, "date", "date"); } });
+  Object.defineProperty(P, "toLocaleTimeString", { configurable: true, writable: true, value: function toLocaleTimeString(l, o) { return dateLocale(this, l, o, "time", "time"); } });
 
   // ---------------------------------------------------------------- E519 Error.captureStackTrace / stackTraceLimit (V8)
   var RealError = Error;
@@ -389,21 +294,289 @@ export const SEMANTIC_STUBS = `
     Object.defineProperty(obj, "stack", { configurable: true, writable: true, enumerable: false, value: text });
     return undefined;
   } });
-  // E518: analiz çalıştırmasında kurucuyla yaratılan hataların stack'i V8 biçimine (başlık satırı + çerçeve sınırı) getirilir ve okumalar kaydedilir
+  // E518: analiz çalıştırmasında hataların stack'i V8 biçimine (başlık satırı + stackTraceLimit) getirilir ve okumaları kaydedilir.
+  // Kurucuyla yaratılanlar kurulurken; motorun fırlattıkları programa ulaştıkları yerde (catch, ret işleyicisi) __peelV8Err ile.
+  // QuickJS'in stack özelliği yazılabilir ve yapılandırılabilir bir veri özelliğidir: yerinde yeniden tanımlanır.
+  var v8Done = new WeakSet();
+  function v8Format(e) {
+    if (!semOn || e === null || typeof e !== "object" || v8Done.has(e)) return e;
+    var d = Object.getOwnPropertyDescriptor(e, "stack");
+    if (!d || typeof d.value !== "string" || !d.configurable) return e;
+    v8Done.add(e);
+    var lim = RealError.stackTraceLimit;
+    var f = d.value.split("\\n").filter(function (l) { return /^\\s*at /.test(l) && !/__peel|\\(native\\)/.test(l); });
+    var text = typeof lim === "number" ? header(e) + (f.length && lim > 0 ? "\\n" + f.slice(0, lim).join("\\n") : "") : undefined;
+    Object.defineProperty(e, "stack", { configurable: true, enumerable: false, get: function () { log({ k: "stack", api: String(e.name) + ".stack" }); return text; }, set: function (v) { text = v; } });
+    return e;
+  }
+  globalThis.__peelV8Err = v8Format;
   if (semOn) {
     ["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError"].forEach(function (name) {
       var C = globalThis[name];
-      function v8Stack(e) {
-        var f = frames(null) || [];
-        var text = header(e) + (f.length ? "\\n" + f.join("\\n") : "");
-        Object.defineProperty(e, "stack", { configurable: true, enumerable: false, get: function () { log({ k: "stack", api: name + ".stack" }); return text; }, set: function (v) { text = v; } });
-        return e;
-      }
       globalThis[name] = new Proxy(C, {
-        construct: function __peelErrConstruct(tg, args, nt) { return v8Stack(Reflect.construct(tg, args, nt)); },
-        apply: function __peelErrApply(tg, self, args) { return v8Stack(Reflect.construct(tg, args)); },
+        construct: function __peelErrConstruct(tg, args, nt) { return v8Format(Reflect.construct(tg, args, nt)); },
+        apply: function __peelErrApply(tg, self, args) { return v8Format(Reflect.construct(tg, args)); },
       });
     });
+  }
+
+  // ---------------------------------------------------------------- E538 ArrayBuffer ayırma (transfer, structuredClone, postMessage)
+  // QuickJS'te ayırma ve yeniden boyutlandırılabilir tampon yok. Ayrılmış tamponlar bir kümede tutulur; ArrayBuffer/DataView/
+  // TypedArray yöntem ve getter'ları bunu denetler, TypedArray örnekleri indeks erişimi için Proxy ile sarılır (V8: uzunluk 0,
+  // indeks okuma undefined, yazma yok sayılır, yöntemler TypeError).
+  var NAB = ArrayBuffer, ABP = NAB.prototype, NU8 = Uint8Array;
+  var DET = new WeakSet();
+  var SAB = typeof SharedArrayBuffer === "function" ? SharedArrayBuffer : null;
+  var abLen = Object.getOwnPropertyDescriptor(ABP, "byteLength").get, abSlice = ABP.slice;
+  var TA = Object.getPrototypeOf(Int8Array), TAP = TA.prototype;
+  var taBuf = Object.getOwnPropertyDescriptor(TAP, "buffer").get;
+  var rawOf = new WeakMap(), proxyOf = new WeakMap();
+  var inNative = 0;
+  var isNumKey = function (k) { return typeof k === "string" && (k === "-0" || String(Number(k)) === k); };
+  var unwrap = function (x) { return x !== null && typeof x === "object" && rawOf.has(x) ? rawOf.get(x) : x; };
+  var isTA = function (x) { try { taBuf.call(x); return true; } catch (e) { return false; } };
+  var detachedErr = function (what) { return new TypeError("Cannot perform " + what + " on a detached ArrayBuffer"); };
+  function wrapView(v) {
+    if (proxyOf.has(v)) return proxyOf.get(v);
+    var buf = taBuf.call(v);
+    if (SAB && buf instanceof SAB) return v; // paylaşılan bellek aktarılamaz: sarmaya gerek yok
+    var p = new Proxy(v, {
+      get: function (t, k) { return DET.has(buf) && isNumKey(k) ? undefined : Reflect.get(t, k, t); },
+      set: function (t, k, val) { if (DET.has(buf) && isNumKey(k)) return true; return Reflect.set(t, k, val, t); },
+      has: function (t, k) { return DET.has(buf) && isNumKey(k) ? false : Reflect.has(t, k); },
+      ownKeys: function (t) { var ks = Reflect.ownKeys(t); return DET.has(buf) ? ks.filter(function (k) { return !isNumKey(k); }) : ks; },
+      getOwnPropertyDescriptor: function (t, k) { return DET.has(buf) && isNumKey(k) ? undefined : Reflect.getOwnPropertyDescriptor(t, k); },
+      defineProperty: function (t, k, d) { return DET.has(buf) && isNumKey(k) ? false : Reflect.defineProperty(t, k, d); },
+    });
+    rawOf.set(p, v);
+    proxyOf.set(v, p);
+    return p;
+  }
+  var wrapResult = function (r) { return r !== null && typeof r === "object" && !rawOf.has(r) && isTA(r) ? wrapView(r) : r; };
+  function guardIter(it, buf, name) {
+    var w = Object.create(Object.getPrototypeOf(it));
+    Object.defineProperty(w, "next", { configurable: true, writable: true, value: function next() { if (DET.has(buf)) throw detachedErr("%TypedArray%.prototype." + name); return it.next(); } });
+    return w;
+  }
+  Reflect.ownKeys(TAP).forEach(function (k) {
+    if (k === "constructor") return;
+    var d = Object.getOwnPropertyDescriptor(TAP, k), label = "%TypedArray%.prototype." + String(k);
+    if (typeof d.value === "function") {
+      var nat = d.value, iter = k === "values" || k === "keys" || k === "entries" || k === Symbol.iterator;
+      var f = function () {
+        var self = unwrap(this);
+        var buf = isTA(self) ? taBuf.call(self) : null;
+        if (buf && DET.has(buf)) throw detachedErr(label);
+        var args = Array.prototype.map.call(arguments, unwrap);
+        inNative++;
+        var r;
+        try { r = nat.apply(self, args); } finally { inNative--; }
+        return iter && buf ? guardIter(r, buf, String(k)) : wrapResult(r);
+      };
+      Object.defineProperty(f, "name", { value: nat.name });
+      Object.defineProperty(f, "length", { value: nat.length });
+      Object.defineProperty(TAP, k, { configurable: true, writable: true, enumerable: false, value: f });
+    } else if (d.get) {
+      var g = d.get, zero = k === "length" || k === "byteLength" || k === "byteOffset";
+      Object.defineProperty(TAP, k, { configurable: true, enumerable: false, get: function () {
+        var self = unwrap(this);
+        if (zero && isTA(self) && DET.has(taBuf.call(self))) return 0;
+        return g.call(self);
+      } });
+    }
+  });
+  ["Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array", "Float32Array", "Float64Array",
+    "BigInt64Array", "BigUint64Array"].forEach(function (name) {
+    var C = globalThis[name];
+    if (typeof C !== "function") return;
+    var W = new Proxy(C, {
+      construct: function (tg, args, nt) {
+        args = Array.prototype.map.call(args, unwrap);
+        if (args[0] instanceof NAB && DET.has(args[0])) throw detachedErr("Construct");
+        if (isTA(args[0]) && DET.has(taBuf.call(args[0]))) throw detachedErr("Construct");
+        var v = Reflect.construct(tg, args, nt === W ? tg : nt);
+        return inNative ? v : wrapView(v);
+      },
+    });
+    Object.defineProperty(C.prototype, "constructor", { configurable: true, writable: true, enumerable: false, value: W });
+    globalThis[name] = W;
+  });
+  var isView = NAB.isView;
+  NAB.isView = function isView2(x) { return isView(unwrap(x)); };
+  Object.defineProperty(NAB.isView, "name", { value: "isView" });
+  Object.defineProperty(ABP, "byteLength", { configurable: true, get: function () { return DET.has(this) ? 0 : abLen.call(this); } });
+  Object.defineProperty(ABP, "detached", { configurable: true, get: function () { abLen.call(this); return DET.has(this); } });
+  Object.defineProperty(ABP, "resizable", { configurable: true, get: function () { abLen.call(this); return false; } });
+  Object.defineProperty(ABP, "maxByteLength", { configurable: true, get: function () { return DET.has(this) ? 0 : abLen.call(this); } });
+  Object.defineProperty(ABP, "slice", { configurable: true, writable: true, value: function slice(a, b) {
+    if (DET.has(this)) throw detachedErr("ArrayBuffer.prototype.slice");
+    return abSlice.call(this, a, b);
+  } });
+  Object.defineProperty(ABP, "resize", { configurable: true, writable: true, value: function resize() {
+    throw new TypeError("Method ArrayBuffer.prototype.resize called on incompatible receiver #<ArrayBuffer>");
+  } });
+  function toIndex(v) {
+    if (v === undefined) return 0;
+    var n = Math.trunc(Number(v)) || 0;
+    if (n < 0 || n > 9007199254740991) throw new RangeError("Invalid array buffer length");
+    return n;
+  }
+  function moveBuffer(buf, len) {
+    var nb = new NAB(len);
+    new NU8(nb).set(new NU8(buf, 0, Math.min(len, abLen.call(buf))));
+    DET.add(buf);
+    return nb;
+  }
+  ["transfer", "transferToFixedLength"].forEach(function (name) {
+    Object.defineProperty(ABP, name, { configurable: true, writable: true, value: function (newLength) {
+      abLen.call(this);
+      if (SAB && this instanceof SAB) throw new TypeError("Method ArrayBuffer.prototype." + name + " called on incompatible receiver");
+      var len = newLength === undefined ? abLen.call(this) : toIndex(newLength);
+      if (DET.has(this)) throw detachedErr("ArrayBuffer.prototype." + name);
+      log({ k: "detach", api: name });
+      return moveBuffer(this, len);
+    } });
+  });
+  var NDV = DataView, DVP = NDV.prototype;
+  var dvBuf = Object.getOwnPropertyDescriptor(DVP, "buffer").get;
+  Object.getOwnPropertyNames(DVP).forEach(function (k) {
+    if (k === "constructor" || k === "buffer") return;
+    var d = Object.getOwnPropertyDescriptor(DVP, k);
+    if (typeof d.value === "function") {
+      var nat = d.value;
+      var f = function () { if (DET.has(dvBuf.call(this))) throw detachedErr("DataView.prototype." + k); return nat.apply(this, arguments); };
+      Object.defineProperty(f, "name", { value: nat.name });
+      Object.defineProperty(f, "length", { value: nat.length });
+      Object.defineProperty(DVP, k, { configurable: true, writable: true, enumerable: false, value: f });
+    } else if (d.get) {
+      var g = d.get;
+      Object.defineProperty(DVP, k, { configurable: true, enumerable: false, get: function () { if (DET.has(dvBuf.call(this))) throw detachedErr("DataView.prototype." + k); return g.call(this); } });
+    }
+  });
+  var DVW = new Proxy(NDV, { construct: function (tg, args, nt) {
+    if (args[0] instanceof NAB && DET.has(args[0])) throw detachedErr("DataView");
+    return Reflect.construct(tg, args, nt === DVW ? tg : nt);
+  } });
+  Object.defineProperty(DVP, "constructor", { configurable: true, writable: true, enumerable: false, value: DVW });
+  globalThis.DataView = DVW;
+
+  // yapılandırılmış klonlama (HTML): döngüler, Map/Set/Date/RegExp/hatalar/tamponlar; aktarılan tamponlar ayrılır
+  if (typeof globalThis.DOMException !== "function") {
+    globalThis.DOMException = class DOMException extends Error {
+      constructor(message, name) { super(message === undefined ? "" : String(message)); Object.defineProperty(this, "name", { value: name === undefined ? "Error" : String(name), configurable: true, writable: true }); }
+      get code() { return { DataCloneError: 25, InvalidStateError: 11, NotSupportedError: 9 }[this.name] || 0; }
+    };
+  }
+  var cloneErr = function (m) { return new globalThis.DOMException(m, "DataCloneError"); };
+  var ERRORS = ["Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError"];
+  function structuredCloneImpl(value, transfer) {
+    var list = [];
+    if (transfer !== undefined && transfer !== null) for (var x of transfer) list.push(x);
+    var memo = new Map();
+    list.forEach(function (b, i) {
+      if (!(b instanceof NAB) || (SAB && b instanceof SAB)) throw cloneErr("Value at index " + i + " does not have a transferable type.");
+      if (list.indexOf(b) !== i) throw cloneErr("ArrayBuffer at index " + i + " is a duplicate of an earlier ArrayBuffer.");
+      if (DET.has(b)) throw cloneErr("An ArrayBuffer is detached and could not be cloned.");
+    });
+    function walk(v) {
+      if (typeof v === "symbol") throw cloneErr(String(v) + " could not be cloned.");
+      if (typeof v === "function") throw cloneErr((v.toString ? Function.prototype.toString.call(v) : "function") + " could not be cloned.");
+      if (v === null || typeof v !== "object") return v;
+      if (memo.has(v)) return memo.get(v);
+      var raw = unwrap(v), tag = Object.prototype.toString.call(raw).slice(8, -1), out;
+      if (raw instanceof NAB) {
+        if (SAB && raw instanceof SAB) { memo.set(v, raw); return raw; }
+        if (DET.has(raw)) throw cloneErr("An ArrayBuffer is detached and could not be cloned.");
+        out = list.indexOf(raw) >= 0 ? new NAB(abLen.call(raw)) : abSlice.call(raw, 0);
+        if (list.indexOf(raw) >= 0) new NU8(out).set(new NU8(raw));
+        memo.set(v, out); return out;
+      }
+      if (isTA(raw)) {
+        var b = walk(taBuf.call(raw));
+        out = new globalThis[tag](b, Object.getOwnPropertyDescriptor(TAP, "byteOffset").get.call(raw), Object.getOwnPropertyDescriptor(TAP, "length").get.call(raw));
+        memo.set(v, out); return out;
+      }
+      if (raw instanceof NDV) { out = new globalThis.DataView(walk(dvBuf.call(raw)), raw.byteOffset, raw.byteLength); memo.set(v, out); return out; }
+      // tür iç yuvaya göre (Symbol.toStringTag'e değil) belirlenir
+      var brand = function (fn) { try { fn.call(v); return true; } catch (e) { return false; } };
+      if (Array.isArray(v)) tag = "Array";
+      else if (brand(N.getTime)) tag = "Date";
+      else if (brand(Map.prototype.has)) tag = "Map";
+      else if (brand(Set.prototype.has)) tag = "Set";
+      else if (brand(Object.getOwnPropertyDescriptor(RegExp.prototype, "source").get) && v !== RegExp.prototype) tag = "RegExp";
+      else if (brand(Boolean.prototype.valueOf)) tag = "Boolean";
+      else if (brand(Number.prototype.valueOf)) tag = "Number";
+      else if (brand(String.prototype.valueOf)) tag = "String";
+      else if (typeof BigInt === "function" && brand(BigInt.prototype.valueOf)) tag = "BigInt";
+      else if (tag !== "Error" && (v instanceof Promise ||brand(WeakMap.prototype.has) || brand(WeakSet.prototype.has))) tag = "Uncloneable";
+      else if (tag !== "Error") tag = "Object";
+      switch (tag) {
+        case "Boolean": out = Object(Boolean.prototype.valueOf.call(v)); break;
+        case "Number": out = Object(Number.prototype.valueOf.call(v)); break;
+        case "String": out = Object(String.prototype.valueOf.call(v)); break;
+        case "BigInt": out = Object(BigInt.prototype.valueOf.call(v)); break;
+        case "Date": out = new globalThis.Date(getTime(v)); break;
+        case "RegExp": out = new RegExp(v.source, v.flags); break;
+        case "Map": out = new Map(); memo.set(v, out); Array.from(Map.prototype.entries.call(v)).forEach(function (e) { out.set(walk(e[0]), walk(e[1])); }); return out;
+        case "Set": out = new Set(); memo.set(v, out); Array.from(Set.prototype.values.call(v)).forEach(function (e) { out.add(walk(e)); }); return out;
+        case "Error": {
+          var nm = ERRORS.indexOf(v.name) >= 0 ? v.name : "Error";
+          out = new globalThis[nm](v.message === undefined ? undefined : String(v.message));
+          if (typeof v.stack === "string") Object.defineProperty(out, "stack", { value: v.stack, configurable: true, writable: true });
+          memo.set(v, out); return out;
+        }
+        case "Array": out = new Array(v.length); memo.set(v, out); Object.keys(v).forEach(function (k) { out[k] = walk(v[k]); }); return out;
+        case "Object": case "Arguments": out = {}; memo.set(v, out); Object.keys(v).forEach(function (k) { out[k] = walk(v[k]); }); return out;
+        default: throw cloneErr("#<" + tag + "> could not be cloned.");
+      }
+      memo.set(v, out);
+      return out;
+    }
+    var result = walk(value);
+    list.forEach(function (b) { if (!memo.has(b)) memo.set(b, moveBuffer(b, abLen.call(b))); else DET.add(b); });
+    if (list.length) log({ k: "detach", api: "structuredClone", count: list.length });
+    return result;
+  }
+  globalThis.structuredClone = function structuredClone(value, options) {
+    if (arguments.length === 0) throw new TypeError("Failed to execute 'structuredClone' on 'Window': 1 argument required, but only 0 present.");
+    var transfer = options !== undefined && options !== null ? Object(options).transfer : undefined;
+    return structuredCloneImpl(value, transfer);
+  };
+  function messageArgs(a, b) {
+    // postMessage(msg, transfer) ya da postMessage(msg, { transfer })
+    if (Array.isArray(b) || (b && typeof b === "object" && typeof b[Symbol.iterator] === "function" && !("transfer" in Object(b)))) return b;
+    return b && typeof b === "object" ? b.transfer : undefined;
+  }
+  function deliver(target, data) {
+    var ev = { type: "message", data: data, origin: "https://example.com", source: null, ports: [] };
+    var fire = function () {
+      if (typeof target.onmessage === "function") try { target.onmessage(ev); } catch (e) {}
+      (globalThis.__peelHandlers || []).forEach(function (h) { if (h.target === target && h.type === "message") try { h.fn.call(target, ev); } catch (e) {} });
+    };
+    globalThis.setTimeout(fire, 0);
+  }
+  // window.postMessage(msg, targetOrigin, transfer) ya da (msg, { targetOrigin, transfer })
+  globalThis.postMessage = function postMessage(message, a, b) {
+    var transfer = typeof a === "string" ? b : messageArgs(message, a);
+    deliver(globalThis, structuredCloneImpl(message, transfer));
+  };
+  if (typeof globalThis.Worker === "function") {
+    globalThis.Worker.prototype.postMessage = function postMessage(message, a) { structuredCloneImpl(message, messageArgs(message, a)); };
+    globalThis.Worker.prototype.terminate = function terminate() {};
+  }
+  if (typeof globalThis.MessageChannel !== "function") {
+    var MessagePort = function MessagePort() { this.onmessage = null; this.__other = null; };
+    MessagePort.prototype.postMessage = function postMessage(message, a) { var d = structuredCloneImpl(message, messageArgs(message, a)); if (this.__other) deliver(this.__other, d); };
+    MessagePort.prototype.addEventListener = function (type, fn) { if (globalThis.__peelOn) __peelOn(this, type, fn); };
+    MessagePort.prototype.removeEventListener = function () {};
+    MessagePort.prototype.start = function () {};
+    MessagePort.prototype.close = function () { this.__other = null; };
+    globalThis.MessagePort = MessagePort;
+    globalThis.MessageChannel = function MessageChannel() {
+      if (!new.target) throw new TypeError("Failed to construct 'MessageChannel': Please use the 'new' operator");
+      this.port1 = new MessagePort(); this.port2 = new MessagePort();
+      this.port1.__other = this.port2; this.port2.__other = this.port1;
+    };
   }
 
   // ---------------------------------------------------------------- E539 Atomics (tek ajan, ana iş parçacığı)
@@ -568,7 +741,8 @@ export const SEMANTIC_STUBS = `
   function isThenable(v) { try { return v !== null && (typeof v === "object" || typeof v === "function") && typeof v.then === "function" && !(v instanceof NativePromise); } catch (e) { return false; } }
   function wrapCb(cb, kind) {
     if (typeof cb !== "function") return cb;
-    return function (v) { log({ k: "micro", api: kind, fn: fname(cb) }); return cb.apply(this, arguments); };
+    // ret işleyicisine ulaşan hata da programa görünür: stack'i V8 biçimine (E518)
+    return function (v) { log({ k: "micro", api: kind, fn: fname(cb) }); return cb.call(this, kind === "catch" ? v8Format(v) : v); };
   }
   NativePromise.prototype.then = function then(a, b) {
     markHandled(this);
@@ -592,6 +766,7 @@ export const SEMANTIC_STUBS = `
       return v;
     },
   });
+  globalThis.__peelTrack = function (p, where) { return track(p, where); };
   globalThis.__peelTrackFn = function (f, where) {
     var w = function () { return track(Reflect.apply(f, this, arguments), where); };
     try { Object.defineProperty(w, "name", { value: f.name }); Object.defineProperty(w, "length", { value: f.length }); } catch (e) {}
