@@ -1,4 +1,5 @@
-const MAX_LEN = 1_000_000;
+// temel ≤ 1 MB girdide alınır; pass'ler (unflatten kopyaları) çıktıyı büyütebilir, karşılaştırma için daha geniş sınır
+const MAX_LEN = 4_000_000;
 const MAX_LINES = 2000;
 
 // Kodu sandbox'ta çalıştırıp console çıktısını davranış parmak izi olarak alır.

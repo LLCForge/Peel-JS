@@ -31,8 +31,18 @@ function pathOf(n) {
   return null;
 }
 
+function propertyUsed(ast, name, except) {
+  let used = false;
+  traverse(ast, {
+    MemberExpression(q) {
+      if (q.node !== except && !q.node.computed && t.isIdentifier(q.node.property, { name })) { used = true; q.stop(); }
+    },
+  });
+  return used;
+}
+
 // js-confuser iç fonksiyonları: scope.X.L = [0, 1, …]; … scope.X.L[12] …  (dizi kapsam nesnesinde)
-function scopeArrays(ast, onLog) {
+async function scopeArrays(ast, { onLog, sandbox, level }) {
   let n = 0;
   const cands = [];
   traverse(ast, {
@@ -55,6 +65,7 @@ function scopeArrays(ast, onLog) {
   // alt nesneler başka kapsam nesnelerine kopyalanır ({ X: scope.X }); aynı özellik adı herhangi bir kökten
   // birden çok kez yazılıyorsa (atama, destructuring, ++) hangi dizinin okunduğu belli değildir
   const writes = new Map();
+  const arrayWrites = new Map(); // ad → X.ad = [...] atamaları (gözlem için)
   traverse(ast, {
     MemberExpression(q) {
       if (q.node.computed || !t.isIdentifier(q.node.property)) return;
@@ -68,9 +79,14 @@ function scopeArrays(ast, onLog) {
       const name = q.node.property.name;
       if (!writes.has(name)) writes.set(name, new Set());
       writes.get(name).add(sig);
+      if (typeof sig === 'string') {
+        if (!arrayWrites.has(name)) arrayWrites.set(name, []);
+        arrayWrites.get(name).push(par.node);
+      }
     },
   });
-  for (const c of cands.filter((c) => writes.get(c.path.split('.').pop())?.size === 1)) {
+  const accepted = await observeWrites(ast, cands, writes, arrayWrites, { sandbox, level });
+  for (const c of cands.filter((c) => accepted.has(c.path.split('.').pop()))) {
     if (!c.p.node) continue;
     const stmt = c.p.parentPath;
     const fn = c.p.getFunctionParent();
@@ -97,14 +113,60 @@ function scopeArrays(ast, onLog) {
     if (!fixed.length) continue;
     for (const m of fixed) m.replaceWith(t.cloneNode(c.elements[m.node.property.value], true));
     n += fixed.length;
-    if (fixed.length === reads.length) stmt.remove();
+    // dizi başka kapsam nesnelerine de geçer ({ X: scope.X }) ve orada başka kökle okunur: ad hiçbir yerde kalmadıysa sil
+    if (fixed.length === reads.length && !propertyUsed(ast, c.path.split('.').pop(), c.p.node.left)) stmt.remove();
     onLog(`const-arrays: ${c.path} (${c.elements.length} literal) ${fixed.length}/${reads.length} okuma yerine yazıldı`, 'info');
   }
   return n;
 }
 
-export async function run(ast, { onLog, bump }) {
-  let n = scopeArrays(ast, onLog);
+// Aynı ada farklı ifadelerle yazılıyorsa (açılamamış makinedeki özgün kopya: [E[53] + -905, …]) yazmalar
+// sandbox'ta gözlenir: çalışan her yazma adayla aynı içeriği üretiyorsa ad kabul edilir.
+// shortcut: gözlem tek çalıştırmaya dayanır; yalnızca seviye 3+ ve derin doğrulama yanlışı geri alır.
+async function observeWrites(ast, cands, writes, arrayWrites, { sandbox, level }) {
+  const accepted = new Set();
+  const watch = new Map();
+  for (const c of cands) {
+    const name = c.path.split('.').pop();
+    const sigs = writes.get(name);
+    if (sigs?.size === 1) { accepted.add(name); continue; }
+    // destructuring, ++ gibi yazmalar ya da gözlem yapılamıyorsa: kabul yok
+    if (!sandbox || level < 3 || !sigs || [...sigs].some((x) => typeof x !== 'string')) continue;
+    const values = c.elements.map((e) => literalValue(e).value);
+    // undefined/null JSON'da iki tarafta da null olur
+    if (!values.every((v) => v == null || typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v)) || typeof v === 'boolean')) continue;
+    const json = JSON.stringify(values);
+    if (watch.has(name) && watch.get(name) !== json) watch.set(name, null); else if (!watch.has(name)) watch.set(name, json);
+  }
+  const names = [...watch].filter(([, j]) => j !== null).map(([k]) => k);
+  if (!names.length) return accepted;
+  const saved = [];
+  for (const name of names) {
+    for (const node of arrayWrites.get(name)) {
+      saved.push([node, node.right]);
+      node.right = t.callExpression(t.identifier('__peelArr'), [t.stringLiteral(name), node.right]);
+    }
+  }
+  const code = gen(ast);
+  for (const [node, right] of saved) node.right = right;
+  const prelude = `var __peelArrs = {};
+function __peelArr(k, v) {
+  var s; try { s = JSON.stringify(v); } catch (e) { s = null; }
+  if (!(k in __peelArrs)) __peelArrs[k] = s; else if (__peelArrs[k] !== s) __peelArrs[k] = null;
+  return v;
+}`;
+  const r = await sandbox.run(`${prelude}
+try {
+${code}
+} catch (e) {}
+__res.push(__peelArrs);`, { timeoutMs: 8000 });
+  const seen = r.res?.[0] ?? {};
+  for (const name of names) if (seen[name] === watch.get(name)) accepted.add(name);
+  return accepted;
+}
+
+export async function run(ast, { onLog, bump, sandbox, level }) {
+  let n = await scopeArrays(ast, { onLog, sandbox, level });
   traverse(ast, {
     VariableDeclarator(p) {
       const { id, init } = p.node;

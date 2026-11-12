@@ -614,6 +614,14 @@ function __peelInit(k, v) {
   const r = await sandbox.run(`${prelude}\ntry {\n${code}\n} catch (e) {}\n__res.push(__peelInits);`, { timeoutMs: 8000 });
   const inits = r.res?.[0] ?? {};
 
+  const used = new Set();
+  traverse(ast, { Identifier(q) { used.add(q.node.name); } });
+  const uniqueName = (base) => {
+    let name = `_${base}`;
+    for (let i = 2; used.has(name); i++) name = `_${base}${i}`;
+    used.add(name);
+    return name;
+  };
   let made = 0;
   for (const tg of targets) {
     const m = { ...tg.mach, vars: new Set(), arrays: new Set([tg.arrayName]), sumFns };
@@ -626,7 +634,9 @@ function __peelInit(k, v) {
       if (name === undefined) {
         try {
           const body = tidyList(unflatten(m, new State(new Map(), new Map([[tg.arrayName, JSON.parse(json)]]))));
-          name = tg.p.scope.generateUid(`${tg.p.node.id.name}_${clones.size}`);
+          // js-confuser aynı adı farklı kapsamlarda yeniden kullanır: generateUid yalnızca üst kapsamlara bakar,
+          // çağrı yerini saran iç kapsamdaki aynı adlı kopya yeni fonksiyonu gölgeleyebilir. Ad program genelinde benzersiz olmalı.
+          name = uniqueName(`${tg.p.node.id.name}_${clones.size}`);
           const fn = t.cloneNode(tg.p.node, true);
           fn.id = t.identifier(name);
           fn.body = t.blockStatement([...fn.body.body.slice(0, -1), ...body]);
