@@ -161,7 +161,7 @@ Exit codes: 0 ok, 1 error, 2 usage, 3 changed, 4 risk threshold. Subcommands (`p
 **Library.** `npm i peel-js`, then `import { peel, deobfuscate, analyze, semanticDiff } from 'peel-js'` (types included;
 Node-only helpers in `peel-js/node`). **GitHub Action:** `uses: LLCForge/Peel-JS@main` with `files: dist/**/*.js`
 (outputs SARIF and a step summary). **Editors and tools:** `extensions/vscode` (VS Code), `extensions/mitmproxy`,
-`extensions/burp`, `extensions/jupyter`, `extensions/observable`, `extensions/semgrep`. **Desktop:** `src-tauri`
+`extensions/burp`, `extensions/jupyter`, `extensions/observable` (`npm run build:lib` builds a single-file ESM bundle to attach), `extensions/semgrep`. **Desktop:** `src-tauri`
 (`cargo install tauri-cli --version ^2 && cargo tauri build`). The web app works offline as a PWA and has a **Tools**
 dialog for comparison, history, sharing, `.asar` files, rules/plugins and the tutorial / CTF / encyclopedia.
 

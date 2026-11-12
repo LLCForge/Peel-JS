@@ -23,7 +23,7 @@
   "165": ["x", "pipeline plugins seçeneği, after ile yerleşim, çekirdek doğrulama/geri alma eklentiler için de geçerli"],
   "166": ["x", "Ed25519 imzalı .peelplugin, güvenilen anahtar listesi olmadan yükleme yok (CLI peel plugin, arayüz)"],
   "167": ["x", "kural dili: $x / $$x meta değişkenleri, when koşulları; eklenti pass'i olarak çalışır (CLI --rules, arayüz)"],
-  "168": [" ", "Jupyter sarmalayıcısı ve örnek notebook tamam ve denetlendi; Observable sayfası npm:peel-js içe aktarır, paket npm'de yayımlanmadan çalışmaz"],
+  "168": ["x", "Jupyter sarmalayıcısı + örnek notebook; Observable için npm gerektirmeyen tek dosyalık ESM paketi (npm run build:lib, WASM gömülü) FileAttachment ile yüklenir; Node testi ve tarayıcıda blob URL'den import ile denetlendi"],
   "169": ["x", "peel bot: Slack (HMAC imza) ve Discord (Ed25519 imza) eğik çizgi komutu, loopback'e bağlı; gerçek Slack/Discord çalışma alanında denenmedi"],
   "171": ["x", ".prettierrc / package.json#prettier / .eslintrc.json / .editorconfig okunur; CLI --style auto"],
   "172": ["x", "extensions/semgrep/peel.yml kural seti ve CLI --semgrep (yerel semgrep, metrics kapalı), bulgular rapora ve SARIF'e eklenir"],

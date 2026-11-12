@@ -4,12 +4,17 @@ title: PEEL ile deobfuscation
 
 # PEEL ile deobfuscation
 
-Bu sayfa bir [Observable Framework](https://observablehq.com/framework/) sayfasıdır: `src/peel.md` olarak bir
-Framework projesine kopyalanır. PEEL tamamen tarayıcıda çalışır; QuickJS sandbox'ı WASM olarak yüklenir ve
-kod hiçbir sunucuya gönderilmez. Observable notebook'larında aynı içe aktarma `await import("https://cdn.jsdelivr.net/npm/peel-js/+esm")` ile yapılır.
+Bu sayfa bir [Observable Framework](https://observablehq.com/framework/) sayfasıdır. npm gerekmez: PEEL kütüphanesi
+tek dosyalık bir ESM paketi olarak derlenir ve sayfaya dosya eki (FileAttachment) olarak eklenir.
+
+1. Depo kökünde `npm run build:lib` çalıştır: `extensions/observable/dist/peel.js` oluşur (QuickJS WASM gömülüdür).
+2. `peel.js` dosyasını Framework projesinde bu sayfanın yanına kopyala (`src/peel.js`), bu sayfayı `src/peel.md` olarak kaydet.
+
+PEEL tamamen tarayıcıda çalışır; kod hiçbir sunucuya gönderilmez.
 
 ```js
-import {peel, semanticDiff, formatDiff, detectTechniques, explainWhy} from "npm:peel-js";
+const peelLib = await import(await FileAttachment("peel.js").url());
+const {peel, semanticDiff, formatDiff, detectTechniques, explainWhy} = peelLib;
 ```
 
 ```js

@@ -163,7 +163,7 @@ Aşağıdakilerin hepsi yerelde çalışır. Kodun hiçbir yere yüklenmez; sunu
 **Kütüphane.** `npm i peel-js`, ardından `import { peel, deobfuscate, analyze, semanticDiff } from 'peel-js'` (tipler dahil;
 yalnızca Node'a özgü yardımcılar `peel-js/node` altında). **GitHub Action:** `uses: LLCForge/Peel-JS@main`, `files: dist/**/*.js`
 (SARIF ve adım özeti üretir). **Editör ve araçlar:** `extensions/vscode` (VS Code), `extensions/mitmproxy`, `extensions/burp`,
-`extensions/jupyter`, `extensions/observable`, `extensions/semgrep`. **Masaüstü:** `src-tauri`
+`extensions/jupyter`, `extensions/observable` (`npm run build:lib` eklenecek tek dosyalık ESM paketini üretir), `extensions/semgrep`. **Masaüstü:** `src-tauri`
 (`cargo install tauri-cli --version ^2 && cargo tauri build`). Web uygulaması PWA olarak çevrimdışı çalışır; **Araçlar**
 penceresinde karşılaştırma, geçmiş, paylaşım, `.asar` dosyaları, kurallar/eklentiler ve eğitim / CTF / ansiklopedi bulunur.
 
