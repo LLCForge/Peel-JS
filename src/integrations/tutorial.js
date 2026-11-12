@@ -94,8 +94,116 @@ export const PASS_DOCS = {
     en: 'Deletes variables and functions that are never used (skipped when eval/with is present).',
   },
   rename: {
-    tr: 'Üretilmiş _0x adlarını türüne göre okunur adlarla değiştirir (fn1, arg1, v1); anlamlı adlara dokunmaz.',
-    en: 'Renames generated _0x names by kind (fn1, arg1, v1); meaningful names are left alone.',
+    tr: 'Üretilmiş _0x adlarını kullanım kanıtından çıkarılan adlarla (compute, num, index), kanıt yoksa türüne göre (fn1, arg1, v1) değiştirir; anlamlı adlara dokunmaz.',
+    en: 'Renames generated _0x names with names inferred from usage (compute, num, index), or by kind (fn1, arg1, v1) without evidence; meaningful names are left alone.',
+  },
+  sourcemap: {
+    tr: 'Girdideki satır içi kaynak haritasında adı bulunan bağlamaları özgün adlarına geri çevirir; çakışan adlara dokunmaz.',
+    en: 'Restores original names for bindings listed in an inline source map; conflicting names are left alone.',
+  },
+  integrity: {
+    tr: 'Kaynağın hash\'ini denetleyen bütünlük kontrollerini, orijinal programdaki sonuca göre seçilen dalla değiştirir.',
+    en: 'Replaces integrity (source hash) checks with the branch the original program actually takes.',
+  },
+  'static-decode': {
+    tr: 'Sandbox gerektirmeyen çözücü çağrılarını katlar: decodeURIComponent, parseInt, String.fromCharCode, join/split.',
+    en: 'Folds decoder calls that need no sandbox: decodeURIComponent, parseInt, String.fromCharCode, join/split.',
+  },
+  'static-strings': {
+    tr: 'obfuscator.io string dizisini sandbox olmadan çözer (ofset, base64/RC4, rotasyon checksum\'ı statik yürütülür).',
+    en: 'Decodes the obfuscator.io string array without a sandbox (offset, base64/RC4, rotation checksum run statically).',
+  },
+  confuser: {
+    tr: 'js-confuser dispatcher\'larını ayrı fonksiyonlara, rest+length hilesini gerçek parametrelere, __generator\'ı function*\'a çevirir.',
+    en: 'Turns js-confuser dispatchers into separate functions, the rest+length trick into real parameters, __generator into function*.',
+  },
+  indirection: {
+    tr: 'Dolaylılıkları söker: destructuring atamaları, sabit nesneli with, getter/this/bind proxy\'leri, Reflect ve Object.create.',
+    en: 'Removes indirection: destructuring assignments, constant-object with, getter/this/bind proxies, Reflect and Object.create.',
+  },
+  'opaque-smt': {
+    tr: 'Dal koşullarını bit-vektör çözücüyle kanıtlar; her zaman doğru/yanlış olduğu denetlenmiş kanıtla gösterilen koşulu katlar.',
+    en: 'Proves branch conditions with a bit-vector solver and folds those shown always true/false by a checked proof.',
+  },
+  'ssa-opt': {
+    tr: 'SSA üzerinde sabit ve kopya yayılımı, ölü atama eleme, GVN/CSE/PRE ve kaçmayan nesnelerin skalerlere bölünmesi.',
+    en: 'SSA-based constant and copy propagation, dead store elimination, GVN/CSE/PRE and scalar replacement of non-escaping objects.',
+  },
+  'loop-opt': {
+    tr: 'Döngü değişmezlerini dışarı taşır, sabit turlu döngüleri açar, indüksiyon değişkenlerini sadeleştirir; durum makinesi döngülerine dokunmaz.',
+    en: 'Hoists loop invariants, unrolls constant-trip loops and simplifies induction variables; state-machine loops are left alone.',
+  },
+  specialize: {
+    tr: 'Sabit argümanla çağrılan fonksiyonun o çağrılar için kısmi değerlendirilmiş kopyasını üretir (en az bir dinamik argüman kalırsa).',
+    en: 'Creates a partially evaluated copy of a function for calls with constant arguments (when a dynamic argument remains).',
+  },
+  flow: {
+    tr: 'Akışı normalleştirir: try/catch ile gizlenmiş akış, küçük switch → if zinciri, break/continue ve guard cümleleri.',
+    en: 'Normalises control flow: try/catch-hidden flow, small switch → if chain, break/continue and guard clauses.',
+  },
+  regenerator: {
+    tr: 'Babel/regenerator durum makinelerini function* ve async function\'a geri çevirir (try/catch/finally, döngü, yield*).',
+    en: 'Turns Babel/regenerator state machines back into function* and async functions (try/catch/finally, loops, yield*).',
+  },
+  'cfg-opt': {
+    tr: 'Kontrol akışı düzeyi dönüşümler: switch normalizasyonu, kuyruk çoğaltma, atlama ipekleme, basit if → koşul ifadesi.',
+    en: 'Control-flow level rewrites: switch normalisation, tail duplication, jump threading, simple if → conditional expression.',
+  },
+  restructure: {
+    tr: 'Yapısal gizlemeyi geri alır: iç içe koşul ifadeleri → if/else zinciri, void 0 → undefined, console destructuring.',
+    en: 'Undoes structural hiding: nested conditionals → if/else chains, void 0 → undefined, console destructuring.',
+  },
+  'dead-extra': {
+    tr: 'Kullanılmayan parametre, import ve özel sınıf üyelerini, return sonrası erişilemeyen kodu ve fazla argümanları siler.',
+    en: 'Deletes unused parameters, imports and private class members, code after return and surplus arguments.',
+  },
+  babel: {
+    tr: 'Babel yardımcı kalıntılarını geri çevirir: _classCallCheck/_createClass → class, _slicedToArray → [a, b], _objectSpread → {...a}.',
+    en: 'Reverses Babel helper residue: _classCallCheck/_createClass → class, _slicedToArray → [a, b], _objectSpread → {...a}.',
+  },
+  classes: {
+    tr: 'Foo.prototype.m = function … ve gevşek mod kalıtımını class … extends … sözdizimine çevirir (yalnızca kanıtlanabildiğinde).',
+    en: 'Turns Foo.prototype.m = function … and loose-mode inheritance into class … extends … (only when provable).',
+  },
+  'let-const': {
+    tr: 'var bildirimlerini kanıtlanabildiğinde let/const yapar; program düzeyindeki var\'a dokunmaz (global özellik oluşturur).',
+    en: 'Turns var into let/const when provable; program-level var is kept (it creates a global property).',
+  },
+  'merge-vars': {
+    tr: 'Bildirim ile ilk atamayı birleştirir (var a; a = 1 → var a = 1) ve takma ad değişkenleri kaldırır.',
+    en: 'Merges a declaration with its first assignment (var a; a = 1 → var a = 1) and removes alias variables.',
+  },
+  'move-decls': {
+    tr: 'Literal başlangıçlı bildirimleri aynı bloktaki ilk kullanımlarının hemen önüne taşır.',
+    en: 'Moves literal-initialised declarations right before their first use in the same block.',
+  },
+  'modern-syntax': {
+    tr: 'ES5 → modern sözdizimi: ok fonksiyonu, şablon string, kısa özellik ve kısa metot (kanıtlanabilir alt küme).',
+    en: 'ES5 → modern syntax: arrow functions, template strings, shorthand properties and methods (provable subset).',
+  },
+  destructure: {
+    tr: 'var a = o.a, b = o.b; biçimini var { a, b } = o; nesne ayrıştırmasına çevirir.',
+    en: 'Turns var a = o.a, b = o.b; into the object destructuring var { a, b } = o;.',
+  },
+  dedupe: {
+    tr: 'Yerel adları dışında birebir aynı iki fonksiyonu birleştirir; ikincisinin çağrıları birincisine gider.',
+    en: 'Merges two functions identical except for local names; calls to the second go to the first.',
+  },
+  extract: {
+    tr: 'Aynı fonksiyonda birebir tekrar eden deyim dizilerini tek bir yardımcı fonksiyona çıkarır.',
+    en: 'Extracts statement sequences repeated verbatim in a function into a single helper.',
+  },
+  magic: {
+    tr: 'Tanınan sihirli sayıları adlandırılmış sabitlere bağlar (13 → KEY_ENTER, 86400000 → MS_PER_DAY).',
+    en: 'Binds well-known magic numbers to named constants (13 → KEY_ENTER, 86400000 → MS_PER_DAY).',
+  },
+  annotate: {
+    tr: 'Fonksiyonlara açıklama ve JSDoc tip yorumları, programa bölüm başlıkları ekler; davranışı değiştirmez.',
+    en: 'Adds summary and JSDoc type comments to functions and section headers to the program; behaviour is unchanged.',
+  },
+  comments: {
+    tr: 'Dönüşümler sırasında kaybolan girdi yorumlarını, bağlı oldukları bildirim hâlâ duruyorsa geri koyar.',
+    en: 'Restores input comments lost during transforms when the declaration they belonged to still exists.',
   },
 };
 
