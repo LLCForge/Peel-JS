@@ -5,6 +5,7 @@ import * as literals from '../passes/25-literals.js';
 import * as constArrays from '../passes/27-const-arrays.js';
 import * as stringArray from '../passes/30-string-array.js';
 import * as runtimeDecoders from '../passes/35-runtime-decoders.js';
+import * as runtimeFunctions from '../passes/36-runtime-functions.js';
 import * as proxy from '../passes/40-proxy.js';
 import * as constFold from '../passes/50-const-fold.js';
 import * as opaque from '../passes/60-opaque.js';
@@ -27,6 +28,7 @@ export const PASSES = [
   { id: 'const-arrays', level: 1, kind: 'ast',  needs: null,      mod: constArrays },
   { id: 'string-array', level: 2, kind: 'ast',  needs: 'sandbox', mod: stringArray },
   { id: 'runtime-decoders', level: 2, kind: 'ast', needs: 'sandbox', mod: runtimeDecoders },
+  { id: 'runtime-functions', level: 3, kind: 'ast', needs: 'sandbox', mod: runtimeFunctions },
   { id: 'proxy',        level: 2, kind: 'ast',  needs: null,      mod: proxy },
   { id: 'const-fold',   level: 1, kind: 'ast',  needs: 'sandbox', mod: constFold },
   { id: 'dead-code',    level: 2, kind: 'ast',  needs: null,      mod: deadCode },

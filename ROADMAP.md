@@ -66,7 +66,7 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 - [x] 52. Fingerprint envanteri (navigator/screen/document/location okumaları)
 - [~] 53. Canvas/WebGL/Audio fingerprint — statik API taraması + toDataURL sayımı
 - [ ] 54. Taint takibi
-- [~] 55. eval/Function ile üretilen kod — sarmalayıcı katmanlarında yakalanıyor
+- [~] 55. eval/Function ile üretilen kod — sarmalayıcılar ve js-confuser rgf (new Function) çağrı yerinde gerçek fonksiyona çevriliyor
 - [ ] 56. Timer ve Promise kuyruğunu sırayla çalıştırma
 - [ ] 57. Sentetik olaylarla handler tetikleme
 - [ ] 58. Sandbox anlık görüntüsü

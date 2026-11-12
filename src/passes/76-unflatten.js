@@ -13,7 +13,7 @@ import { literalOf } from '../util/literal.js';
 // Aynı (durum, case) bir yolda tekrar ederse orası gerçek bir döngünün başıdır: etiketli while(true)
 // ile sarılır, geri dönüşler continue, makineden çıkan yollar break olur.
 
-const MAX_STEPS = 4000;      // tüm yollar boyunca toplam dispatch adımı
+const MAX_STEPS = 20000;     // tüm yollar ve izlemeler boyunca toplam dispatch adımı
 const MAX_OUTPUT = 400_000;  // üretilen kodun karakter sınırı (dal kopyalama patlamasına karşı)
 const MAX_CLONES = 200;
 
@@ -142,7 +142,7 @@ function scanState(node, m) {
       // dizi durumunun kendisi yalnızca A[i] ya da sum(A) içinde kullanılabilir
       if (m.arrays.has(p) && !(t.isMemberExpression(parent) && key === 'object' && parent.computed) &&
           !(t.isCallExpression(parent) && key === 'arguments' && t.isIdentifier(parent.callee) && m.sumFns.has(parent.callee.name))) {
-        fail('durum dizisi başka biçimde kullanılıyor');
+        fail(`durum dizisi başka biçimde kullanılıyor: ${gen(parent).slice(0, 60)}`);
       }
       reads = true;
       return;
@@ -158,9 +158,15 @@ function scanState(node, m) {
     // durum kökünü kendi parametresi ya da var'ıyla gölgeleyen iç fonksiyon başka bir nesneye bakar:
     // içindeki referanslar bu makinenin durumu değildir (js-confuser her iç fonksiyona aynı adlı scope verir)
     if (t.isFunction(n)) {
-      const own = [...n.params.flatMap((x) => Object.keys(t.getBindingIdentifiers(x))),
-        ...(t.isBlockStatement(n.body) ? n.body.body.filter((s) => t.isVariableDeclaration(s, { kind: 'var' }))
-          .flatMap((s) => s.declarations.flatMap((d) => Object.keys(t.getBindingIdentifiers(d.id)))) : [])];
+      // fonksiyonun kendi kapsamında bildirilen adlar: parametreler, kendi adı (ifadeyse), gövdedeki
+      // var/let/const, fonksiyon ve sınıf bildirimleri (js-confuser kısa adları kapsamlar arasında yeniden kullanır)
+      const body = t.isBlockStatement(n.body) ? n.body.body : [];
+      const own = [
+        ...n.params.flatMap((x) => Object.keys(t.getBindingIdentifiers(x))),
+        ...(t.isFunctionExpression(n) && n.id ? [n.id.name] : []),
+        ...body.flatMap((s) => (t.isVariableDeclaration(s) ? s.declarations.flatMap((d) => Object.keys(t.getBindingIdentifiers(d.id)))
+          : (t.isFunctionDeclaration(s) || t.isClassDeclaration(s)) && s.id ? [s.id.name] : [])),
+      ];
       if (own.some((k) => roots.has(k))) return;
     }
     const fnNow = inFn || t.isFunction(n);
@@ -292,15 +298,36 @@ function unflatten(m, S0) {
   const headers = new Map(); // yol üstündeki başlık anahtarı → etiket
   let labelSeq = 0;
 
-  function iterate(S, path) {
+  // İzleme (probe) modu: kod üretmeden bir dalın uğradığı dispatch anahtarlarını sırayla toplar;
+  // durumdan bağımsız ilk if'te, dönüşte ya da tekrar eden anahtarda durur.
+  let probe = null;
+  class ProbeStop {}
+  const PROBE_STEPS = 600;
+  function trace(list, S, path) {
+    const saved = probe;
+    probe = { keys: [], states: new Map() };
+    try { exec(list, S.clone(), path, null); } catch (e) { if (!(e instanceof ProbeStop)) throw e; }
+    const res = probe;
+    probe = saved;
+    return res;
+  }
+
+  function iterate(S, path, stop) {
     if (++budget.steps > MAX_STEPS) fail('adım bütçesi aşıldı');
     if (!isAlwaysTrue(m.loop.test) && !E.ev(m.loop.test, S)) return exitSync(S);
     const key = `${E.ev(m.disc, S)}|${S.key()}`;
+    if (probe) {
+      if (path.has(key) || probe.states.has(key) || probe.keys.length > PROBE_STEPS) throw new ProbeStop();
+      probe.keys.push(key);
+      probe.states.set(key, S.clone());
+    }
+    // birleşme noktasına gelindi: devamı if/else'ten sonra bir kez yazılacak
+    if (stop && key === stop) return [];
     if (path.has(key)) {
       if (!headers.has(key)) headers.set(key, `peel_loop_${++labelSeq}`);
       return [t.continueStatement(t.identifier(headers.get(key)))];
     }
-    const body = exec(casesFrom(S), S, new Set(path).add(key));
+    const body = exec(casesFrom(S), S, new Set(path).add(key), stop);
     const label = headers.get(key);
     if (!label) return body;
     // başka bir dalda aynı başlık yeniden üretilirse yeni etiket alsın
@@ -309,13 +336,13 @@ function unflatten(m, S0) {
       t.blockStatement([...body, t.breakStatement(t.identifier(label))])))];
   }
 
-  function exec(list, S, path) {
+  function exec(list, S, path, stop) {
     const out = [];
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
       if (t.isBreakStatement(s) || t.isContinueStatement(s)) {
         if (s.label) fail('etiketli atlama');
-        return out.concat(iterate(S, path));
+        return out.concat(iterate(S, path, stop));
       }
       if (t.isEmptyStatement(s)) continue;
       if (t.isReturnStatement(s) || t.isThrowStatement(s)) {
@@ -341,12 +368,20 @@ function unflatten(m, S0) {
           i = -1;
           continue;
         }
+        if (probe) throw new ProbeStop();
         if (scanState(s.test, m).writes) fail('koşulda durum yazma');
         const test = substitute(s.test, S, m, E);
-        const yes = exec([...branch(s.consequent), ...rest], S.clone(), path);
-        const no = exec([...branch(s.alternate), ...rest], S.clone(), path);
+        const yesList = [...branch(s.consequent), ...rest];
+        const noList = [...branch(s.alternate), ...rest];
+        // iki dalın ilk ortak dispatch anahtarı: orada durum birebir aynı, devamı bir kez yazılır
+        const a = trace(yesList, S, path);
+        const b = trace(noList, S, path);
+        const join = a.keys.find((k) => b.states.has(k) && k !== stop) ?? null;
+        const yes = exec(yesList, S.clone(), path, join ?? stop);
+        const no = exec(noList, S.clone(), path, join ?? stop);
         out.push(t.ifStatement(test, t.blockStatement(yes), no.length ? t.blockStatement(no) : null));
-        return out;
+        if (!join) return out;
+        return out.concat(iterate(a.states.get(join).clone(), path, stop));
       }
       if (t.isVariableDeclaration(s)) {
         if (s.kind !== 'var') fail('case içi let/const');
@@ -361,10 +396,10 @@ function unflatten(m, S0) {
       out.push(substitute(s, S, m, E));
     }
     // switch'in sonuna düşüldü: döngünün bir sonraki turu
-    return out.concat(iterate(S, path));
+    return out.concat(iterate(S, path, stop));
   }
 
-  const result = iterate(S0, new Set());
+  const result = iterate(S0, new Set(), null);
   budget.size = gen(t.blockStatement(result)).length;
   if (budget.size > MAX_OUTPUT) fail('çıktı çok büyük');
   return result;
