@@ -89,21 +89,97 @@ function assignedEmptyFn(binding) {
   const stmt = v.parentPath;
   if (!v.isAssignmentExpression({ operator: '=' }) || !emptyFn(v.node.right) || !stmt.isExpressionStatement() ||
       !Array.isArray(stmt.container) || stmt.parentPath !== binding.path.parentPath.parentPath) return false;
-  // ref, atama deyiminden sonra çalışır: sonraki bir deyimde ya da önceki bir deyimde tek kez atanan bir fonksiyon
-  // ifadesinin (W = function () {…}) içinde ve W'nin her kullanımı da böyle (sınırlı derinlik)
-  const after = (r, depth) => {
-    const top = r.findParent((x) => x.parentPath === stmt.parentPath);
-    if (!top) return false;
-    if (top.key > stmt.key) return !top.isFunctionDeclaration();
-    const e = top.isExpressionStatement() ? top.get('expression') : null;
-    if (depth > 3 || !e?.isAssignmentExpression({ operator: '=' }) || !t.isIdentifier(e.node.left) || !e.get('right').isFunctionExpression() ||
-        !r.findParent((x) => x === e.get('right'))) return false;
-    const wb = e.scope.getBinding(e.node.left.name);
-    return Boolean(wb && wb.constantViolations.length === 1 && wb.constantViolations[0] === e && wb.path.isVariableDeclarator() &&
-      !wb.path.node.init && wb.referencePaths.every((q) => after(q, depth + 1)));
-  };
-  return binding.referencePaths.every((r) => after(r, 0));
+  return binding.referencePaths.every((r) => runsAfter(r, stmt, 0));
 }
+
+// r, stmt deyiminden (bir gövdenin doğrudan deyimi) sonra çalışır: aynı gövdede sonraki bir deyimde, ya da
+// önceki bir deyimde tanımlanan bir fonksiyonun (W = function …; ya da yükseltilen function W) içinde ve W'nin
+// her kullanımı da böyle (sınırlı derinlik)
+// props (isteğe bağlı): ad → { reads, writes, blocked } — S.K.W = function …; biçimindeki tanımlar için ad tabanlı okumalar
+function runsAfter(r, stmt, depth, props = null) {
+  const top = r.findParent((x) => x.parentPath === stmt.parentPath);
+  if (!top) return false;
+  if (top.key > stmt.key && !top.isFunctionDeclaration()) return true;
+  if (depth > 3) return false;
+  let refs = null;
+  if (top.isFunctionDeclaration() && top.node.id) {
+    const wb = top.parentPath.scope.getBinding(top.node.id.name);
+    if (!wb?.constant) return false;
+    refs = wb.referencePaths;
+  } else {
+    const e = top.isExpressionStatement() ? top.get('expression') : null;
+    if (!e?.isAssignmentExpression({ operator: '=' }) || !e.get('right').isFunctionExpression() || !r.findParent((x) => x === e.get('right'))) return false;
+    if (t.isIdentifier(e.node.left)) {
+      const wb = e.scope.getBinding(e.node.left.name);
+      if (!wb || wb.constantViolations.length !== 1 || wb.constantViolations[0] !== e || !wb.path.isVariableDeclarator() || wb.path.node.init) return false;
+      refs = wb.referencePaths;
+    } else if (props && t.isMemberExpression(e.node.left) && !e.node.left.computed) {
+      const info = props.get(e.node.left.property.name);
+      if (!info || info.writes !== 1 || info.blocked) return false;
+      refs = info.reads;
+    } else {
+      return false;
+    }
+  }
+  return refs.every((q) => !q.findParent((x) => x === top) && runsAfter(q, stmt, depth + 1, props));
+}
+
+// "k" in S.K.f  — f adlı özelliğe programda tek yazma var (S.K.f = function () { return; }, bir gövdenin doğrudan
+// deyimi), testler o atamadan sonra çalışıyor; ad başka hiçbir yerde nesne anahtarı, string ya da silme
+// hedefi değil, dinamik adlı yazma yok (unused'un ölü özellik kuralıyla aynı ad tabanlı kabul)
+function emptyPropertyShapes(ast) {
+  const writes = new Map();
+  const reads = new Map();
+  const blocked = new Set();
+  let dynamic = false;
+  traverse(ast, {
+    MemberExpression(p) {
+      if (p.node.computed || p.parentPath.isAssignmentExpression({ left: p.node })) return;
+      const name = p.node.property.name;
+      if (!reads.has(name)) reads.set(name, []);
+      reads.get(name).push(p);
+    },
+    AssignmentExpression(p) {
+      const l = p.node.left;
+      if (!t.isMemberExpression(l)) return;
+      if (l.computed) {
+        if (t.isStringLiteral(l.property)) blocked.add(l.property.value);
+        else if (isDynamicKey(l.property)) { dynamic = true; p.stop(); }
+        return;
+      }
+      const name = l.property.name;
+      if (!writes.has(name)) writes.set(name, []);
+      writes.get(name).push(p);
+    },
+    UpdateExpression(p) { if (t.isMemberExpression(p.node.argument) && !p.node.argument.computed) blocked.add(p.node.argument.property.name); },
+    UnaryExpression(p) {
+      const a = p.node.argument;
+      if (p.node.operator !== 'delete' || !t.isMemberExpression(a)) return;
+      if (!a.computed) blocked.add(a.property.name);
+      else if (t.isStringLiteral(a.property)) blocked.add(a.property.value);
+      else if (isDynamicKey(a.property)) { dynamic = true; p.stop(); }
+    },
+    'ObjectProperty|ObjectMethod|ClassProperty|ClassMethod'(p) { const k = p.node.key; if (t.isIdentifier(k)) blocked.add(k.name); else if (t.isStringLiteral(k)) blocked.add(k.value); },
+    StringLiteral(p) { if (!p.parentPath.isBinaryExpression({ operator: 'in', left: p.node })) blocked.add(p.node.value); },
+  });
+  if (dynamic) return { shapes: new Map(), index: null };
+  const index = new Map();
+  for (const name of new Set([...writes.keys(), ...reads.keys()])) {
+    index.set(name, { reads: reads.get(name) ?? [], writes: writes.get(name)?.length ?? 0, blocked: blocked.has(name) });
+  }
+  const out = new Map();
+  for (const [name, list] of writes) {
+    if (list.length !== 1 || blocked.has(name)) continue;
+    const v = list[0];
+    const stmt = v.parentPath;
+    if (v.node.operator !== '=' || !emptyFn(v.node.right) || !stmt.isExpressionStatement() || !Array.isArray(stmt.container) ||
+        !(stmt.parentPath.isProgram() || (stmt.parentPath.isBlockStatement() && stmt.parentPath.parentPath.isFunction()))) continue;
+    out.set(name, stmt);
+  }
+  return { shapes: out, index };
+}
+const isDynamicKey = (k) => t.isCallExpression(k) || t.isTemplateLiteral(k) || t.isConditionalExpression(k) ||
+  t.isLogicalExpression(k) || (t.isBinaryExpression(k, { operator: '+' }) && !(t.isNumericLiteral(k.left) || t.isNumericLiteral(k.right)));
 function emptyShapeOf(binding) {
   if (!binding) return null;
   const onlyInTests = binding.referencePaths.every((r) => r.parentPath.isBinaryExpression({ operator: 'in', right: r.node }));
@@ -120,10 +196,18 @@ function emptyShapeOf(binding) {
 
 async function foldInTests(ast, { sandbox, ctx }) {
   const jobs = [];
+  let props = null;
   traverse(ast, {
     BinaryExpression(p) {
-      if (p.node.operator !== 'in' || !t.isIdentifier(p.node.right)) return;
-      const make = emptyShapeOf(p.scope.getBinding(p.node.right.name));
+      if (p.node.operator !== 'in') return;
+      let make = null;
+      if (t.isMemberExpression(p.node.right) && !p.node.right.computed) {
+        props ??= emptyPropertyShapes(ast);
+        const stmt = props.shapes.get(p.node.right.property.name);
+        if (stmt && runsAfter(p, stmt, 0, props.index)) make = () => function () {};
+      } else if (t.isIdentifier(p.node.right)) {
+        make = emptyShapeOf(p.scope.getBinding(p.node.right.name));
+      }
       if (!make) return;
       const lit = literalValue(p.node.left);
       if (lit.ok) jobs.push({ p, make, key: lit.value });

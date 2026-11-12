@@ -60,6 +60,17 @@ const flagTest = (test) => (t.isLogicalExpression(test, { operator: '&&' }) && t
 const isFlagTest = (test, param) => t.isBinaryExpression(flagTest(test), { operator: '===' }) &&
   t.isIdentifier(flagTest(test).left, { name: param }) && t.isStringLiteral(flagTest(test).right);
 
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// a.b.c → "a.b.c" (yalnızca hesaplanmamış üyeler)
+function memberPath(n) {
+  if (t.isIdentifier(n)) return n.name;
+  if (t.isMemberExpression(n) && !n.computed && t.isIdentifier(n.property)) {
+    const base = memberPath(n.object);
+    return base && `${base}.${n.property.name}`;
+  }
+  return null;
+}
+
 export function readDispatcher(fnPath) {
   const fn = fnPath.node;
   if (fn.async || fn.generator || fn.params.length < 3) return null;
@@ -76,6 +87,7 @@ export function readDispatcher(fnPath) {
   let lengthHelper = null;
   let clearDirty = false;
   let retOpaque = null;
+  let refOpaque = false;
   for (const s of body) {
     // movedDeclarations: var fns = {…} yerine kullanılmayan bir parametreye atama: P = {…}
     // (ya da CFF açıldıktan sonra başlangıçsız bildirilmiş yerele: let fns; fns = {…})
@@ -83,6 +95,20 @@ export function readDispatcher(fnPath) {
       t.isIdentifier(s.expression.left) && t.isObjectExpression(s.expression.right) &&
       (fn.params.slice(3).some((x) => t.isIdentifier(x, { name: s.expression.left.name }) || (t.isAssignmentPattern(x) && t.isIdentifier(x.left, { name: s.expression.left.name }))) ||
         (() => { const lb = fnPath.scope.getBinding(s.expression.left.name); return lb?.scope === fnPath.scope && lb.path.isVariableDeclarator() && !lb.path.node.init && lb.constantViolations.length === 1; })());
+    // kapsam nesnesi bölünemediyse tablo dispatcher'ın yerel kapsam kökünde: S.K.fns = {…}
+    // (let S = { K: {} }; — her çağrıda taze, yalnızca bu fonksiyonun yereli)
+    const pathFns = !movedFns && !fns && t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression, { operator: '=' }) &&
+      t.isMemberExpression(s.expression.left) && t.isObjectExpression(s.expression.right) && s.expression.right.properties.length > 0 && (() => {
+      const path = memberPath(s.expression.left);
+      const root = path && fnPath.scope.getBinding(path.split('.')[0]);
+      return Boolean(root?.scope === fnPath.scope && root.path.isVariableDeclarator() && t.isObjectExpression(root.path.node.init));
+    })();
+    if (pathFns) {
+      const obj = s.expression.right;
+      if (!obj.properties.every((p) => t.isObjectProperty(p) && strKey(p.key, p.computed) !== null && t.isFunctionExpression(p.value))) return null;
+      fns = new Map(obj.properties.map((p) => [strKey(p.key, p.computed), p.value]));
+      fnsName = memberPath(s.expression.left);
+    }
     if (movedFns) {
       const obj = s.expression.right;
       if (!obj.properties.every((p) => t.isObjectProperty(p) && strKey(p.key, p.computed) !== null && t.isFunctionExpression(p.value))) return null;
@@ -90,7 +116,7 @@ export function readDispatcher(fnPath) {
       fnsName = s.expression.left.name;
     }
     if (t.isVariableDeclaration(s) && s.declarations.length === 1 && t.isObjectExpression(s.declarations[0].init) &&
-        t.isIdentifier(s.declarations[0].id)) {
+        s.declarations[0].init.properties.length && t.isIdentifier(s.declarations[0].id)) {
       const obj = s.declarations[0].init;
       if (!obj.properties.every((p) => t.isObjectProperty(p) && strKey(p.key, p.computed) !== null && t.isFunctionExpression(p.value))) return null;
       fns = new Map(obj.properties.map((p) => [strKey(p.key, p.computed), p.value]));
@@ -108,15 +134,15 @@ export function readDispatcher(fnPath) {
         clearFlag = flagTest(s.test).right.value;
         clearDirty = !cons.slice(0, -1).every((x) => t.isFunctionDeclaration(x));
         payload = clr.expression.left.name;
-      } else if (/\.apply\(this\)/.test(src) && s.alternate) {
+      } else if (s.alternate && fnsName && new RegExp(`=${escapeRe(fnsName)}\\[${escapeRe(nameP.name)}\\]\\(\\)`).test(gen(s.alternate).replace(/\s+/g, ''))) {
         fnFlag = flagTest(s.test).right.value;
+        // fonksiyon üretme dalı CFF makinesinin içinde kalmışsa (.apply(this) görünmüyor) referans çağrıları açılmaz
+        refOpaque = !/\.apply\(this\)/.test(src);
         // createFunction içindeki length ayarlayıcı: helper(fn, fnLength)
         t.traverseFast(s.consequent, (n) => {
           if (t.isCallExpression(n) && t.isIdentifier(n.callee) && n.arguments.length === 2 && t.isIdentifier(n.arguments[0]) &&
               t.isIdentifier(n.arguments[1]) && /length/i.test(n.arguments[1].name)) lengthHelper = n.callee.name;
         });
-        const alt = gen(s.alternate).replace(/\s+/g, '');
-        if (!new RegExp(`=${fnsName}\\[${nameP.name}\\]\\(\\)`).test(alt)) return null;
       }
     } else if (isFlagTest(s.test, retP.name) && cons.length === 1 && t.isReturnStatement(cons[0]) &&
         t.isObjectExpression(cons[0].argument) && cons[0].argument.properties.length === 1) {
@@ -133,13 +159,15 @@ export function readDispatcher(fnPath) {
       isFlagTest(last.argument.test, retP.name) && t.isObjectExpression(last.argument.consequent) &&
       last.argument.consequent.properties.length === 1 && t.isObjectProperty(last.argument.consequent.properties[0])) {
     const prop = last.argument.consequent.properties[0];
-    if (t.isIdentifier(last.argument.alternate) && t.isIdentifier(prop.value, { name: last.argument.alternate.name })) {
+    // dönen değer her iki kolda aynı ifade (yerel ad ya da kapsam yolu)
+    const v = last.argument.alternate;
+    if ((t.isIdentifier(v) || memberPath(v)) && gen(prop.value) === gen(v)) {
       retFlag = flagTest(last.argument.test).right.value;
       retKey = strKey(prop.key, prop.computed);
     }
   }
   if (!fns || fnFlag === null || !payload) return null;
-  return { fns, fnsName, clearFlag, clearDirty, fnFlag, retFlag, retKey, retOpaque, payload, lengthHelper, params: fn.params.length };
+  return { fns, fnsName, clearFlag, clearDirty, fnFlag, retFlag, retKey, retOpaque, refOpaque, payload, lengthHelper, params: fn.params.length };
 }
 
 // fns girdisi: function () { var [a, b] = payload; ... }  → { params, body } (yoksa null)
@@ -225,8 +253,21 @@ function dispatchers(ast, onLog) {
       const entries = new Map();
       const byNode = new Map([...d.fns].map(([k, v]) => [v, k]));
       // fns yalnızca fns[name]() ve fns[name].apply(this) ile kullanılıyorsa girdiler hep argümansız çağrılır
-      const fb = p.scope.getBinding(d.fnsName);
-      const zeroArgs = Boolean(fb) && fb.referencePaths.every((r) => {
+      // (tablo kapsam yolundaysa: S.K.fns'in bütün okumaları)
+      const fb = d.fnsName.includes('.') ? null : p.scope.getBinding(d.fnsName);
+      const fnsRefs = [];
+      if (fb) fnsRefs.push(...fb.referencePaths);
+      else {
+        p.traverse({
+          MemberExpression(q) {
+            if (memberPath(q.node) !== d.fnsName) return;
+            if (q.parentPath.isAssignmentExpression({ left: q.node }) && q.parentPath.parentPath.isExpressionStatement()) return;
+            fnsRefs.push(q);
+            q.skip();
+          },
+        });
+      }
+      const zeroArgs = (Boolean(fb) || d.fnsName.includes('.')) && fnsRefs.every((r) => {
         const m = r.parentPath;
         if (!m.isMemberExpression({ object: r.node, computed: true })) return false;
         const c = m.parentPath;
@@ -264,7 +305,7 @@ function dispatchers(ast, onLog) {
         const flag = t.isStringLiteral(args[1]) ? args[1].value : undefined;
         const ret = t.isStringLiteral(args[2]) ? args[2].value : undefined;
         const mode = flag === d.fnFlag ? 'ref' : 'call';
-        if ((flag !== undefined && flag === d.clearFlag && d.clearDirty) || (ret !== undefined && ret === d.retOpaque)) continue;
+        if ((flag !== undefined && flag === d.clearFlag && d.clearDirty) || (ret !== undefined && ret === d.retOpaque) || (mode === 'ref' && d.refOpaque)) continue;
         let target = c;
         if (ret !== undefined && ret === d.retFlag) {
           const m = c.parentPath;

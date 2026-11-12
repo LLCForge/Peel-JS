@@ -13,6 +13,8 @@ import { traverse, generate } from '../util/ast.js';
 const isExit = (s) => t.isReturnStatement(s) || t.isThrowStatement(s);
 const code = (n) => generate(n, { compact: true, comments: false }).code;
 const sameCode = (a, b) => a.length === b.length && a.every((x, i) => code(x) === code(b[i]));
+// let/const/class/function bildirimleri blok kapsamı nedeniyle bloklar arasında taşınmaz
+const lexical = (x) => t.isClassDeclaration(x) || t.isFunctionDeclaration(x) || (t.isVariableDeclaration(x) && x.kind !== 'var');
 function mergeTails(list) {
   let n = 0;
   for (let i = 0; i < list.length - 1; i++) {
@@ -20,11 +22,22 @@ function mergeTails(list) {
     if (!t.isIfStatement(s) || s.alternate || !t.isBlockStatement(s.consequent)) continue;
     const tail = list.slice(i + 1);
     const cons = s.consequent.body;
-    if (!isExit(tail[tail.length - 1]) || cons.length < tail.length) continue;
-    // let/const/class/function bildirimleri blok kapsamı nedeniyle taşınmaz
-    if (tail.some((x) => t.isClassDeclaration(x) || t.isFunctionDeclaration(x) || (t.isVariableDeclaration(x) && x.kind !== 'var'))) continue;
-    if (!sameCode(cons.slice(cons.length - tail.length), tail)) continue;
-    cons.splice(cons.length - tail.length, tail.length);
+    if (!isExit(tail[tail.length - 1]) || tail.some(lexical)) continue;
+    if (cons.length >= tail.length && sameCode(cons.slice(cons.length - tail.length), tail)) {
+      cons.splice(cons.length - tail.length, tail.length);
+      n++;
+      continue;
+    }
+    // ortak sonek kuyruğun yalnızca bir kısmıysa: if (c) { A; S } B; S  → if (c) { A } else { B } S
+    // (dal S'nin çıkışıyla bittiği için B yalnızca !c iken çalışıyordu)
+    let k = 0;
+    while (k < tail.length - 1 && k < cons.length && sameCode([cons[cons.length - 1 - k]], [tail[tail.length - 1 - k]])) k++;
+    if (!k) continue;
+    const a = cons.slice(0, cons.length - k);
+    if (a.some(lexical)) continue;
+    s.consequent.body = a;
+    s.alternate = t.blockStatement(tail.slice(0, tail.length - k));
+    list.splice(i + 1, tail.length - k);
     n++;
   }
   return n;

@@ -251,6 +251,16 @@ function collectGroups(ast) {
   return [...byBinding, ...byPath].map((g, id) => Object.assign(g, { id }));
 }
 
+// Yakalanan fonksiyon metni js-confuser dispatcher'ı mı (yalnızca ayrıştırılır)?
+function isDispatcherSource(src) {
+  if (src.length > 2_000_000) return false;
+  let ast;
+  try { ast = parse(`(${src})`); } catch { return false; }
+  let found = false;
+  traverse(ast, { Function(p) { found = Boolean(readDispatcher(p)); p.stop(); } });
+  return found;
+}
+
 // Fonksiyon metni (programdan yakalanan) dışarıya yazmıyor ve iç içe fonksiyon/çağrı içermiyor mu?
 // Yalnızca ayrıştırılır; çağrı, new, iç fonksiyon, delete, yield/await varsa saf sayılmaz.
 function pureSource(src) {
@@ -458,6 +468,10 @@ async function resolveCalls(ast, ctx) {
       // yol grubu: gövdesi string çözüyorsa ya da sayısal literal argümanla en az MIN_CALLS kez çağrılıyorsa
       // (js-confuser decoder'ı CFF sarmalayıcısının arkasında olabilir, kaynağı ipucu vermez)
       if (g.memberPath) {
+        // kapsam yolundaki dispatcher (yakalanan metni ayrıştırılıp tanınır) decoder değildir
+        const ds = await sandbox.batchIn(opened.token, [`__peelSrcOf(${g.id})`]);
+        const dsrc = ds.ok && ds.results[0]?.type === 'string' ? ds.results[0].value : null;
+        if (dsrc !== null && isDispatcherSource(dsrc)) continue;
         const numeric = g.calls.filter((c) => c.node.arguments.some((a) => isIndexLit(literalValue(a).value))).length;
         // eşik altındaki gruplar: her çağrı string vermeli ve değerlendirmede yan etki gözlenmemeli (aşağıda)
         g.strict = numeric < MIN_CALLS && (await sandbox.batchIn(opened.token, [`__peelSrcOk(${g.id})`])).results?.[0]?.value !== true;
@@ -481,11 +495,16 @@ async function resolveCalls(ast, ctx) {
         const v = r.results[i];
         if (v?.ok && v.type === 'string') values.set(args, v.value);
       });
-      if (values.size < unique.length * MIN_STRING_RATIO) continue;
+      if (!g.globalsOnly && values.size < unique.length * MIN_STRING_RATIO) continue;
       if (g.strict) {
         const imp = await sandbox.batchIn(opened.token, [`__peelImpure[${g.id}] === true`]);
-        if (values.size < unique.length || !imp.ok || imp.results[0]?.value !== false) continue;
-        if (g.globalsOnly && [...values.values()].some((v) => !v.startsWith('\u0000global:'))) continue;
+        // (global getter'ında çözülemeyen adlar yerinde kalır; diğer gruplarda her çağrı çözülmeli)
+        if ((!g.globalsOnly && values.size < unique.length) || !imp.ok || imp.results[0]?.value !== false) continue;
+        // global getter'ı: yalnızca global nesneye çözülen çağrılar değiştirilir
+        if (g.globalsOnly) {
+          for (const [k, v] of values) if (!v.startsWith('\u0000global:')) values.delete(k);
+          if (!values.size) continue;
+        }
       }
       decoders.add(g);
 

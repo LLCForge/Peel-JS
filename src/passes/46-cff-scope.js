@@ -342,8 +342,8 @@ function splitScopes(ast) {
           n += aliased;
           continue; // bağlar bayat: bölme bir sonraki turda
         }
-        if (unknownKey) continue;
-        // taze nesneler: root.K.x → x
+        // taze nesneler: root.K.x → x (anahtar başına: root.K değer olarak geçiyorsa — makine kopyasına
+        // { K: root.K } — ya da bilinmeyen anahtarsa o anahtar yerinde kalır, diğerleri bölünür)
         const names = new Map();
         const taken = new Set();
         const fnPath = b.scope.path;
@@ -354,39 +354,51 @@ function splitScopes(ast) {
           taken.add(v);
           return v;
         };
-        const edits = [];
+        const escaping = new Set();
+        const cand = [];
         for (const u of uses) {
+          if (!props.get(u.k)?.fresh) { escaping.add(u.k); continue; }
           const outer = u.m.parentPath;
           const k2 = outer.isMemberExpression({ object: u.m.node }) ? keyOf(outer.node) : null;
-          // Object.prototype'tan gelen ad ilk okumada undefined değildir
-          if (k2 === null || k2 in Object.prototype) { ok = false; break; }
           const par = outer.parentPath;
-          if (par.isUnaryExpression({ operator: 'delete' }) || par.isForXStatement({ left: outer.node })) { ok = false; break; }
-          if (par.isBinaryExpression({ operator: 'in', right: u.m.node })) { ok = false; break; }
-          const id = `${u.k}\u0000${k2}`;
-          if (!names.has(id)) names.set(id, { name: fresh(k2), calls: [], writes: [] });
-          const rec = names.get(id);
-          if (par.isCallExpression({ callee: outer.node })) rec.calls.push(par);
-          if (par.isAssignmentExpression({ left: outer.node })) rec.writes.push(par.node.right);
-          edits.push({ outer, rec });
+          // Object.prototype'tan gelen ad ilk okumada undefined değildir
+          if (k2 === null || k2 in Object.prototype || par.isUnaryExpression({ operator: 'delete' }) || par.isForXStatement({ left: outer.node }) ||
+              par.isBinaryExpression({ operator: 'in', right: u.m.node })) { escaping.add(u.k); continue; }
+          cand.push({ k: u.k, k2, outer, par });
         }
-        if (!ok) continue;
         // üye çağrısında this kapsam nesnesiydi: atanan her değer this kullanmayan fonksiyon olmalı
-        for (const rec of names.values()) {
-          if (!rec.calls.length) continue;
-          if (!rec.writes.length || !rec.writes.every((w) => (t.isFunctionExpression(w) && !usesThisOrArguments(w)) || t.isArrowFunctionExpression(w))) { ok = false; break; }
+        const thisOk = (list) => {
+          const calls = list.filter((c) => c.par.isCallExpression({ callee: c.outer.node }));
+          if (!calls.length) return true;
+          const writes = list.filter((c) => c.par.isAssignmentExpression({ left: c.outer.node })).map((c) => c.par.node.right);
+          return writes.length > 0 && writes.every((w) => (t.isFunctionExpression(w) && !usesThisOrArguments(w)) || t.isArrowFunctionExpression(w));
+        };
+        const byId = new Map();
+        for (const c of cand) {
+          const id = `${c.k}\u0000${c.k2}`;
+          if (!byId.has(id)) byId.set(id, []);
+          byId.get(id).push(c);
         }
-        if (!ok) continue;
+        for (const [id, list] of byId) if (!thisOk(list)) escaping.add(id.split('\u0000')[0]);
+        const edits = [];
+        for (const [id, list] of byId) {
+          const [k, k2] = id.split('\u0000');
+          if (escaping.has(k)) continue;
+          const rec = { name: fresh(k2) };
+          names.set(id, rec);
+          for (const c of list) edits.push({ outer: c.outer, rec });
+        }
+        if (!edits.length && !lazy.some((l) => !escaping.has(l.k))) continue;
         for (const e of edits) e.outer.replaceWith(t.identifier(e.rec.name));
-        for (const { stmt, k } of lazy) {
+        for (const { stmt, k } of lazy.filter((l) => !escaping.has(l.k))) {
           const reset = [...names].filter(([id]) => id.startsWith(`${k}\u0000`)).map(([, r]) => r.name);
           if (!reset.length) { stmt.remove(); continue; }
           stmt.replaceWith(t.expressionStatement(reset.reduceRight((acc, nm) => t.assignmentExpression('=', t.identifier(nm), acc), t.identifier('undefined'))));
         }
-        n += lazy.length;
+        n += lazy.filter((l) => !escaping.has(l.k)).length;
         const body = fnPath.isFunction() ? fnPath.get('body') : fnPath;
         if (!body.isBlockStatement() && !body.isProgram()) continue;
-        body.unshiftContainer('body', t.variableDeclaration('var', [...names.values()].map((r) => t.variableDeclarator(t.identifier(r.name)))));
+        if (names.size) body.unshiftContainer('body', t.variableDeclaration('var', [...names.values()].map((r) => t.variableDeclarator(t.identifier(r.name)))));
         // kök artık kullanılmıyor: bildirim/varsayılan kalır, unused/dead-extra temizler
         n += edits.length;
       }

@@ -106,6 +106,10 @@ function extractable(w, fp) {
     if (s.isFunctionDeclaration() || s.isClassDeclaration() || s.isLabeledStatement()) return false;
     if (s.isVariableDeclaration({ kind: 'var' })) return false;
     if (s.isReturnStatement() || s.isBreakStatement() || s.isContinueStatement()) return false;
+    // fonksiyon tanımlayan atama (x = function …): tanımı yardımcının içine saklamak okunurluğu düşürür ve henüz
+    // açılmamış yapıları (js-confuser kapsam deposu, decoder kurulumu) sonraki çözme turlarından gizler
+    if (s.isExpressionStatement() && t.isAssignmentExpression(s.node.expression) &&
+        (t.isFunction(s.node.expression.right) || t.isAssignmentExpression(s.node.expression.right))) return false;
     s.traverse({
       Function(q) { if (!q.isArrowFunctionExpression()) q.skip(); },
       // ok fonksiyonu kendi return/await'ine sahiptir ama this/arguments/super'i dış fonksiyondan alır
