@@ -33,7 +33,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js && node test/engine.test.js",
+    "test": "node test/run.js && node test/all.js",
     "bench": "node test/bench.js"
   },
   "dependencies": {
@@ -41,8 +41,15 @@
     "@babel/parser": "^7.26.0",
     "@babel/traverse": "^7.26.0",
     "@babel/types": "^7.26.0",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-javascript": "6.2.5",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/search": "6.7.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@lezer/highlight": "1.2.5",
     "prettier": "^3.4.0",
     "quickjs-emscripten": "^0.31.0"
   },

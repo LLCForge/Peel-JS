@@ -17,6 +17,8 @@ const DEEP_MAX_LEN = 1_000_000; // QuickJS'te 1 MB'lık programı çalıştırma
 export async function deobfuscate(input, {
   level = 2, only = null, sandbox = null, deep = false, signal = null,
   onLog = () => {}, onProgress = () => {}, onPass = () => {}, onSnapshot = () => {},
+  // order: pass kimliklerinin kullanıcı sırası; onLayer: değişen metin katmanı; onApprove: her kabulden önce onay (false → reddet)
+  order = null, onLayer = () => {}, onApprove = null,
 } = {}) {
   const stats = {};
   const bump = (k, n = 1) => { if (n) stats[k] = (stats[k] || 0) + n; };
@@ -24,6 +26,10 @@ export async function deobfuscate(input, {
 
   let enabled = PASSES.filter((p) => (only ? only.includes(p.id) : p.level <= level));
   if (!sandbox) enabled = enabled.filter((p) => p.needs !== 'sandbox');
+  if (order) {
+    const rank = (id) => { const i = order.indexOf(id); return i < 0 ? order.length + PASSES.findIndex((p) => p.id === id) : i; };
+    enabled = [...enabled].sort((a, b) => rank(a.id) - rank(b.id));
+  }
   const textPasses = enabled.filter((p) => p.kind === 'text');
   const astPasses = enabled.filter((p) => p.kind === 'ast');
 
@@ -54,6 +60,7 @@ export async function deobfuscate(input, {
       if (typeof next === 'string' && next !== text) {
         text = next;
         pass(p.id, 'ok');
+        onLayer({ id: p.id, code: text });
       } else {
         pass(p.id, 'skip');
       }
@@ -143,6 +150,12 @@ export async function deobfuscate(input, {
             tick();
             continue;
           }
+        }
+        if (onApprove && !(await onApprove({ id: p.id, round, before: code, after: v.code }))) {
+          checkAbort();
+          pass(p.id, 'skip', 'reddedildi');
+          tick();
+          continue;
         }
         code = v.code;
         changed = true;
