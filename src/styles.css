@@ -314,7 +314,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
 #main[data-layout="3"] { grid-template-columns: minmax(0, calc((100% - var(--tools)) * var(--split-f, .5))) 1px minmax(0, 1fr) 1px minmax(260px, var(--tools)); grid-template-areas: "in d1 out d2 t1"; }
 #main[data-layout="4"] {
   grid-template-columns: minmax(0, var(--split)) 1px minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) 1px minmax(240px, var(--tools));
+  grid-template-rows: minmax(0, 1fr) 1px minmax(300px, var(--tools));
   grid-template-areas: "in d1 out" "d2 d2 d2" "t1 t1 t2";
 }
 #main[data-layout="4"] .pane-tools + .pane-tools { border-inline-start: 1px solid var(--line); }
@@ -386,6 +386,8 @@ button:active:not(:disabled) { transform: translateY(1px); }
 }
 
 /* ── editör (CodeMirror) ───────────────────── */
+/* sağdan sola arayüzde de kod soldan sağa okunur */
+.cm-editor, .diff-rows, .diff-box, .results, .ast-tree, .crumbs, .graph-list, .graph-tip, .pass-id, .mono, .chart { direction: ltr; unicode-bidi: isolate; }
 .cm-editor { touch-action: pan-x pan-y; }
 .cm-editor.cm-focused { outline: none; }
 .editor-host:focus-within { box-shadow: inset 0 0 0 1px var(--accent-soft); }
@@ -402,7 +404,8 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .cm-highlightTab { background-image: linear-gradient(to right, transparent 60%, var(--faint) 60%, var(--faint) 66%, transparent 66%); background-size: auto 2px; background-position: left 55%; background-repeat: no-repeat; }
 .cm-hit { background: var(--hit); outline: 1px solid var(--accent-line); border-radius: 2px; }
 .cm-map { background: var(--hit-strong); border-radius: 2px; }
-.cm-map-approx { background: var(--hit); border-bottom: 1px dashed var(--accent-line); }
+.cm-map-approx { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.cm-map-line { background: var(--hit) !important; box-shadow: inset 3px 0 0 var(--accent); }
 .cm-flash { background: var(--hit-strong); border-radius: 2px; animation: flash 1.4s var(--ease) forwards; }
 @keyframes flash { 0% { background: var(--hit-strong); } 100% { background: transparent; } }
 .cm-scope-0 { color: var(--scope-0) !important; } .cm-scope-1 { color: var(--scope-1) !important; }
@@ -581,7 +584,7 @@ select.field { cursor: pointer; }
 .graph-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 6px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .graph-bar .field[type="search"] { width: 120px; }
 .graph-sep { width: 1px; height: 18px; background: var(--line); }
-.graph-stage { position: relative; flex: 1; min-height: 200px; }
+.graph-stage { position: relative; flex: 1; min-height: 120px; }
 .graph-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; display: block; }
 .graph-canvas:active { cursor: grabbing; }
 .graph-canvas:focus-visible { outline-offset: -2px; }
@@ -733,6 +736,9 @@ body.focus-mode .pane-in, body.focus-mode .pane-out { grid-area: only; }
   #main[data-mobile="in"] > .pane-in, #main[data-mobile="out"] > .pane-out, #main[data-mobile="tools"] > #pane-tools-1 { display: flex !important; }
   .pane-tools { border: 0; }
   .ph { padding-inline: 10px 4px; touch-action: pan-y; }
+  .pane-out > .ph { flex-wrap: wrap; row-gap: 0; }
+  .pane-out > .ph .tabs { flex: 1 0 100%; min-height: 38px; margin-inline-start: -10px; }
+  .pane-out > .ph .count { display: none; }
   .ph-actions .tiny { padding: 6px 7px; }
   .cm-editor.has-minimap .cm-scroller { margin-inline-end: 0; }
   .cm-minimap { display: none; }

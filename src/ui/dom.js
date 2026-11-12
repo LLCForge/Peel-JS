@@ -64,7 +64,7 @@ export function modal(title, build, { wide = false, className = '' } = {}) {
     dlg.addEventListener('click', (e) => { if (e.target === dlg) close(undefined); });
     document.body.appendChild(dlg);
     dlg.showModal();
-    const first = dlg.querySelector('[autofocus], input, select, textarea, button:not(.dlg-x)');
+    const first = dlg.querySelector('[autofocus]') ?? dlg.querySelector('input, select, textarea, button:not(.dlg-x)');
     first?.focus();
   });
 }

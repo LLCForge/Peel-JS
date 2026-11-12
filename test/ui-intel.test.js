@@ -245,4 +245,24 @@ if (false) { dead(); }`;
   assert.throws(() => harScripts({}));
 }
 
+// ── ayar ve oturum doğrulaması (güvenilmez JSON) ──
+{
+  const { sanitize, DEFAULTS } = await import('../src/ui/settings.js');
+  const { sanitizeSession } = await import('../src/ui/store.js');
+  const s = sanitize({ theme: 'evil', fontSize: 999, layout: 4, format: { printWidth: 'x', trailingComma: 'es5' }, keymap: { run: 'Ctrl+R', bad: { x: 1 } }, approvedHosts: ['cdn.test', 'bad host/'] });
+  assert.equal(s.theme, DEFAULTS.theme);
+  assert.equal(s.fontSize, 32);
+  assert.equal(s.layout, 4);
+  assert.equal(s.format.printWidth, DEFAULTS.format.printWidth);
+  assert.equal(s.format.trailingComma, 'es5');
+  assert.deepEqual(s.keymap, { run: 'Ctrl+R' });
+  assert.deepEqual(s.approvedHosts, ['cdn.test']);
+  const sess = sanitizeSession({ active: 'x', groups: [{ id: 'g1', name: 'G', color: 'red' }], docs: [{ id: 'd1', name: 'a.js', input: 'a()', group: 'g1', marks: { in: { bookmarks: [3, -1, 'x'], notes: [{ line: 2, text: 'n' }, { line: 0, text: 'bad' }] } } }, { name: 'no-id' }] });
+  assert.equal(sess.docs.length, 1);
+  assert.equal(sess.active, 'd1');
+  assert.equal(sess.groups[0].color, '#f7df1e');
+  assert.deepEqual(sess.docs[0].marks.in, { bookmarks: [3], notes: [{ line: 2, text: 'n' }] });
+  assert.throws(() => sanitizeSession({ docs: 'x' }));
+}
+
 console.log('ui-intel: ok');

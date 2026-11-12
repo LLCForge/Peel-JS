@@ -622,15 +622,18 @@ function showInInput(explicit = true) {
   const sel = edOut.selection;
   const m = mapOffset(map, sel.from, 'out');
   if (!m) return;
-  edIn.setLayer('map', [{ from: m.from, to: Math.max(m.to, m.from + 1), cls: m.exact ? 'cm-map' : 'cm-map-approx' }]);
-  edIn.view.dispatch({ effects: EditorView.scrollIntoView(m.from, { y: 'center' }) });
-  if (explicit) jump('in', m.from, m.to, { flash: true });
+  // tam eşleşme: token vurgulanır; yaklaşık: çapalar arası bölge soluk, tahmini satır belirgin
+  edIn.setLayer('map', m.exact
+    ? [{ from: m.from, to: Math.max(m.to, m.from + 1), cls: 'cm-map' }]
+    : [{ from: m.from, to: Math.max(m.to, m.from + 1), cls: 'cm-map-approx' }, { from: m.point, to: m.point, line: true, cls: 'cm-map-line' }]);
+  edIn.view.dispatch({ effects: EditorView.scrollIntoView(m.point, { y: 'center' }) });
+  if (explicit) jump('in', m.exact ? m.from : m.point, m.exact ? m.to : m.point, { flash: m.exact });
 }
 function showInOutput() {
   const map = getMap();
   if (!map) { setStatus('status.noMap', {}, 'err'); return; }
   const m = mapOffset(map, edIn.cursor, 'in');
-  if (m) jump('out', m.from, m.to, { flash: true });
+  if (m) jump('out', m.exact ? m.from : m.point, m.exact ? m.to : m.point, { flash: m.exact });
 }
 
 // Senkron kaydırma (117): eşleme varsa çapa üzerinden, yoksa orantılı
@@ -643,7 +646,7 @@ function syncScroll(from) {
   const map = getMap();
   if (map) {
     const m = mapOffset(map, a.topPos(), from === 'out' ? 'out' : 'in');
-    if (m) b.scrollToPos(m.from);
+    if (m) b.scrollToPos(m.point);
   } else {
     const s = a.scrollDOM;
     const frac = s.scrollTop / Math.max(1, s.scrollHeight - s.clientHeight);

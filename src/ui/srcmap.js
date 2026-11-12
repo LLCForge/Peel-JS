@@ -21,14 +21,17 @@ export function tokenize(code) {
 function keyed(tokens) {
   const out = [];
   let prevDot = false;
-  for (const tk of tokens) {
-    const label = typeof tk.type === 'object' ? tk.type.label : tk.type;
+  const labelOf = (tk) => (tk ? (typeof tk.type === 'object' ? tk.type.label : tk.type) : null);
+  for (let i = 0; i < tokens.length; i++) {
+    const tk = tokens[i];
+    const label = labelOf(tk);
     let key = null;
     if (label === 'string') key = `s:${tk.value}`;
     else if (label === 'num' || label === 'bigint') key = `n:${tk.value}`;
     else if (label === 'template') key = tk.value ? `t:${tk.value}` : null;
     else if (label === 'regexp') key = `r:${tk.value?.pattern}/${tk.value?.flags}`;
-    else if (label === 'name') key = prevDot ? `s:${tk.value}` : `i:${tk.value}`;
+    // `a.b`, `a["b"]` ve `{ b: 1 }` / `{ "b": 1 }` aynı özellik çapasını üretir
+    else if (label === 'name') key = prevDot || labelOf(tokens[i + 1]) === ':' ? `s:${tk.value}` : `i:${tk.value}`;
     else if (tk.type?.keyword) key = `k:${label}`;
     prevDot = label === '.' || label === '?.';
     if (key !== null) out.push({ key, start: tk.start, end: tk.end });
@@ -130,8 +133,14 @@ export function mapOffset(map, offset, dir = 'out') {
     const mid = (lo + hi) >> 1;
     if (src[mid][0] <= offset) { k = mid; lo = mid + 1; } else hi = mid - 1;
   }
-  if (k >= 0 && offset <= src[k][1]) return { from: dst[k][0], to: dst[k][1], exact: true };
+  if (k >= 0 && offset <= src[k][1]) return { from: dst[k][0], to: dst[k][1], exact: true, point: dst[k][0] };
   const from = k >= 0 ? dst[k][1] : 0;
   const to = k + 1 < dst.length ? dst[k + 1][0] : dstLen;
-  return { from: Math.min(from, to), to: Math.max(from, to), exact: false };
+  // çapasız bölgede konum, iki çapa arasındaki oranla karşı bölgeye taşınır (yaklaşık nokta)
+  const s0 = k >= 0 ? src[k][1] : 0;
+  const s1 = k + 1 < src.length ? src[k + 1][0] : (dir === 'out' ? map.outLen : map.inLen);
+  const f = s1 > s0 ? Math.max(0, Math.min(1, (offset - s0) / (s1 - s0))) : 0;
+  const a = Math.min(from, to);
+  const b = Math.max(from, to);
+  return { from: a, to: b, exact: false, point: Math.round(a + f * (b - a)) };
 }

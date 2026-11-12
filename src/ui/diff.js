@@ -57,6 +57,9 @@ export function diffStats(rows) {
 
 /** Yalnızca değişen satırlar ve çevresindeki `context` satır (adım onayı ve önizleme için) */
 export function compactDiff(rows, context = 2) {
+  // özgün satır numaraları korunur: [tür, metin, satırNo]
+  let ln = 0;
+  rows = rows.map(([k, x]) => [k, x, k === 'del' ? 0 : ++ln]);
   const keep = new Uint8Array(rows.length);
   rows.forEach(([k], i) => {
     if (k === 'same') return;
@@ -80,7 +83,7 @@ export function renderRows(el, rows) {
   el.appendChild(host);
   const lineNo = new Int32Array(rows.length);
   let ln = 1;
-  rows.forEach(([k], i) => { lineNo[i] = k === 'del' || k === 'gap' ? 0 : ln++; });
+  rows.forEach(([k, , n], i) => { lineNo[i] = n ?? (k === 'del' || k === 'gap' ? 0 : ln++); });
   let first = -1;
   let last = -1;
   const draw = () => {
