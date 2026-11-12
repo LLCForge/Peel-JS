@@ -1,13 +1,15 @@
 // İstatistik/kripto analiz yardımcıları: node test/stats.test.js
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   shannon, entropyVerdict, compressionRatio, compressionEstimate, charDistribution, ecbRepeats, randomnessTests,
   indexOfCoincidence, kasiski, xorByCorrelation, knownPlaintextXor, bruteForceSmall, affineBrute, detectLanguage, entropyWindows,
 } from '../src/core/stats.js';
 
 const english = 'the quick brown fox jumps over the lazy dog while the server sends stolen cookies to the remote collector every night. '.repeat(3);
-const rnd = randomBytes(2048);
+// deterministik rastgele görünümlü veri (SHA-256 sayaç modu): randomBytes ile 256 baytlık pencerelerin ~%1'i
+// tesadüfen 7 bit eşiğinin altına düşüyordu (kararsız test)
+const rnd = Buffer.concat(Array.from({ length: 64 }, (_, i) => createHash('sha256').update(`peel-${i}`).digest()));
 
 // E617/E618
 assert.equal(shannon('aaaa'), 0);

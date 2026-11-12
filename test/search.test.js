@@ -56,7 +56,8 @@ const at = regionSrc.indexOf('fromCharCode');
 const reg = await deobfuscateRegion(regionSrc, at, at + 5, { sandbox });
 assert.equal(reg.ok, true, reg.reason);
 assert.ok(reg.code.includes('function untouched() { return "\\x61\\x62"; }'), 'bölge dışı aynen kalmalı');
-assert.ok(reg.after.includes('"hello"'));
+// "hello" + _0xkey: okunabilirlik aşaması (modern-syntax) şablon string'e çevirir
+assert.ok(reg.after.includes('`hello${_0xkey}`'), reg.after);
 assert.ok(!reg.after.includes('peel:region'));
 // program seviyesi seçim: decoder ve tablo seçim dışında, bölge tüm programın bağlamıyla çözülür
 const prog = [
