@@ -3,7 +3,7 @@ import { parse as babelParse } from '@babel/parser';
 const PLUGINS = [
   'dynamicImport', 'classProperties', 'classPrivateProperties', 'classPrivateMethods',
   'optionalChaining', 'nullishCoalescingOperator', 'topLevelAwait', 'importMeta',
-  'numericSeparator', 'logicalAssignment',
+  'numericSeparator', 'logicalAssignment', 'decorators',
 ];
 
 // Önce script, olmazsa module olarak dene. Hata kurtarmalı AST'yi kabul etmiyoruz:
