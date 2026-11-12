@@ -378,3 +378,52 @@ export function detectLanguage(text) {
   const [lang, sc] = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
   return { natural, script, lang: natural && sc > 0 ? lang : null, confidence: Number(Math.min(1, sc * 3).toFixed(2)) };
 }
+
+// --- Rapor: gömülü veri blokları ve kodun genel istatistikleri ---
+const b64ToBytes = (s) => {
+  const t = s.replace(/-/g, '+').replace(/_/g, '/');
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(t) || t.length % 4 === 1) return null;
+  try { return Uint8Array.from(atob(t.padEnd(Math.ceil(t.length / 4) * 4, '=')), (c) => c.charCodeAt(0)); } catch { return null; }
+};
+const hexToBytes = (s) => (/^(?:[0-9a-f]{2})+$/i.test(s) ? Uint8Array.from(s.match(/../g), (h) => parseInt(h, 16)) : null);
+const hexKey = (k) => k.map((x) => x.toString(16).padStart(2, '0')).join('');
+
+export async function blobReport(strings, code = '') {
+  const rows = [];
+  for (const s of strings) {
+    if (s.length < 24 || s.length > 65536 || rows.length >= 20) continue;
+    const textVerdict = entropyVerdict(s);
+    if (textVerdict.verdict === 'text') continue;
+    const bytes = hexToBytes(s) ?? b64ToBytes(s);
+    const row = { value: s.slice(0, 80), length: s.length, string: textVerdict, distribution: charDistribution(s) };
+    if (bytes && bytes.length >= 16) {
+      row.bytes = entropyVerdict(bytes);
+      row.compression = await compressionRatio(bytes);
+      row.ecb = [ecbRepeats(bytes, 16), ecbRepeats(bytes, 8)].find((e) => e.ecbLikely) ?? null;
+      row.randomness = randomnessTests(bytes);
+      row.ioc = indexOfCoincidence(bytes, false);
+      row.kasiski = kasiski(bytes).candidates.slice(0, 3);
+      // anahtar kurtarma yalnızca rastgele görünmeyen (zayıf şifreli) bloklarda anlamlı
+      if (!row.randomness?.looksRandom || row.bytes.entropy < 7) {
+        const kp = knownPlaintextXor(bytes);
+        const corr = kp ? null : xorByCorrelation(bytes);
+        const brute = kp || (corr && corr.score > 2) ? [] : bruteForceSmall(bytes);
+        const best = kp ? { method: `bilinen düz metin (${kp.crib})`, key: hexKey(kp.key), text: kp.text }
+          : corr && corr.score > 2 ? { method: `XOR korelasyonu (${corr.key.length} bayt)`, key: hexKey(corr.key), text: corr.text }
+            : brute[0] ? { method: `kaba kuvvet ${brute[0].method}`, key: String(brute[0].key), text: brute[0].text } : null;
+        if (best) row.recovered = { ...best, language: detectLanguage(best.text) };
+      }
+    } else {
+      row.ioc = indexOfCoincidence(s);
+      row.kasiski = kasiski(s).candidates.slice(0, 3);
+      row.language = detectLanguage(s);
+      if (row.ioc > 0.03 && row.ioc < 0.05) row.affine = affineBrute(s);
+    }
+    rows.push(row);
+  }
+  const sample = code.slice(0, 200000);
+  return {
+    code: sample ? { entropy: entropyVerdict(sample), distribution: charDistribution(sample), compression: await compressionRatio(sample) } : null,
+    blobs: rows,
+  };
+}

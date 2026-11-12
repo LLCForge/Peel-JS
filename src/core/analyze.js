@@ -4,6 +4,10 @@ import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
 import { encodingReport } from './encodings.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
+import { detectTools, autoProfile, recoverConfig, detectVersions, decoderChains, passConfidence } from './detect.js';
+import { cryptoScan } from './cryptoscan.js';
+import { blobReport } from './stats.js';
+import { securityRuntime } from '../security/runtime.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
 // fingerprint okumaları ve kalite metrikleri. Statik kısım AST'den, dinamik kısım sandbox'tan gelir.
@@ -171,7 +175,7 @@ async function runtimeScan(sandbox, text, config) {
   };
 }
 
-export async function analyze({ input, text, output, events = [], sandbox = null, config = null }) {
+export async function analyze({ input, text, output, events = [], sandbox = null, config = null, verified = false }) {
   const before = staticScan(text ?? input);
   const after = staticScan(output);
   const runtime = await runtimeScan(sandbox, text ?? input, config);
@@ -209,5 +213,20 @@ export async function analyze({ input, text, output, events = [], sandbox = null
       functions: after.functions,
       outputHash: fnv1a(output),
     },
+    // E26/E28/E29/E30/E40: araç tespiti, otomatik profil, ayarlar, sürümler, decoder zinciri; E27: pass güveni
+    detection: (() => {
+      const tools = detectTools(input);
+      return { tools, profile: autoProfile(tools), config: recoverConfig(input), versions: detectVersions(input), chains: decoderChains(input) };
+    })(),
+    passConfidence: passConfidence(events, { verified }),
+    // E611–E616, E75–E79: kripto sabitleri, anahtar/IV/mod/dolgu, gömülü şifreli verinin çözümü
+    crypto: cryptoScan({ code: output, strings: after.strings, runtimeCrypto: runtime.crypto }),
+    // E617–E630: blob istatistikleri
+    stats: await blobReport(after.strings.slice(0, 500), output),
+    // E98/E103/E107: canary'li exfiltration haritası, bot/insan profil farkı, phishing uç noktaları
+    security: await securityRuntime({ sandbox, text: text ?? input, code: output, urls: found.urls }),
   };
 }
+
+// Eklenti analizi ve diğer modüller için: statik tarama ve IOC çıkarımı
+export { staticScan, iocs as extractIocs };

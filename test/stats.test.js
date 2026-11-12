@@ -72,4 +72,12 @@ assert.equal(detectLanguage(english).lang, 'en');
 assert.equal(detectLanguage('Привет, это тестовая строка').script, 'Kiril');
 assert.equal(detectLanguage('x9$Kq!2zP@').natural, false);
 
+// rapor: XOR'lu base64 blob bilinen düz metinle çözülür, rastgele blob "random" olarak işaretlenir
+const { blobReport } = await import('../src/core/stats.js');
+const rep = await blobReport([ct.toString('base64'), rnd.toString('base64')], english);
+assert.equal(rep.blobs[0].recovered.text, pt);
+assert.equal(rep.blobs[1].bytes.verdict, 'random');
+assert.equal(rep.blobs[1].recovered, undefined);
+assert.ok(rep.code.compression.ratio < 0.5);
+
 console.log('stats: ok');
