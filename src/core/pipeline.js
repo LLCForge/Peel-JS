@@ -12,9 +12,10 @@ import { validOrder } from '../analysis/passgraph.js';
 import { restoreCheckpoint } from '../analysis/trace.js';
 import { salvage } from '../analysis/salvage.js';
 
-const MAX_ROUNDS = 25;
+// js-confuser high (pack + iç içe CFF) katman katman açılır: büyük çekimler 25 turu aşabilir; değişiklik durunca biter
+const MAX_ROUNDS = 40;
 const CONTEXT_MAX_LEN = 2_000_000;
-const DEEP_MAX_LEN = 1_000_000; // QuickJS'te 1 MB'lık programı çalıştırmak saniyenin altında
+const DEEP_MAX_LEN = 2_000_000; // QuickJS'te 1 MB'lık programı çalıştırmak saniyenin altında (js-confuser high çekimleri 1 MB'ı aşabilir)
 
 /**
  * @param {string} input

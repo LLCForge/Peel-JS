@@ -23,7 +23,35 @@ function isGetGlobal(fn) {
     if (t.isCallExpression(n) || t.isNewExpression(n)) calls++;
   });
   // dizideki elemanı çağırma (array[i]()), push ve global döndüren fonksiyonlar dışında çağrı yok
-  return returnsGlobal >= 2 && calls <= 4;
+  return (returnsGlobal >= 2 && calls <= 4) || globalThisFirst(fn);
+}
+
+// Aday dizisinin ilk elemanı function () { return globalThis; } ise (ES2020+ her ortamda tanımlı, String özelliği
+// var) döngü ilk adayda döner: diğer adaylar (CFF/string gizlemeyle şişmiş new Function("return this") vb.) hiç
+// çalışmaz, çağrı etkisizdir.
+function globalThisFirst(fn) {
+  if (!t.isBlockStatement(fn.body)) return false;
+  // var A = [...]  ya da (let A, …; A = [...])
+  let arr = null;
+  let init = null;
+  // başta fonksiyon bildirimleri (gizlenmiş string yardımcıları) ve başlangıçsız bildirimler olabilir
+  for (const st of fn.body.body.filter((x) => !t.isFunctionDeclaration(x)).slice(0, 2)) {
+    if (t.isVariableDeclaration(st) && st.declarations[0]?.init) { arr = st.declarations[0].id; init = st.declarations[0].init; break; }
+    if (t.isExpressionStatement(st) && t.isAssignmentExpression(st.expression, { operator: '=' })) { arr = st.expression.left; init = st.expression.right; break; }
+  }
+  const c0 = t.isArrayExpression(init) ? init.elements[0] : null;
+  if (!t.isIdentifier(arr) || !t.isFunctionExpression(c0) || c0.params.length || c0.body.body.length !== 1 || !t.isReturnStatement(c0.body.body[0]) ||
+      !t.isIdentifier(c0.body.body[0].argument, { name: 'globalThis' })) return false;
+  let loopCall = false;
+  t.traverseFast(fn.body, (n) => {
+    if (t.isLabeledStatement(n) && t.isForStatement(n.body)) {
+      t.traverseFast(n.body, (m) => {
+        if (t.isCallExpression(m) && !m.arguments.length && t.isMemberExpression(m.callee, { computed: true }) &&
+            t.isIdentifier(m.callee.object, { name: arr.name })) loopCall = true;
+      });
+    }
+  });
+  return loopCall;
 }
 
 const unshadowed = (scope, name) => !scope.getBinding(name);
@@ -112,8 +140,14 @@ export async function run(ast, { onLog, bump, level = 2 }) {
       if (s.isReturnStatement()) return !s.node.argument || pureVal(s.get('argument'), locals);
       if (s.isExpressionStatement() && s.get('expression').isAssignmentExpression({ operator: '=' })) {
         const a = s.get('expression');
-        const tb = t.isIdentifier(a.node.left) ? a.scope.getBinding(a.node.left.name) : null;
-        return Boolean(tb && locals.has(tb)) && pureVal(a.get('right'), locals);
+        const left = a.node.left;
+        const tb = t.isIdentifier(left) ? a.scope.getBinding(left.name) : null;
+        if (tb) return locals.has(tb) && pureVal(a.get('right'), locals);
+        // variableMasking: fonksiyonun kendi (taze) rest dizisine sabit anahtarlı yazma — M.a = …, M[-24] = …
+        const ob = t.isMemberExpression(left) && t.isIdentifier(left.object) && (!left.computed || literalValue(left.property).ok)
+          ? a.scope.getBinding(left.object.name) : null;
+        return Boolean(ob && locals.has(ob) && ob.kind === 'param' && !ob.constantViolations.length &&
+          (t.isRestElement(ob.path.node) || t.isRestElement(ob.path.parent))) && pureVal(a.get('right'), locals);
       }
       if (s.isIfStatement() && !s.node.alternate && t.isIdentifier(s.node.test) && locals.has(s.scope.getBinding(s.node.test.name))) {
         const c = s.get('consequent');
@@ -153,6 +187,10 @@ export async function run(ast, { onLog, bump, level = 2 }) {
       if (e.isMemberExpression() && !e.node.computed && isGlobalish(p.scope, e.node.object) && STD_GLOBALS.has(e.node.property.name)) {
         p.remove(); n++; return;
       }
+      // getGlobal();  — sonucu kullanılmayan çağrı (ilk adayda döner, etkisiz)
+      if (e.isCallExpression() && !e.node.arguments.length && t.isIdentifier(e.node.callee) && isGetGlobal(fnOf(p.scope, e.node.callee))) {
+        p.remove(); n++; return;
+      }
       // (function () { …etkisiz… })();
       if (e.isCallExpression() && !e.node.arguments.length && e.get('callee').isFunctionExpression() &&
           !e.node.callee.async && !e.node.callee.generator && pureBody(e.get('callee'), new Set())) {
@@ -163,8 +201,8 @@ export async function run(ast, { onLog, bump, level = 2 }) {
         const b = p.scope.getBinding(e.node.left.name);
         if (!b || b.referenced || b.kind === 'param' || (b.scope.path.isProgram() && level < 4)) return;
         const r = e.get('right');
-        const getGlobalCall = r.isLogicalExpression({ operator: '||' }) && r.get('left').isCallExpression() && !r.node.left.arguments.length &&
-          isGetGlobal(fnOf(p.scope, r.node.left.callee));
+        const call = r.isLogicalExpression({ operator: '||' }) ? r.node.left : r.node;
+        const getGlobalCall = t.isCallExpression(call) && !call.arguments.length && isGetGlobal(fnOf(p.scope, call.callee));
         if (getGlobalCall || builtin.has(b) || stdRead(p.scope, r.node) || pureVal(r, new Set())) { p.remove(); n++; }
       }
     },

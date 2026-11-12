@@ -1,6 +1,7 @@
 import * as t from '@babel/types';
 import { traverse } from '../util/ast.js';
 import { literalValue } from '../util/pure.js';
+import { readDispatcher } from './37-confuser.js';
 
 // js-confuser controlFlowFlattening, durum makinesi açıldıktan sonra kalan "kapsam nesneleri":
 //   function M(states, scope = { K: {} }, runtime, arg) { scope.K.x = 1; scope.K.f = function (...a) {
@@ -90,23 +91,38 @@ function inlineClones(ast) {
   let program = null;
   traverse(ast, { Program(p) { program = p; p.stop(); } });
   const used = new Set();
-  traverse(ast, { Identifier(q) { used.add(q.node.name); } });
-  for (const mPath of program.get('body')) {
+  // program düzeyi ya da fonksiyon gövdesi düzeyi (js-confuser pack: tüm program bir IIFE'nin içinde) bildirimler
+  const decls = [];
+  traverse(ast, {
+    Identifier(q) { used.add(q.node.name); },
+    FunctionDeclaration(q) {
+      if (q.parentPath.isProgram() || (q.parentPath.isBlockStatement() && q.parentPath.parentPath.isFunction())) decls.push(q);
+    },
+  });
+  for (const mPath of decls) {
     const m = mPath.node;
-    if (!t.isFunctionDeclaration(m) || m.async || m.generator || m.params.length < 2) continue;
+    if (!m || !t.isFunctionDeclaration(m) || m.async || m.generator || m.params.length < 2) continue;
     if (!m.params.every((x) => t.isIdentifier(x) || (t.isAssignmentPattern(x) && t.isIdentifier(x.left) && t.isObjectExpression(x.right)))) continue;
-    const b = program.scope.getBinding(m.id.name);
+    const declScope = mPath.parentPath.isProgram() ? program.scope : mPath.parentPath.parentPath.scope;
+    const b = declScope.getBinding(m.id.name);
     if (!b?.constant || b.referencePaths.length !== 1) continue;
     const call = b.referencePaths[0].parentPath;
     if (!call.isCallExpression({ callee: b.referencePaths[0].node }) || call.node.arguments.length > m.params.length) continue;
     const ret = call.parentPath;
     const shell = ret.parentPath?.parentPath;
-    if (!ret.isReturnStatement() || !shell?.isFunctionExpression() || shell.node.body.body.length !== 1) continue;
-    if (shell.node.async || shell.node.generator || usesThisOrArguments(m)) continue;
+    if (!ret.isReturnStatement() || !(shell?.isFunctionExpression() || shell?.isFunctionDeclaration()) || !t.isBlockStatement(shell.node.body)) continue;
+    // tek deyimlik kabuk, ya da çağrı kabuğun son deyimi (pack IIFE'si: return M(seq, …) program gövdesinin sonunda)
+    const shellBody = shell.node.body.body;
+    const single = shellBody.length === 1 && shell.isFunctionExpression();
+    // son deyim biçimi yalnızca makine imzasında (states, scope = {…}, …): dispatcher gibi sıradan fonksiyonlar
+    // çağrı yerine gömülmez (confuser onları ayrı fonksiyonlara açar)
+    if (!single && (shellBody[shellBody.length - 1] !== ret.node || !t.isAssignmentPattern(m.params[1]) || !t.isObjectExpression(m.params[1].right))) continue;
+    if (shell.node.async || shell.node.generator || usesThisOrArguments(m) || readDispatcher(mPath)) continue;
     const args = call.node.arguments;
     if (args.some((a) => t.isSpreadElement(a))) continue;
     // varsayılan değerli parametreye undefined olabilecek değer geçiyorsa varsayılanın anlamı korunamaz
-    if (m.params.some((x, i) => t.isAssignmentPattern(x) && !(args[i] && (t.isObjectExpression(args[i]) || t.isArrayExpression(args[i]))))) continue;
+    // (argüman hiç verilmediyse varsayılan her zaman kullanılır: bildirimin başlangıcı olur)
+    if (m.params.some((x, i) => t.isAssignmentPattern(x) && i < args.length && !(t.isObjectExpression(args[i]) || t.isArrayExpression(args[i])))) continue;
     // gövdenin serbest adları kabuğun yerinde aynı bağa gitmeli
     const locals = new Set(Object.keys(mPath.scope.bindings));
     let leak = false;
@@ -114,7 +130,8 @@ function inlineClones(ast) {
       Identifier(q) {
         if (!q.isReferencedIdentifier() || locals.has(q.node.name)) return;
         const own = q.scope.getBinding(q.node.name);
-        if (own && own.scope !== program.scope) return;
+        // kopyanın kendi iç bağları
+        if (own && (own.scope.path === mPath || own.scope.path.findParent((x) => x === mPath))) return;
         if (shell.scope.getBinding(q.node.name) !== own) { leak = true; q.stop(); }
       },
     });
@@ -128,16 +145,31 @@ function inlineClones(ast) {
       used.add(fresh);
       mPath.scope.rename(old, fresh);
     }
+    // kabukta başka deyimler varsa kopyanın kendi bildirimleri (yükseltilince) kabuğun adlarıyla çakışmasın
+    if (!single) {
+      const outside = new Set();
+      shell.traverse({ Identifier(q) { if (!q.findParent((x) => x === mPath)) outside.add(q.node.name); } });
+      for (const name of Object.keys(mPath.scope.bindings)) {
+        if (!outside.has(name)) continue;
+        let fresh = `${name}_1`;
+        for (let i = 2; used.has(fresh); i++) fresh = `${name}_${i}`;
+        used.add(fresh);
+        mPath.scope.rename(name, fresh);
+      }
+    }
     // gövdede okunmayan parametre: argümanı yan etkisizse (literal ya da js-confuser durum dizisi) bildirilmez
     const decls = [];
     m.params.forEach((x, i) => {
       const name = t.isAssignmentPattern(x) ? x.left.name : x.name;
-      const arg = args[i];
+      const arg = args[i] ?? (t.isAssignmentPattern(x) ? x.right : undefined);
       if (!mPath.scope.getBinding(name)?.referenced && (!arg || pureArg(arg, call))) return;
       decls.push(t.variableDeclarator(t.identifier(name), arg ?? t.unaryExpression('void', t.numericLiteral(0))));
     });
-    shell.node.body.body = [...(decls.length ? [t.variableDeclaration('var', decls)] : []), ...m.body.body];
+    const inlined = [...(decls.length ? [t.variableDeclaration('var', decls)] : []), ...m.body.body];
     mPath.remove();
+    // yol API'si: aynı gövdedeki diğer bildirim yollarının konumları güncel kalsın
+    if (single) shell.node.body.body = inlined;
+    else ret.replaceWithMultiple(inlined);
     n++;
   }
   return n;
@@ -268,20 +300,34 @@ function splitScopes(ast) {
           return true;
         });
         if (!ok) continue;
-        // her kullanım root.K (K bilinen anahtar)
+        // her kullanım root.K (K bilinen anahtar). js-confuser blok kapsamlarını bloğa girerken kurar:
+        // root.L = {};  — sonradan kurulan (ya da yeniden kurulan) taze nesne de bölünür; deyim, L'nin yerel
+        // değişkenlerini undefined'a çeken atamaya döner (taze nesnenin her özelliği okununca undefined'dı)
         const uses = [];
+        const lazy = [];
+        let unknownKey = false;
         for (const r of b.referencePaths) {
           const m = r.parentPath;
           const k = m.isMemberExpression({ object: r.node }) ? keyOf(m.node) : null;
-          if (k === null || !props.has(k)) { ok = false; break; }
+          const asg = m.parentPath;
+          if (k !== null && asg.isAssignmentExpression({ operator: '=', left: m.node }) && t.isObjectExpression(asg.node.right) &&
+              !asg.node.right.properties.length && asg.parentPath.isExpressionStatement() && Array.isArray(asg.parentPath.container) &&
+              (!props.has(k) || props.get(k).fresh)) {
+            if (!props.has(k)) props.set(k, { fresh: true });
+            lazy.push({ stmt: asg.parentPath, k });
+            continue;
+          }
+          if (k === null) { ok = false; break; }
+          // bilinmeyen anahtar (hiç çalışmayan, açılamamış makine kalıntısı): takma adlar yine çözülür, bölme yapılmaz
+          if (!props.has(k)) unknownKey = true;
           uses.push({ m, k });
         }
-        if (!ok || !uses.length) continue;
+        if (!ok || (!uses.length && !lazy.length)) continue;
         // takma adlar: root.L → kaynak ifade (kaynak kök değişmiyorsa ve kaynak özelliği yeniden atanmıyorsa)
         let aliased = 0;
         for (const u of uses) {
           const e = props.get(u.k);
-          if (!e.alias) continue;
+          if (!e?.alias) continue;
           const src = sp.scope.getBinding(e.alias.object.name);
           if (!src?.constant) { ok = false; break; }
           const par = u.m.parentPath;
@@ -296,6 +342,7 @@ function splitScopes(ast) {
           n += aliased;
           continue; // bağlar bayat: bölme bir sonraki turda
         }
+        if (unknownKey) continue;
         // taze nesneler: root.K.x → x
         const names = new Map();
         const taken = new Set();
@@ -331,6 +378,12 @@ function splitScopes(ast) {
         }
         if (!ok) continue;
         for (const e of edits) e.outer.replaceWith(t.identifier(e.rec.name));
+        for (const { stmt, k } of lazy) {
+          const reset = [...names].filter(([id]) => id.startsWith(`${k}\u0000`)).map(([, r]) => r.name);
+          if (!reset.length) { stmt.remove(); continue; }
+          stmt.replaceWith(t.expressionStatement(reset.reduceRight((acc, nm) => t.assignmentExpression('=', t.identifier(nm), acc), t.identifier('undefined'))));
+        }
+        n += lazy.length;
         const body = fnPath.isFunction() ? fnPath.get('body') : fnPath;
         if (!body.isBlockStatement() && !body.isProgram()) continue;
         body.unshiftContainer('body', t.variableDeclaration('var', [...names.values()].map((r) => t.variableDeclarator(t.identifier(r.name)))));
@@ -378,13 +431,25 @@ function deadStores(ast) {
             (t.isFunctionExpression(asg.node.right) || t.isArrowFunctionExpression(asg.node.right))) stores.push({ stmt: asg.parentPath, name: keyOf(outer.node) });
         continue;
       }
-      // { K: root.K } yalnızca bir makinenin kapsam parametresine argüman olarak
+      // bloğa girerken kurulan kapsam: root.L = {};
+      if (outer.isAssignmentExpression({ operator: '=', left: m.node }) && t.isObjectExpression(outer.node.right) &&
+          !outer.node.right.properties.length && outer.parentPath.isExpressionStatement()) continue;
+      // { K: root.K } yalnızca bir makinenin kapsam parametresine argüman olarak ya da başka bir kökün
+      // başlangıcı olarak (kopya kabuğuna taşınınca: var S2 = { K: root.K, L: {} })
       const prop = outer;
       const objE = prop.parentPath;
       const call = objE?.parentPath;
-      if (!prop.isObjectProperty({ value: m.node }) || !objE.isObjectExpression() || !call?.isCallExpression() || !t.isIdentifier(call.node.callee)) return 0;
+      if (!prop.isObjectProperty({ value: m.node }) || !objE.isObjectExpression()) return 0;
+      if (call?.isVariableDeclarator({ init: objE.node }) && t.isIdentifier(call.node.id) &&
+          roots.includes(call.scope.getBinding(call.node.id.name))) continue;
+      if (!call?.isCallExpression() || !t.isIdentifier(call.node.callee)) return 0;
       const fb = call.scope.getBinding(call.node.callee.name);
-      if (!fb?.path.isFunctionDeclaration() || !isRootParam(fb.path.node, call.node.arguments.indexOf(objE.node))) return 0;
+      // makine: function M(…) ya da tek kez atanan V = function (…) {…}
+      const fnNode = fb?.path.isFunctionDeclaration() ? fb.path.node
+        : ((fb?.path.isVariableDeclarator() && !fb.path.node.init) || (fb?.kind === 'param' && t.isIdentifier(fb.path.node))) && fb.constantViolations.length === 1 &&
+          fb.constantViolations[0].isAssignmentExpression({ operator: '=' }) && t.isFunctionExpression(fb.constantViolations[0].node.right)
+          ? fb.constantViolations[0].node.right : null;
+      if (!fnNode || !isRootParam(fnNode, call.node.arguments.indexOf(objE.node))) return 0;
     }
   }
   if (!stores.length) return 0;
@@ -522,6 +587,124 @@ function propagateOnce(ast, level) {
   return n;
 }
 
+// 5) Dönüş bayrağı: makine açılınca dış fonksiyonun sonunda kalan protokol
+//      F = undefined; V = inner(); if (F) { return V; }
+//      function inner() { …; F = true; return X; … }
+//    inner'ın her değerli dönüşü hemen önünde F = true kurar; bayraksız dönüşler değersizdir (dış fonksiyon da
+//    undefined döner), sona düşmek dışarıda da sona düşmektir. Bu durumda inner'ın gövdesi (bayrak atamaları
+//    silinmiş) dış gövdenin sonuna yerleşir; çakışan iç adlar yeniden adlandırılır.
+const isUndef = (n) => t.isIdentifier(n, { name: 'undefined' }) || (t.isUnaryExpression(n, { operator: 'void' }) && t.isNumericLiteral(n.argument));
+
+function returnFlags(ast) {
+  let n = 0;
+  const all = new Set();
+  traverse(ast, { Identifier(q) { all.add(q.node.name); } });
+  traverse(ast, {
+    Function(fp) {
+      if (!t.isBlockStatement(fp.node.body)) return;
+      let body = fp.get('body.body');
+      // sondaki çıplak return; (fonksiyonun sonundan düşmekle aynı) protokolden sonra kalabilir
+      const bare = body.length && body[body.length - 1].isReturnStatement() && !body[body.length - 1].node.argument ? body[body.length - 1] : null;
+      if (bare) body = body.slice(0, -1);
+      if (body.length < 4) return;
+      const [s0, s1, s2] = body.slice(-3);
+      const e0 = s0.isExpressionStatement() ? s0.node.expression : null;
+      if (!t.isAssignmentExpression(e0, { operator: '=' }) || !t.isIdentifier(e0.left) || !isUndef(e0.right)) return;
+      const e1 = s1.isExpressionStatement() ? s1.node.expression : null;
+      if (!t.isAssignmentExpression(e1, { operator: '=' }) || !t.isIdentifier(e1.left) || !t.isCallExpression(e1.right) ||
+          !t.isIdentifier(e1.right.callee)) return;
+      const F = e0.left.name;
+      const V = e1.left.name;
+      if (F === V) return;
+      // if (F) { return V; }  ya da (cfg-opt sonrası) return F ? V : undefined;
+      const ternary = !bare && s2.isReturnStatement() && t.isConditionalExpression(s2.node.argument) &&
+        t.isIdentifier(s2.node.argument.test, { name: F }) && t.isIdentifier(s2.node.argument.consequent, { name: V }) && isUndef(s2.node.argument.alternate);
+      if (!ternary) {
+        if (!s2.isIfStatement() || s2.node.alternate || !t.isIdentifier(s2.node.test, { name: F })) return;
+        const cons = t.isBlockStatement(s2.node.consequent) ? s2.node.consequent.body : [s2.node.consequent];
+        if (cons.length !== 1 || !t.isReturnStatement(cons[0]) || !t.isIdentifier(cons[0].argument, { name: V })) return;
+      }
+      // inner: aynı gövdede fonksiyon bildirimi ya da tek kez atanan fonksiyon ifadesi (P = function (…) {…};
+      // P başlangıçsız yerel ya da hiç verilmeyen parametre — açılmış makine kopyası)
+      const ib = fp.scope.getBinding(e1.right.callee.name);
+      let inner = null;
+      let anchor = null;
+      if (ib?.constant && ib.path.isFunctionDeclaration()) {
+        inner = ib.path;
+        anchor = ib.path;
+      } else if (ib?.constantViolations.length === 1) {
+        const v = ib.constantViolations[0];
+        if (v.isAssignmentExpression({ operator: '=' }) && v.get('right').isFunctionExpression() && !v.node.right.id && v.parentPath.isExpressionStatement() &&
+            ((ib.path.isVariableDeclarator() && !ib.path.node.init) || (ib.kind === 'param' && t.isIdentifier(ib.path.node)))) {
+          inner = v.get('right');
+          anchor = v.parentPath;
+        }
+      }
+      if (!inner || ib.referencePaths.length !== 1 || anchor.parentPath.parentPath !== fp || anchor.key > s1.key) return;
+      if (inner.node.async || inner.node.generator || usesThisOrArguments(inner.node)) return;
+      // parametreler: çağrıdaki yan etkisiz argümanlar (verilmeyen varsayılanlı parametre varsayılanını alır)
+      const callArgs = e1.right.arguments;
+      if (callArgs.length > inner.node.params.length || callArgs.some((a) => t.isSpreadElement(a) || !pureArg(a, s1))) return;
+      if (!inner.node.params.every((x, i) => t.isIdentifier(x) || (t.isAssignmentPattern(x) && t.isIdentifier(x.left) && t.isObjectExpression(x.right) &&
+        (i >= callArgs.length || t.isObjectExpression(callArgs[i]) || t.isArrayExpression(callArgs[i]))))) return;
+      const fb = fp.scope.getBinding(F);
+      const vb = fp.scope.getBinding(V);
+      if (fb?.scope !== fp.scope || vb?.scope !== fp.scope || fb.referencePaths.length !== 1 || vb.referencePaths.length !== 1 ||
+          vb.constantViolations.length !== 1) return;
+      // F'nin diğer tüm yazımları inner'ın kendi gövdesinde "F = true;" deyimi ve hemen ardından değerli return
+      const flagStmts = [];
+      for (const v of fb.constantViolations) {
+        if (v.node === e0) continue;
+        const st = v.parentPath;
+        if (!v.isAssignmentExpression({ operator: '=' }) || !t.isBooleanLiteral(v.node.right, { value: true }) || !st.isExpressionStatement() ||
+            st.getFunctionParent() !== inner || !Array.isArray(st.container)) return;
+        const next = st.container[st.key + 1];
+        if (!t.isReturnStatement(next) || !next.argument) return;
+        flagStmts.push(st);
+      }
+      let ok = true;
+      inner.traverse({
+        Function(q) { q.skip(); },
+        TryStatement(q) { if (q.node.finalizer) { ok = false; q.stop(); } },
+        ReturnStatement(q) {
+          const list = q.container;
+          const prev = Array.isArray(list) && q.key > 0 ? list[q.key - 1] : null;
+          const flagged = t.isExpressionStatement(prev) && flagStmts.some((s) => s.node === prev);
+          if (!flagged && q.node.argument && !isUndef(q.node.argument)) { ok = false; q.stop(); }
+        },
+      });
+      if (!ok) return;
+      // iç adlar dış gövdede (inner dışında) geçiyorsa yeniden adlandırılır: inline sonrası var/function yükseltmesi
+      const outside = new Set();
+      fp.traverse({
+        Identifier(q) { if (!q.findParent((x) => x === inner)) outside.add(q.node.name); },
+      });
+      for (const name of Object.keys(inner.scope.bindings)) {
+        if (!outside.has(name)) continue;
+        let fresh = `${name}_${2}`;
+        for (let i = 3; all.has(fresh); i++) fresh = `${name}_${i}`;
+        all.add(fresh);
+        inner.scope.rename(name, fresh);
+      }
+      for (const st of flagStmts) st.remove();
+      // okunmayan parametre bildirilmez (argümanlar yan etkisiz: durum dizisi, kapsam nesnesi)
+      const paramDecls = inner.node.params.filter((x) => inner.scope.getBinding(t.isAssignmentPattern(x) ? x.left.name : x.name)?.referenced)
+        .map((x) => t.variableDeclarator(t.identifier(t.isAssignmentPattern(x) ? x.left.name : x.name),
+          callArgs[inner.node.params.indexOf(x)] ?? (t.isAssignmentPattern(x) ? x.right : null)));
+      const moved = [...(paramDecls.length ? [t.variableDeclaration('var', paramDecls)] : []), ...inner.node.body.body];
+      bare?.remove();
+      s2.remove();
+      s1.remove();
+      s0.remove();
+      anchor.remove();
+      fp.get('body').pushContainer('body', moved);
+      fp.scope.crawl();
+      n++;
+    },
+  });
+  return n;
+}
+
 export async function run(ast, { onLog, bump, level = 3 }) {
   // eval/with adları dinamik okur: kapsam ve parametre dönüşümleri kanıtlanamaz
   let dynamic = false;
@@ -544,5 +727,7 @@ export async function run(ast, { onLog, bump, level = 3 }) {
   if (o) onLog(`cff-scope: tek atamalı ${o} okuma literal yapıldı`, "info");
   const e = s || d || o ? 0 : tidyEntries(ast);
   if (e) onLog(`cff-scope: ${e} giriş/çağrı sadeleştirildi`, 'info');
-  bump("cffScope", s + d + e + o);
+  const r = s || d || o || e ? 0 : returnFlags(ast);
+  if (r) onLog(`cff-scope: ${r} dönüş bayrağı protokolü dış fonksiyona açıldı`, 'info');
+  bump("cffScope", s + d + e + o + r);
 }

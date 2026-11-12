@@ -1,4 +1,5 @@
 import * as t from '@babel/types';
+import { machineSite } from './76-unflatten.js';
 import { traverse, gen } from '../util/ast.js';
 
 // A-9:  js-confuser dispatcher fonksiyonları → ayrı fonksiyonlar
@@ -54,12 +55,14 @@ function allNames(ast) {
 
 // ── A-9: dispatcher ─────────────────────────────────────
 
-const isFlagTest = (test, param) => t.isBinaryExpression(test, { operator: '===' }) &&
-  t.isIdentifier(test.left, { name: param }) && t.isStringLiteral(test.right);
+// opaquePredicates kalıntısı: if (true && flag === "…")
+const flagTest = (test) => (t.isLogicalExpression(test, { operator: '&&' }) && t.isBooleanLiteral(test.left, { value: true }) ? test.right : test);
+const isFlagTest = (test, param) => t.isBinaryExpression(flagTest(test), { operator: '===' }) &&
+  t.isIdentifier(flagTest(test).left, { name: param }) && t.isStringLiteral(flagTest(test).right);
 
-function readDispatcher(fnPath) {
+export function readDispatcher(fnPath) {
   const fn = fnPath.node;
-  if (!fn.id || fn.async || fn.generator || fn.params.length < 3) return null;
+  if (fn.async || fn.generator || fn.params.length < 3) return null;
   const [nameP, flagP, retP] = fn.params;
   if (![nameP, flagP, retP].every((x) => t.isIdentifier(x))) return null;
   const body = fn.body.body;
@@ -71,11 +74,15 @@ function readDispatcher(fnPath) {
   let retKey = null;
   let payload = null;
   let lengthHelper = null;
+  let clearDirty = false;
+  let retOpaque = null;
   for (const s of body) {
     // movedDeclarations: var fns = {…} yerine kullanılmayan bir parametreye atama: P = {…}
+    // (ya da CFF açıldıktan sonra başlangıçsız bildirilmiş yerele: let fns; fns = {…})
     const movedFns = t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression, { operator: '=' }) &&
       t.isIdentifier(s.expression.left) && t.isObjectExpression(s.expression.right) &&
-      fn.params.slice(3).some((x) => t.isIdentifier(x, { name: s.expression.left.name }) || (t.isAssignmentPattern(x) && t.isIdentifier(x.left, { name: s.expression.left.name })));
+      (fn.params.slice(3).some((x) => t.isIdentifier(x, { name: s.expression.left.name }) || (t.isAssignmentPattern(x) && t.isIdentifier(x.left, { name: s.expression.left.name }))) ||
+        (() => { const lb = fnPath.scope.getBinding(s.expression.left.name); return lb?.scope === fnPath.scope && lb.path.isVariableDeclarator() && !lb.path.node.init && lb.constantViolations.length === 1; })());
     if (movedFns) {
       const obj = s.expression.right;
       if (!obj.properties.every((p) => t.isObjectProperty(p) && strKey(p.key, p.computed) !== null && t.isFunctionExpression(p.value))) return null;
@@ -93,12 +100,16 @@ function readDispatcher(fnPath) {
     const cons = t.isBlockStatement(s.consequent) ? s.consequent.body : [s.consequent];
     if (isFlagTest(s.test, flagP.name)) {
       const src = gen(s.consequent);
-      if (cons.length === 1 && t.isExpressionStatement(cons[0]) && t.isAssignmentExpression(cons[0].expression, { operator: '=' }) &&
-          t.isIdentifier(cons[0].expression.left) && t.isArrayExpression(cons[0].expression.right) && !cons[0].expression.right.elements.length) {
-        clearFlag = s.test.right.value;
-        payload = cons[0].expression.left.name;
+      // deadCode yanına ölü kod koyabilir: payload = [] dışında başka deyimler varsa temizleme bayraklı çağrılar
+      // açılmaz (o deyimler atlanırdı); diğer çağrılar etkilenmez
+      const clr = cons[cons.length - 1];
+      if (t.isExpressionStatement(clr) && t.isAssignmentExpression(clr.expression, { operator: '=' }) &&
+          t.isIdentifier(clr.expression.left) && t.isArrayExpression(clr.expression.right) && !clr.expression.right.elements.length) {
+        clearFlag = flagTest(s.test).right.value;
+        clearDirty = !cons.slice(0, -1).every((x) => t.isFunctionDeclaration(x));
+        payload = clr.expression.left.name;
       } else if (/\.apply\(this\)/.test(src) && s.alternate) {
-        fnFlag = s.test.right.value;
+        fnFlag = flagTest(s.test).right.value;
         // createFunction içindeki length ayarlayıcı: helper(fn, fnLength)
         t.traverseFast(s.consequent, (n) => {
           if (t.isCallExpression(n) && t.isIdentifier(n.callee) && n.arguments.length === 2 && t.isIdentifier(n.arguments[0]) &&
@@ -109,12 +120,26 @@ function readDispatcher(fnPath) {
       }
     } else if (isFlagTest(s.test, retP.name) && cons.length === 1 && t.isReturnStatement(cons[0]) &&
         t.isObjectExpression(cons[0].argument) && cons[0].argument.properties.length === 1) {
-      retFlag = s.test.right.value;
+      retFlag = flagTest(s.test).right.value;
       retKey = strKey(cons[0].argument.properties[0].key, cons[0].argument.properties[0].computed);
+    } else if (isFlagTest(s.test, retP.name)) {
+      // okunamayan dönüş sarmalı (anahtar hiç çalışmamış decoder çağrısı): bu bayrakla yapılan çağrılar açılmaz
+      retOpaque = flagTest(s.test).right.value;
+    }
+  }
+  // CFF açıldıktan sonra: return ret === "…" ? { key: out } : out;
+  const last = body[body.length - 1];
+  if (retFlag === null && t.isReturnStatement(last) && t.isConditionalExpression(last.argument) &&
+      isFlagTest(last.argument.test, retP.name) && t.isObjectExpression(last.argument.consequent) &&
+      last.argument.consequent.properties.length === 1 && t.isObjectProperty(last.argument.consequent.properties[0])) {
+    const prop = last.argument.consequent.properties[0];
+    if (t.isIdentifier(last.argument.alternate) && t.isIdentifier(prop.value, { name: last.argument.alternate.name })) {
+      retFlag = flagTest(last.argument.test).right.value;
+      retKey = strKey(prop.key, prop.computed);
     }
   }
   if (!fns || fnFlag === null || !payload) return null;
-  return { fns, fnsName, clearFlag, fnFlag, retFlag, retKey, payload, lengthHelper, params: fn.params.length };
+  return { fns, fnsName, clearFlag, clearDirty, fnFlag, retFlag, retKey, retOpaque, payload, lengthHelper, params: fn.params.length };
 }
 
 // fns girdisi: function () { var [a, b] = payload; ... }  → { params, body } (yoksa null)
@@ -124,19 +149,39 @@ function readEntry(entryPath, payload, dispatcherPath) {
   // movedDeclarations: yereller kullanılmayan parametrelere taşınmış olabilir (fns[name]() argümansız çağrılır):
   // yeniden yerel var olurlar
   if (!fnNode.params.every((x) => t.isIdentifier(x))) return null;
-  const moved = fnNode.params.length ? [t.variableDeclaration('var', fnNode.params.map((x) => t.variableDeclarator(t.identifier(x.name))))] : [];
+  let movedNames = fnNode.params.map((x) => x.name);
   const body = fnNode.body.body.filter((x) => !(t.isExpressionStatement(x) && t.isUnaryExpression(x.expression, { operator: '!' }) && t.isIdentifier(x.expression.argument)));
+  const okEl = (e) => e && (t.isIdentifier(e) || t.isArrayPattern(e) || t.isObjectPattern(e) || t.isAssignmentPattern(e) || (t.isRestElement(e) && t.isIdentifier(e.argument)));
   let params = [];
   let rest = body;
-  const first = body[0];
-  if (t.isVariableDeclaration(first) && first.declarations.length === 1 && t.isArrayPattern(first.declarations[0].id) &&
+  // variableMasking açılınca: başta başlatıcısız yerel bildirimler, ardından atama biçimi [a, [b]] = payload
+  let lead = 0;
+  while (t.isVariableDeclaration(body[lead]) && body[lead].kind !== 'const' && body[lead].declarations.every((d) => t.isIdentifier(d.id) && !d.init)) lead++;
+  const first = body[lead];
+  const firstExpr = t.isExpressionStatement(first) ? first.expression : null;
+  if (!lead && t.isVariableDeclaration(first) && first.declarations.length === 1 && t.isArrayPattern(first.declarations[0].id) &&
       t.isIdentifier(first.declarations[0].init, { name: payload })) {
     const els = first.declarations[0].id.elements;
     // iç içe kalıplar da parametre olabilir: flatten + dispatcher → var [flatObject, [a, b]] = payload
-    if (!els.every((e) => e && (t.isIdentifier(e) || t.isArrayPattern(e) || t.isObjectPattern(e) || t.isAssignmentPattern(e) || (t.isRestElement(e) && t.isIdentifier(e.argument))))) return null;
+    if (!els.every(okEl)) return null;
     params = els;
     rest = body.slice(1);
+  } else if (t.isAssignmentExpression(firstExpr, { operator: '=' }) && t.isArrayPattern(firstExpr.left) && t.isIdentifier(firstExpr.right, { name: payload })) {
+    const els = firstExpr.left.elements;
+    if (!els.every(okEl)) return null;
+    // hedefler yalnızca bu fonksiyonun yerelleri (baştaki bildirimler ya da taşınmış parametreler) olmalı
+    const targets = Object.keys(t.getBindingIdentifiers(firstExpr.left));
+    const locals = new Set([...movedNames, ...body.slice(0, lead).flatMap((d) => d.declarations.map((x) => x.id.name))]);
+    let lv = true;
+    t.traverseFast(firstExpr.left, (n) => { if (t.isMemberExpression(n)) lv = false; });
+    if (!lv || !targets.every((x) => locals.has(x)) || new Set(targets).size !== targets.length) return null;
+    params = els;
+    // parametre olan adlar yerel bildirimlerden düşer (let parametreyi yeniden bildiremez)
+    const decls = body.slice(0, lead).map((d) => t.variableDeclaration(d.kind, d.declarations.filter((x) => !targets.includes(x.id.name)))).filter((d) => d.declarations.length);
+    movedNames = movedNames.filter((x) => !targets.includes(x));
+    rest = [...decls, ...body.slice(lead + 1)];
   }
+  const moved = movedNames.length ? [t.variableDeclaration('var', movedNames.map((x) => t.variableDeclarator(t.identifier(x))))] : [];
   rest = [...moved, ...rest];
   // payload başka yerde okunmamalı; dispatcher'ın yerel adlarına (fns, output, name...) bakmamalı
   let bad = false;
@@ -153,21 +198,55 @@ function readEntry(entryPath, payload, dispatcherPath) {
   return { params, rest, node: fnNode };
 }
 
+// İfadenin bulunduğu deyimde ondan önce hiçbir şey değerlendirilmiyorsa o deyim (return X / X; / var v = X / v = X)
+function firstEvaluated(target) {
+  const par = target.parentPath;
+  if (par.isReturnStatement() || par.isExpressionStatement()) return par;
+  if (par.isVariableDeclarator({ init: target.node }) && t.isIdentifier(par.node.id) && par.parent.declarations[0] === par.node) return par.parentPath;
+  if (par.isAssignmentExpression({ operator: '=', right: target.node }) && t.isIdentifier(par.node.left) && par.parentPath.isExpressionStatement()) return par.parentPath;
+  return null;
+}
+
 function dispatchers(ast, onLog) {
   let n = 0;
   const names = allNames(ast);
   traverse(ast, {
-    FunctionDeclaration(p) {
-      if (!p.parentPath.isProgram()) return;
+    // function D(name, flag, ret, …) {…}  ya da yüksek ayarda (CFF açıldıktan sonra) tek kez atanan V = function (…) {…}
+    'FunctionDeclaration|FunctionExpression'(p) {
+      // program düzeyi ya da (pack/IIFE içindeki) fonksiyon gövdesi; blok içi bildirimler Annex B nedeniyle atlanır
+      const site = machineSite(p);
+      if (!site) return;
+      const where = site.anchor.parentPath;
+      if (!where.isProgram() && !(where.isBlockStatement() && where.parentPath.isFunction())) return;
       const d = readDispatcher(p);
       if (!d) return;
-      const binding = p.parentPath.scope.getBinding(p.node.id.name);
-      if (!binding?.constant) return;
+      const binding = site.binding;
+      if (p.isFunctionDeclaration() && !binding.constant) return;
       const entries = new Map();
       const byNode = new Map([...d.fns].map(([k, v]) => [v, k]));
+      // fns yalnızca fns[name]() ve fns[name].apply(this) ile kullanılıyorsa girdiler hep argümansız çağrılır
+      const fb = p.scope.getBinding(d.fnsName);
+      const zeroArgs = Boolean(fb) && fb.referencePaths.every((r) => {
+        const m = r.parentPath;
+        if (!m.isMemberExpression({ object: r.node, computed: true })) return false;
+        const c = m.parentPath;
+        if (c.isCallExpression({ callee: m.node })) return !c.node.arguments.length;
+        const ap = c.isMemberExpression({ object: m.node }) && strKey(c.node.property, c.node.computed) === 'apply' ? c.parentPath : null;
+        return Boolean(ap?.isCallExpression({ callee: c.node }) && ap.node.arguments.length === 1 && t.isThisExpression(ap.node.arguments[0]));
+      });
       p.traverse({
         FunctionExpression(q) {
           if (!byNode.has(q.node)) return;
+          if (zeroArgs) {
+            unmaskRest(q, true);
+            // argümansız çağrılan girdide parametreye taşınmış fonksiyon: if (!P) P = function … → P = function …
+            for (const s of q.get('body.body')) {
+              const m = s.isIfStatement() ? movedFnAssign(s) : null;
+              const b = m && s.scope.getBinding(m.name);
+              if (b?.kind === 'param' && q.node.params.includes(b.path.node) && t.isIdentifier(b.path.node) && b.constantViolations.length === 1 &&
+                  (q.isArrowFunctionExpression() || !usesOwnArguments(q))) s.replaceWith(t.expressionStatement(m.asg));
+            }
+          }
           const e = readEntry(q, d.payload, p);
           if (e) entries.set(byNode.get(q.node), e);
           q.skip();
@@ -185,6 +264,7 @@ function dispatchers(ast, onLog) {
         const flag = t.isStringLiteral(args[1]) ? args[1].value : undefined;
         const ret = t.isStringLiteral(args[2]) ? args[2].value : undefined;
         const mode = flag === d.fnFlag ? 'ref' : 'call';
+        if ((flag !== undefined && flag === d.clearFlag && d.clearDirty) || (ret !== undefined && ret === d.retOpaque)) continue;
         let target = c;
         if (ret !== undefined && ret === d.retFlag) {
           const m = c.parentPath;
@@ -239,6 +319,18 @@ function dispatchers(ast, onLog) {
             seq = { par, i };
           }
         }
+        // ayrı deyim biçimi: payload = [a, b]; return new D("k", f, r).ret; — çağrı deyimde ilk değerlendirilen ifade
+        let prevStmt = null;
+        if (!args && !s.clear) {
+          const stmt = firstEvaluated(s.target);
+          const prev = stmt && Array.isArray(stmt.container) && stmt.key > 0 ? stmt.getSibling(stmt.key - 1) : null;
+          const pe = prev?.isExpressionStatement() ? prev.node.expression : null;
+          if (t.isAssignmentExpression(pe, { operator: '=' }) && t.isIdentifier(pe.left, { name: d.payload }) &&
+              t.isArrayExpression(pe.right) && pe.right.elements.every((x) => x !== null)) {
+            args = pe.right.elements;
+            prevStmt = prev;
+          }
+        }
         if (!args) continue;
         const call = t.callExpression(t.identifier(nameFor(s.key)), args);
         if (seq) {
@@ -247,6 +339,7 @@ function dispatchers(ast, onLog) {
           seq.par.replaceWith(exprs.length === 1 ? exprs[0] : t.sequenceExpression(exprs));
         } else {
           s.target.replaceWith(call);
+          if (prevStmt) prevStmt.remove();
         }
         done++;
       }
@@ -263,12 +356,12 @@ function dispatchers(ast, onLog) {
         }
         return t.functionDeclaration(t.identifier(name), e.params.map((x) => t.cloneNode(x, true)), t.blockStatement(body));
       });
-      p.insertAfter(decls);
+      site.anchor.insertAfter(decls);
       n += done;
-      onLog(`confuser: dispatcher ${p.node.id.name} — ${done} çağrı ${made.size} ayrı fonksiyona bağlandı`, 'info');
-      p.parentPath.scope.crawl();
-      const after = p.parentPath.scope.getBinding(p.node.id.name);
-      if (after && after.referencePaths.every((r) => r.findParent((x) => x === p))) p.remove();
+      onLog(`confuser: dispatcher ${site.name} — ${done} çağrı ${made.size} ayrı fonksiyona bağlandı`, 'info');
+      where.scope.crawl();
+      const after = where.scope.getBinding(site.name);
+      if (after && after.referencePaths.every((r) => r.findParent((x) => x === p))) site.anchor.remove();
     },
   });
   return n;
@@ -289,6 +382,9 @@ const MAX_MASK_INDEX = 64;
 function maskKey(member) {
   if (!member.computed && t.isIdentifier(member.property)) return member.property.name;
   if (member.computed && t.isNumericLiteral(member.property) && Number.isInteger(member.property.value)) return member.property.value;
+  // M[-82]: negatif indeks hiçbir argümana karşılık gelmez, yereldir
+  if (member.computed && t.isUnaryExpression(member.property, { operator: '-' }) && t.isNumericLiteral(member.property.argument) &&
+      Number.isInteger(member.property.argument.value) && member.property.argument.value > 0) return -member.property.argument.value;
   if (member.computed && t.isStringLiteral(member.property)) {
     const v = member.property.value;
     return /^(0|[1-9]\d*)$/.test(v) ? Number(v) : v;
@@ -313,12 +409,21 @@ function restParams(ast) {
   let n = 0;
   traverse(ast, {
     Function(fn) {
+      if (unmaskRest(fn)) n++;
+    },
+  });
+  return n;
+}
+
+// allLocal: fonksiyon yalnızca argümansız çağrılıyor (dispatcher girdisi fns[name]()): dizi taze ve boştur,
+// her anahtar yereldir (M.length = 0 varmış gibi)
+function unmaskRest(fn, allLocal = false) {
       const { params } = fn.node;
-      if (params.length !== 1 || !t.isRestElement(params[0]) || !t.isIdentifier(params[0].argument)) return;
-      if (!t.isBlockStatement(fn.node.body)) return;
+      if (params.length !== 1 || !t.isRestElement(params[0]) || !t.isIdentifier(params[0].argument)) return false;
+      if (!t.isBlockStatement(fn.node.body)) return false;
       const mask = params[0].argument.name;
       const b = fn.scope.getBinding(mask);
-      if (!b || b.constantViolations.length || !b.referencePaths.length) return;
+      if (!b || b.constantViolations.length || !b.referencePaths.length) return false;
 
       const body = fn.get('body.body');
       // gövde başındaki M.length = N
@@ -332,25 +437,27 @@ function restParams(ast) {
         limit = first.expression.right.value;
         lengthStmt = body[0];
       }
+      if (allLocal) limit = 0;
 
       const refs = [];
       for (const r of b.referencePaths) {
         if (lengthStmt && r.findParent((x) => x === lengthStmt)) continue;
         const m = r.parentPath;
-        if (!m.isMemberExpression({ object: r.node })) return;
+        if (!m.isMemberExpression({ object: r.node })) return false;
         const key = maskKey(m.node);
-        if (key === null || key === 'length' || (typeof key === 'number' && key > MAX_MASK_INDEX)) return;
-        if (typeof key === 'string' && (!t.isValidIdentifier(key) || ['arguments', 'eval'].includes(key))) return;
+        // M.length = N varsa N ve üstü indeksler yereldir, büyüklükleri parametre sayısını etkilemez
+        if (key === null || key === 'length' || (typeof key === 'number' && key > MAX_MASK_INDEX && (limit === null || key < limit))) return false;
+        if (typeof key === 'string' && (!t.isValidIdentifier(key) || ['arguments', 'eval'].includes(key))) return false;
         // dizi/nesne prototipinden gelen ad (M.map) ilk okumada undefined değildir
-        if (typeof key === 'string' && key in []) return;
-        if (m.parentPath.isUnaryExpression({ operator: 'delete' })) return;
+        if (typeof key === 'string' && key in []) return false;
+        if (m.parentPath.isUnaryExpression({ operator: 'delete' })) return false;
         // M.x() çağrısı this olarak M'yi verir: değişkene dönünce this değişir
-        if (m.parentPath.isCallExpression({ callee: m.node }) || m.parentPath.isOptionalCallExpression({ callee: m.node })) return;
+        if (m.parentPath.isCallExpression({ callee: m.node }) || m.parentPath.isOptionalCallExpression({ callee: m.node })) return false;
         refs.push({ m, key });
       }
-      if (!fn.isArrowFunctionExpression() && usesOwnArguments(fn)) return;
+      if (!fn.isArrowFunctionExpression() && usesOwnArguments(fn)) return false;
 
-      const numeric = refs.filter((r) => typeof r.key === 'number').map((r) => r.key);
+      const numeric = refs.filter((r) => typeof r.key === 'number' && r.key >= 0).map((r) => r.key);
       const maxIdx = numeric.length ? Math.max(...numeric) : -1;
       const paramCount = limit === null ? maxIdx + 1 : Math.min(limit, maxIdx + 1);
 
@@ -365,17 +472,95 @@ function restParams(ast) {
       };
       const names = new Map();
       const nameOf = (key) => {
-        if (!names.has(key)) names.set(key, fresh(typeof key === 'number' ? `arg${key}` : key));
+        if (!names.has(key)) names.set(key, fresh(typeof key !== 'number' ? key : key < 0 ? `local${-key}` : (limit !== null && key >= limit) ? `local${key}` : `arg${key}`));
         return names.get(key);
       };
       for (let i = 0; i < paramCount; i++) nameOf(i);
       for (const { key } of refs) nameOf(key);
 
-      const locals = [...names.entries()].filter(([k]) => !(typeof k === 'number' && k < paramCount)).map(([, v]) => v);
+      const locals = [...names.entries()].filter(([k]) => !(typeof k === 'number' && k >= 0 && k < paramCount)).map(([, v]) => v);
       for (const { m, key } of refs) m.replaceWith(t.identifier(names.get(key)));
       fn.node.params = Array.from({ length: paramCount }, (_, i) => t.identifier(names.get(i)));
       if (lengthStmt) lengthStmt.remove();
       if (locals.length) fn.get('body').unshiftContainer('body', t.variableDeclaration('var', locals.map((x) => t.variableDeclarator(t.identifier(x)))));
+      return true;
+}
+
+// js-confuser yüksek ayar: fonksiyon ifadesi argümanlarını tek rest dizisinden açar:
+//   function (...R) { let a, b, c; [a, b = { K: {} }, ...c] = R; … }  →  function (a, b = { K: {} }, ...c) { … }
+// Koşullar: R yalnızca bu atamada okunur, hedefler başlangıçsız let/var bildirimleriyle bildirilmiş adlardır,
+// varsayılanlar ad içermez (parametre kapsamı gövde bağlarını göremez), fonksiyon arguments kullanmaz.
+// (length 0'dan parametre sayısına döner; Function.length kabulü.)
+function restDestructure(ast) {
+  let n = 0;
+  traverse(ast, {
+    Function(fn) {
+      const { params } = fn.node;
+      if (params.length !== 1 || !t.isRestElement(params[0]) || !t.isIdentifier(params[0].argument) || !t.isBlockStatement(fn.node.body)) return;
+      const rest = params[0].argument.name;
+      const rb = fn.scope.getBinding(rest);
+      if (!rb || rb.constantViolations.length || rb.referencePaths.length !== 1) return;
+      const body = fn.node.body.body;
+      let lead = 0;
+      while (t.isVariableDeclaration(body[lead]) && body[lead].kind !== 'const' && body[lead].declarations.every((d) => t.isIdentifier(d.id) && !d.init)) lead++;
+      const e = t.isExpressionStatement(body[lead]) ? body[lead].expression : null;
+      if (!t.isAssignmentExpression(e, { operator: '=' }) || !t.isArrayPattern(e.left) || !t.isIdentifier(e.right, { name: rest }) ||
+          rb.referencePaths[0].node !== e.right) return;
+      const els = e.left.elements;
+      const noNames = (x) => (t.isLiteral(x) && !t.isTemplateLiteral(x)) || (t.isArrayExpression(x) && x.elements.every((q) => q && noNames(q))) ||
+        (t.isObjectExpression(x) && x.properties.every((q) => t.isObjectProperty(q) && !q.computed && noNames(q.value)));
+      if (!els.every((x, i) => x && (t.isIdentifier(x) || (t.isAssignmentPattern(x) && t.isIdentifier(x.left) && noNames(x.right)) ||
+        (t.isRestElement(x) && t.isIdentifier(x.argument) && i === els.length - 1)))) return;
+      const targets = els.map((x) => (t.isIdentifier(x) ? x.name : t.isAssignmentPattern(x) ? x.left.name : x.argument.name));
+      const declared = new Set(body.slice(0, lead).flatMap((d) => d.declarations.map((x) => x.id.name)));
+      if (new Set(targets).size !== targets.length || !targets.every((x) => declared.has(x) && fn.scope.getBinding(x)?.scope === fn.scope)) return;
+      if (!fn.isArrowFunctionExpression() && usesOwnArguments(fn)) return;
+      fn.node.params = els.map((x) => t.cloneNode(x, true));
+      const decls = body.slice(0, lead).map((d) => t.variableDeclaration(d.kind, d.declarations.filter((x) => !targets.includes(x.id.name))))
+        .filter((d) => d.declarations.length);
+      fn.node.body.body = [...decls, ...body.slice(lead + 1)];
+      n++;
+    },
+  });
+  return n;
+}
+
+// js-confuser movedDeclarations, fonksiyon bildirimleri: function F(a, …, P) { if (!P) { P = function (…) {…}; } … }
+// P hiçbir çağrıda verilmeyen bir parametredir (her çağrı yeri P'nin konumundan az argüman geçer): giriş anında
+// undefined'dır, test her zaman tutar → P = function (…) {…};  (P başka yerde yazılmıyor, arguments kullanılmıyor)
+// if (!P) { P = function (…) {…}; }  → { name, asg } (yoksa null)
+function movedFnAssign(ip) {
+  const { test, consequent, alternate } = ip.node;
+  if (alternate || !t.isUnaryExpression(test, { operator: '!' }) || !t.isIdentifier(test.argument)) return null;
+  const body = t.isBlockStatement(consequent) ? consequent.body : [consequent];
+  const asg = body.length === 1 && t.isExpressionStatement(body[0]) ? body[0].expression : null;
+  if (!t.isAssignmentExpression(asg, { operator: '=' }) || !t.isIdentifier(asg.left, { name: test.argument.name }) || !t.isFunctionExpression(asg.right)) return null;
+  return { name: test.argument.name, asg };
+}
+
+function movedFunctions(ast) {
+  let n = 0;
+  traverse(ast, {
+    IfStatement(ip) {
+      const mf = movedFnAssign(ip);
+      if (!mf) return;
+      const { asg } = mf;
+      const test = ip.node.test;
+      const fn = ip.parentPath.parentPath;
+      if (!fn?.isFunction() || !ip.parentPath.isBlockStatement() || !Array.isArray(ip.container)) return;
+      const b = ip.scope.getBinding(test.argument.name);
+      const idx = fn.node.params.indexOf(b?.path.node);
+      if (!b || b.kind !== 'param' || idx < 0 || !t.isIdentifier(fn.node.params[idx]) || b.constantViolations.length !== 1) return;
+      if (!fn.isArrowFunctionExpression() && usesOwnArguments(fn)) return;
+      // fonksiyonun her çağrısı (bildirimi ya da tek kez atanan ifadesi) P'nin konumuna argüman vermez
+      const site = machineSite(fn);
+      if (!site) return;
+      if (!site.binding.referencePaths.every((r) => {
+        const c = r.parentPath;
+        return (c.isCallExpression({ callee: r.node }) || c.isNewExpression({ callee: r.node })) && c.node.arguments.length <= idx &&
+          !c.node.arguments.some((a) => t.isSpreadElement(a));
+      })) return;
+      ip.replaceWith(t.expressionStatement(asg));
       n++;
     },
   });
@@ -586,7 +771,9 @@ function generators(ast, onLog) {
 
 export async function run(ast, { onLog, bump }) {
   const d = dispatchers(ast, onLog);
-  const r = restParams(ast);
+  const r = restParams(ast) + restDestructure(ast);
+  const mf = movedFunctions(ast);
+  if (mf) onLog(`confuser: parametreye taşınmış ${mf} fonksiyon bildirimi düz atamaya çevrildi`, 'info');
   if (r) onLog(`confuser: ${r} fonksiyonda rest parametre + length gerçek parametrelere çevrildi`, 'info');
   const g = generators(ast, onLog);
   bump('dispatcher', d);

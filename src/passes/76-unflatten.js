@@ -787,6 +787,39 @@ function tidyList(stmts) {
 
 // ── sürücüler ───────────────────────────────────────────
 
+// Sabit dizili makine (makine kopyası kabuğuna taşınınca): var S = [n, …slice(a, b)]; while (sum(S) !== N) …
+// S'nin başlangıcı statik hesaplanır (sayılar + hiç değişmeyen sabit dizinin dilimleri); S yalnızca döngüde,
+// iç fonksiyonlar dışında kullanılır: makine olduğu yerde açılır.
+function staticArrayMachine(p, mach, sumFns, onLog) {
+  const d = mach.disc;
+  if (!t.isCallExpression(d) || !t.isIdentifier(d.callee) || !sumFns.has(d.callee.name) || d.arguments.length !== 1 || !t.isIdentifier(d.arguments[0])) return false;
+  const name = d.arguments[0].name;
+  const b = p.scope.getBinding(name);
+  if (!b?.path.isVariableDeclarator() || b.constantViolations.length) return false;
+  const decl = b.path.parentPath;
+  const target = machineTarget(p);
+  if (decl.parentPath !== target.parentPath || decl.key >= target.key) return false;
+  const fn = p.getFunctionParent();
+  if (!b.referencePaths.every((r) => r.findParent((y) => y === p) && r.getFunctionParent() === fn)) return false;
+  const arr = staticStates(b.path.node.init, b.path);
+  if (!arr) return false;
+  const m = { ...mach, vars: new Set(), arrays: new Set([name]), sumFns };
+  try {
+    const out = tidyList(unflatten(m, new State(new Map(), new Map([[name, arr]]))));
+    if (Array.isArray(target.container)) {
+      if (out.length) target.replaceWithMultiple(out); else target.remove();
+    } else {
+      target.replaceWith(t.blockStatement(out));
+    }
+    onLog(`unflatten: ${name} sabit dizili makinesi düz koda çevrildi`, 'info');
+    return true;
+  } catch (e) {
+    if (!(e instanceof Unsupported)) throw e;
+    onLog(`unflatten: makine açılamadı (${e.message})`, 'warn');
+    return false;
+  }
+}
+
 function collectSumFns(ast) {
   const sumFns = new Set();
   traverse(ast, {
@@ -851,19 +884,50 @@ function identifierMachine(p, mach, sumFns, onLog, done, findings) {
   }
 }
 
+// Makine fonksiyonunun adı, bağı ve kopyaların ekleneceği deyim: function M(…) {…} ya da (yalnızca bir kez,
+// program/fonksiyon gövdesi düzeyinde atanan, başlangıçsız bildirilmiş değişkene) V = function (…) {…};
+export function machineSite(p) {
+  const n = p.node;
+  if (n.async || n.generator) return null;
+  if (p.isFunctionDeclaration()) {
+    const binding = n.id && p.parentPath.scope.getBinding(n.id.name);
+    return binding ? { name: n.id.name, binding, anchor: p } : null;
+  }
+  const asg = p.parentPath;
+  if (n.id || !asg.isAssignmentExpression({ operator: '=', right: n }) || !t.isIdentifier(asg.node.left)) return null;
+  const stmt = asg.parentPath;
+  const where = stmt.parentPath;
+  if (!stmt.isExpressionStatement() || !(where.isProgram() || (where.isBlockStatement() && where.parentPath.isFunction()))) return null;
+  const binding = asg.scope.getBinding(asg.node.left.name);
+  if (!binding || binding.constantViolations.length !== 1 || binding.constantViolations[0] !== asg) return null;
+  // başlangıçsız bildirilmiş değişken, ya da (movedDeclarations) aynı fonksiyonun düz parametresi: her kullanım
+  // atama deyiminden sonraki bir deyimde (ya da atanan fonksiyonun içinde)
+  if (binding.kind === 'param') {
+    if (!t.isIdentifier(binding.path.node) || where.parentPath !== binding.scope.path) return null;
+    const after = binding.referencePaths.every((r) => r.findParent((x) => x === p) ||
+      (() => { const top = r.findParent((x) => x.parentPath === where); return top && top.key > stmt.key; })());
+    return after ? { name: asg.node.left.name, binding, anchor: stmt } : null;
+  }
+  if (!binding.path.isVariableDeclarator() || binding.path.node.init) return null;
+  return { name: asg.node.left.name, binding, anchor: stmt };
+}
+
 // js-confuser 2.x: function main(states, scope = {...}) { while (sum(states) !== N) switch (sum(states)) {...} }
 // Başlangıç dizisi çağrı yerinde oluşur; sandbox'ta çağrı başına gözlenir ve her farklı başlangıç için
 // makinesi açılmış bir kopya fonksiyon üretilir.
 async function arrayMachines(ast, sumFns, { sandbox, onLog }) {
   const targets = [];
   traverse(ast, {
-    FunctionDeclaration(p) {
-      // gövde: [ …önce çalışan deyimler (parametre açma vb.), makine döngüsü ]
+    'FunctionDeclaration|FunctionExpression'(p) {
+      // V = function (states, scope = {…}, rt, args) {…}  — tek kez atanan, yalnızca çağrılan fonksiyon ifadesi
+      // (js-confuser yüksek ayar: iç makineler ve dağıtıcı); kopyalar atamanın ardına bildirim olarak eklenir
+      const site = machineSite(p);
+      if (!site) return;
       // sondaki çıplak return; (makineden düşüldüğünde undefined döndürür) makineden sonra kalabilir
       const all = p.node.body.body;
       const tail = all.length > 1 && t.isReturnStatement(all[all.length - 1]) && !all[all.length - 1].argument ? 1 : 0;
       const body = tail ? all.slice(0, -1) : all;
-      if (!p.node.id || !body.length) return;
+      if (!body.length) return;
       const last = body[body.length - 1];
       const mach = t.isLabeledStatement(last) ? machineOf(last.body, last.label.name) : machineOf(last);
       if (!mach || !t.isCallExpression(mach.disc) || !t.isIdentifier(mach.disc.callee) || !sumFns.has(mach.disc.callee.name)) return;
@@ -883,16 +947,18 @@ async function arrayMachines(ast, sumFns, { sandbox, onLog }) {
         if (elem < 0 || pi < 0) return;
         // dizinin başka elemanları durum yolunu yazmamalı
         if (first.left.elements.some((e, i) => i !== elem && e && gen(e).includes(path))) return;
-      } else if (prefix.some((s) => gen(s).match(new RegExp(`\\b${arg.name.replace(/\$/g, '\\$')}\\b`)))) {
+      } else {
         // döngüden önceki deyimler durum dizisine dokunmamalı: başlangıç değeri çağrı yerindeki argümandır
-        return;
+        // (bağ üzerinden: iç fonksiyonların aynı adlı parametreleri sayılmaz)
+        const ab = p.scope.getBinding(arg.name);
+        const prefixPaths = p.get('body.body').slice(0, prefix.length);
+        if (!ab || [...ab.referencePaths, ...ab.constantViolations].some((r) => prefixPaths.some((sp) => r === sp || r.findParent((x) => x === sp)))) return;
       }
-      const b = p.parentPath.scope.getBinding(p.node.id.name);
-      if (!b) return;
+      const b = site.binding;
       const calls = b.referencePaths.map((r) => r.parentPath);
       if (!calls.every((c, i) => c.isCallExpression({ callee: b.referencePaths[i].node }) && c.node.arguments.length > pi &&
           !c.node.arguments.some((a) => t.isSpreadElement(a)))) return;
-      targets.push({ p, mach, tail, pi, elem, arrayName: elem < 0 ? arg.name : pathOf(arg), pathNode: elem < 0 ? null : arg, calls });
+      targets.push({ p, ...site, mach, tail, pi, elem, arrayName: elem < 0 ? arg.name : pathOf(arg), pathNode: elem < 0 ? null : arg, calls });
     },
   });
   if (!targets.length || !sandbox) return 0;
@@ -958,15 +1024,16 @@ function __peelInit(k, w, e) {
           const body = tidyList(unflatten(m, new State(new Map(), new Map([[tg.arrayName, JSON.parse(json)]]))));
           // js-confuser aynı adı farklı kapsamlarda yeniden kullanır: generateUid yalnızca üst kapsamlara bakar,
           // çağrı yerini saran iç kapsamdaki aynı adlı kopya yeni fonksiyonu gölgeleyebilir. Ad program genelinde benzersiz olmalı.
-          name = uniqueName(`${tg.p.node.id.name}_${clones.size}`);
-          const fn = t.cloneNode(tg.p.node, true);
-          fn.id = t.identifier(name);
-          fn.body = t.blockStatement([...fn.body.body.slice(0, -1 - tg.tail), ...body, ...fn.body.body.slice(fn.body.body.length - tg.tail)]);
-          tg.p.insertAfter(fn);
+          name = uniqueName(`${tg.name}_${clones.size}`);
+          const src = tg.p.node;
+          const fn = t.functionDeclaration(t.identifier(name), src.params.map((x) => t.cloneNode(x, true)), t.blockStatement([
+            ...src.body.body.slice(0, -1 - tg.tail).map((x) => t.cloneNode(x, true)), ...body,
+            ...src.body.body.slice(src.body.body.length - tg.tail).map((x) => t.cloneNode(x, true))]));
+          tg.anchor.insertAfter(fn);
           made++;
         } catch (e) {
           if (!(e instanceof Unsupported)) throw e;
-          onLog(`unflatten: ${tg.p.node.id.name} başlangıcı açılamadı (${e.message})`, 'warn');
+          onLog(`unflatten: ${tg.name} başlangıcı açılamadı (${e.message})`, 'warn');
           name = null;
         }
         clones.set(json, name);
@@ -975,10 +1042,10 @@ function __peelInit(k, w, e) {
       c.node.callee = t.identifier(name);
       converted++;
     });
-    if (converted) onLog(`unflatten: ${tg.p.node.id.name} — ${converted}/${tg.calls.length} çağrı düz koda çevrilmiş kopyaya bağlandı (başlangıç durumu çalışma anında gözlendi)`, 'info');
-    tg.p.scope.crawl();
-    const b = tg.p.parentPath.scope.getBinding(tg.p.node.id.name);
-    if (b && !b.referencePaths.some((x) => !x.findParent((y) => y === tg.p))) tg.p.remove();
+    if (converted) onLog(`unflatten: ${tg.name} — ${converted}/${tg.calls.length} çağrı düz koda çevrilmiş kopyaya bağlandı (başlangıç durumu çalışma anında gözlendi)`, 'info');
+    tg.anchor.parentPath.scope.crawl();
+    const b = tg.anchor.parentPath.scope.getBinding(tg.name);
+    if (b && !b.referencePaths.some((x) => !x.findParent((y) => y === tg.p))) tg.anchor.remove();
   }
   return made;
 }
@@ -1096,7 +1163,7 @@ export async function run(ast, { onLog, bump, sandbox, findings }) {
         if (!mach) return;
         if (p.findParent((x) => x.isWithStatement())) return;
         if (normalizeCaseDecls(mach.sw, used)) p.scope.crawl();
-        if (identifierMachine(p, mach, sumFns, onLog, done, findings)) n++;
+        if (identifierMachine(p, mach, sumFns, onLog, done, findings) || staticArrayMachine(p, mach, sumFns, onLog)) n++;
       },
     },
   });

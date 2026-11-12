@@ -1,6 +1,8 @@
 import * as t from '@babel/types';
 import { traverse, gen } from '../util/ast.js';
 import { literalValue } from '../util/pure.js';
+import { readDispatcher } from './37-confuser.js';
+import { parse } from '../core/parse.js';
 
 // Closure içinde tanımlı decoder'lar (ör. sarmalayıcı fonksiyonun içindeki M) statik olarak
 // erişilemez. Program, her literal argümanlı çağrı __peelCall üzerinden geçecek şekilde
@@ -45,6 +47,10 @@ function __peelGlobalName(v) {
     try { if (globalThis[k] === v) return "\\u0000global:" + k; } catch (e) {}
   }
   return null;
+}
+function __peelSrcOf(id) {
+  var f = __peelFns[id];
+  return typeof f === "function" ? Function.prototype.toString.call(f) : null;
 }
 function __peelSrcOk(id) {
   var f = __peelFns[id];
@@ -223,7 +229,19 @@ function collectGroups(ast) {
   });
   // js-confuser CFF: decoder anahtarı durum değişkenine bağlı, hiçbir çağrı literal değil (yalnızca dinamik)
   const byBinding = [...groups.values()].filter((g) => {
+    // js-confuser dispatcher'ı (fns[name]() dağıtıcısı) gövdesinde string decoder'ları taşısa da decoder değildir:
+    // çağrısını değerle değiştirmek gövdesindeki altyapının silinmesine yol açar (confuser pass'i açar)
+    const fnPaths = [g.binding.path, ...g.binding.constantViolations.map((v) => (v.isAssignmentExpression() ? v.get('right') : v))];
+    if (fnPaths.some((fp) => (fp.isFunctionDeclaration() || fp.isFunctionExpression()) && readDispatcher(fp))) return false;
     if ((g.calls.length > 0 || g.dynamic.length > 0) && looksLikeDecoder(g.binding)) return true;
+    // js-confuser globalConcealing getGlobal("ad") (kapsam nesnesinden yerele bölünmüş): yalnızca tek string
+    // argümanlı çağrılar, gövde dışarıya yazmıyor; sonuçların hepsi global nesne olmalı (aşağıda strict denetimi)
+    if (g.calls.length && !g.dynamic.length && g.calls.every((c) => c.node.arguments.length === 1 && t.isStringLiteral(c.node.arguments[0])) &&
+        fnPaths.some((fp) => fp.isFunction()) && fnPaths.every((fp) => !fp.isFunction() || !writesOutside(fp))) {
+      g.strict = true;
+      g.globalsOnly = true;
+      return true;
+    }
     if ((g.numeric ?? 0) < MIN_CALLS) return false;
     g.calls = g.calls.filter((c) => c.node.arguments.some((a) => isIndexLit(literalValue(a).value)));
     return true;
@@ -231,6 +249,43 @@ function collectGroups(ast) {
   // yol gruplarının decoder olup olmadığı çalışma anında, yakalanan fonksiyonun kaynağından anlaşılır
   const byPath = [...pathGroups.values()].flatMap((m) => [...m.values()]);
   return [...byBinding, ...byPath].map((g, id) => Object.assign(g, { id }));
+}
+
+// Fonksiyon metni (programdan yakalanan) dışarıya yazmıyor ve iç içe fonksiyon/çağrı içermiyor mu?
+// Yalnızca ayrıştırılır; çağrı, new, iç fonksiyon, delete, yield/await varsa saf sayılmaz.
+function pureSource(src) {
+  let ast;
+  try { ast = parse(`(${src})`); } catch { return false; }
+  let fnPath = null;
+  traverse(ast, { Function(p) { fnPath = p; p.stop(); } });
+  if (!fnPath || fnPath.node.async || fnPath.node.generator || writesOutside(fnPath)) return false;
+  let ok = true;
+  fnPath.traverse({
+    'CallExpression|NewExpression|Function|YieldExpression|AwaitExpression|TaggedTemplateExpression'(q) { ok = false; q.stop(); },
+    UnaryExpression(q) { if (q.node.operator === 'delete') { ok = false; q.stop(); } },
+  });
+  return ok;
+}
+
+// Fonksiyon kendi kapsamı dışındaki bir bağa (ya da onun özelliğine) yazıyor mu?
+function writesOutside(fnPath) {
+  let hit = false;
+  const outside = (id, at) => {
+    const b = at.scope.getBinding(id.name);
+    return !b || !(b.scope === fnPath.scope || b.scope.path.findParent((x) => x === fnPath));
+  };
+  fnPath.traverse({
+    'AssignmentExpression|UpdateExpression'(q) {
+      let target = q.isAssignmentExpression() ? q.node.left : q.node.argument;
+      while (t.isMemberExpression(target)) target = target.object;
+      if (t.isIdentifier(target) && outside(target, q)) { hit = true; q.stop(); }
+      else if (!t.isIdentifier(target) && !t.isMemberExpression(q.isAssignmentExpression() ? q.node.left : q.node.argument)) {
+        t.traverseFast(target, (n) => { if (t.isIdentifier(n) && outside(n, q)) hit = true; });
+        if (hit) q.stop();
+      }
+    },
+  });
+  return hit;
 }
 
 function looksLikeDecoder(b) {
@@ -367,6 +422,9 @@ async function resolveCalls(ast, ctx) {
     if (!observe) continue;
     for (const c of g.dynamic) {
       const { node } = c;
+      // decoder ilkel değerlerle çağrılır; dizi/nesne argümanlı çağrı (js-confuser makine kopyası: M([durumlar], {…}))
+      // fonksiyonun asıl işini yapar, sonucu gözlenen değerle değiştirmek yan etkilerini silerdi
+      if (node.arguments.some((a) => t.isArrayExpression(a) || t.isObjectExpression(a) || t.isFunction(a))) continue;
       const copy = t.callExpression(node.callee, node.arguments);
       saved.push([node, node.callee, node.arguments]);
       node.arguments = [t.numericLiteral(sites.length), copy];
@@ -403,6 +461,17 @@ async function resolveCalls(ast, ctx) {
         const numeric = g.calls.filter((c) => c.node.arguments.some((a) => isIndexLit(literalValue(a).value))).length;
         // eşik altındaki gruplar: her çağrı string vermeli ve değerlendirmede yan etki gözlenmemeli (aşağıda)
         g.strict = numeric < MIN_CALLS && (await sandbox.batchIn(opened.token, [`__peelSrcOk(${g.id})`])).results?.[0]?.value !== true;
+        // kaynağı decoder'a benzemeyen az çağrılı yol: decoder biçimi şart — her çağrıda sayısal (indeks) argüman
+        // (js-confuser decoder'ı (1, s.K.d)(1956, 9)) ya da her sonuç bir global nesne (globalConcealing
+        // getGlobal("ad")); kapsam nesnesindeki string→string fonksiyon decoder değildir
+        g.globalsOnly = g.strict && g.calls.some((c) => !c.node.arguments.some((a) => isIndexLit(literalValue(a).value)));
+        // kaynağı dışarıya yazmayan (yakalanan fonksiyonun metni ayrıştırılır, çalıştırılmaz) saf fonksiyonun
+        // string sonuçları da katlanabilir: function (x) { return "<" + x + ">"; }
+        if (g.globalsOnly) {
+          const sr = await sandbox.batchIn(opened.token, [`__peelSrcOf(${g.id})`]);
+          const src = sr.ok && sr.results[0]?.type === 'string' ? sr.results[0].value : null;
+          if (src !== null && pureSource(src)) g.globalsOnly = false;
+        }
       }
       const unique = [...new Set(g.calls.map(argsKey))];
       const r = await sandbox.batchIn(opened.token, unique.map((args) => `__peelEval(${g.id}, ${args})`));
@@ -416,6 +485,7 @@ async function resolveCalls(ast, ctx) {
       if (g.strict) {
         const imp = await sandbox.batchIn(opened.token, [`__peelImpure[${g.id}] === true`]);
         if (values.size < unique.length || !imp.ok || imp.results[0]?.value !== false) continue;
+        if (g.globalsOnly && [...values.values()].some((v) => !v.startsWith('\u0000global:'))) continue;
       }
       decoders.add(g);
 
