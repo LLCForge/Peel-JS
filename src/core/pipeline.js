@@ -15,7 +15,7 @@ const DEEP_MAX_LEN = 1_000_000; // QuickJS'te 1 MB'lık programı çalıştırma
  * @param {object|null} o.sandbox  sandboxApi uyumlu nesne; null ise sandbox pass'leri atlanır
  */
 export async function deobfuscate(input, {
-  level = 2, only = null, sandbox = null, deep = false, signal = null,
+  level = 2, only = null, order = null, sandbox = null, deep = false, signal = null,
   onLog = () => {}, onProgress = () => {}, onPass = () => {}, onSnapshot = () => {},
 } = {}) {
   const stats = {};
@@ -24,6 +24,8 @@ export async function deobfuscate(input, {
 
   let enabled = PASSES.filter((p) => (only ? only.includes(p.id) : p.level <= level));
   if (!sandbox) enabled = enabled.filter((p) => p.needs !== 'sandbox');
+  // E32: özel pass sırası (listede olmayan etkin pass'ler kendi sıralarıyla sona eklenir)
+  if (order) enabled = [...order.map((id) => enabled.find((p) => p.id === id)).filter(Boolean), ...enabled.filter((p) => !order.includes(p.id))];
   const textPasses = enabled.filter((p) => p.kind === 'text');
   const astPasses = enabled.filter((p) => p.kind === 'ast');
 
