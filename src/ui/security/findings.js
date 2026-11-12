@@ -7,14 +7,11 @@ export function renderDetection(root, data) {
   if (!d) return;
   const tools = table([tr('Araç', 'Tool'), tr('Skor', 'Score'), tr('Kanıt', 'Evidence'), tr('Profil', 'Profile')],
     d.tools.slice(0, 12).map((x) => [x.name, x.score, x.evidence.join(' · '), x.profile]), ['', 'num', 'rep-muted', 'mono']);
-  const cfg = d.config.filter((c) => c.value !== false && c.value !== 'yok' && c.value !== 'bilinmiyor');
   root.append(section(tr('Obfuscator parmak izi', 'Obfuscator fingerprint'),
     tools ?? muted(tr('Bilinen bir araç imzası bulunamadı.', 'No known tool signature found.')),
     el('p', { class: 'rep-muted' }, `${tr('Otomatik profil', 'Automatic profile')}: `, el('b', {}, d.profile.profile), ` — ${d.profile.reason}`),
     d.versions.length ? h4(tr('Sürüm', 'Version')) : null,
     table([tr('Araç', 'Tool'), tr('Sürüm', 'Version'), tr('Kanıt', 'Evidence')], d.versions.map((v) => [v.tool, v.version, v.evidence]), ['', 'mono', 'rep-muted']),
-    cfg.length ? h4(tr('Geri çıkarılan ayarlar', 'Recovered settings')) : null,
-    table([tr('Ayar', 'Option'), tr('Değer', 'Value'), tr('Kanıt', 'Evidence')], cfg.map((c) => [c.option, JSON.stringify(c.value), c.evidence]), ['mono', 'mono', 'rep-muted']),
     d.chains.maxDepth ? el('p', { class: 'rep-muted' }, `${tr('Decoder zinciri derinliği', 'Decoder chain depth')}: ${d.chains.maxDepth}`) : null,
     table([tr('Fonksiyon', 'Function'), tr('Katman', 'Layers')], d.chains.chains.map((c) => [c.name, c.depth]), ['mono', 'num'])));
   if (data.passConfidence?.length) {

@@ -7,6 +7,8 @@ import { PASSES } from './registry.js';
 import { parse } from './parse.js';
 import { traverse, generate } from '../util/ast.js';
 import { snapshot, same } from './behavior.js';
+import { tokenize, align } from '../ui/srcmap.js';
+import { createTrace } from '../analysis/trace.js';
 
 // Gizlilik skoru: gizleme kalıntıları ağırlıklı; boyut küçük etkili (eşitlik bozucu)
 export function obfuscationScore(code) {
@@ -116,30 +118,50 @@ export async function rollbackChain(input, snapshots, { sandbox, level = 4, sign
   return { culprit: { id: culprit.id, round: culprit.round }, dependents, excluded: [culprit.id], code: rerun.code, fixed };
 }
 
+
 /**
- * E36: seçili bölgede artımlı çözme. Seçimi kapsayan en içteki fonksiyon işaretlenir, program bağlamıyla
- * birlikte çözülür ve yalnızca o fonksiyonun çözülmüş hâli orijinal koda yerleştirilir; geri kalan kod
- * değişmez. Bölge dışındaki tanımlara yapılan referanslar korunmuyorsa ya da davranış değişirse reddedilir.
+ * E36: seçili bölgede artımlı çözme. Bölge tüm programın bağlamıyla çözülür (decoder'lar, sabit tablolar seçim
+ * dışında olabilir) ve yalnızca bölgenin çözülmüş karşılığı orijinal koda yerleştirilir; geri kalan kod değişmez.
+ *  - Seçimi kapsayan bir fonksiyon varsa o fonksiyon bir yönerge ile işaretlenir, çıktıda bulunup yerine konur.
+ *  - Program seviyesindeki seçimde seçimle kesişen üst seviye deyimler bölgedir; çıktının üst seviye deyimleri
+ *    girdi/çıktı token hizalamasıyla (ui/srcmap.js) bu bölgeye atanır.
+ * Bölge dışarıda olmayan adlara bağlıysa ya da birleşik program davranışı değişirse reddedilir.
+ * Dönüş: { ok, code, region: { from, to } (orijinal koddaki değiştirilen aralık), before, after } ya da { ok: false, reason }
  */
 const MARK = 'peel:region';
-export async function deobfuscateRegion(code, start, end, { sandbox = null, level = 4, signal = null } = {}) {
-  const ast = parse(code);
-  let target = null;
-  traverse(ast, {
-    Function(p) {
-      const n = p.node;
-      if (n.start <= start && n.end >= end && t.isBlockStatement(n.body)) {
-        if (!target || n.end - n.start < target.node.end - target.node.start) target = p;
-      }
+const ONLY = (level) => PASSES.filter((p) => p.level <= level && p.id !== 'rename').map((p) => p.id);
+
+function freeNames(path) {
+  const free = new Set();
+  path.traverse({
+    Identifier(q) {
+      if (!q.isReferencedIdentifier()) return;
+      const b = q.scope.getBinding(q.node.name);
+      if (!b || !(b.path === path || b.path.findParent((x) => x === path))) free.add(q.node.name);
     },
   });
-  if (!target) return { ok: false, reason: 'seçim bir fonksiyonun içinde değil: tüm programı çözün' };
-  const { start: fs, end: fe } = target.node;
+  return free;
+}
+
+async function finish(code, from, to, piece, free, sandbox) {
+  const known = new Set();
+  traverse(parse(code), { Identifier(q) { known.add(q.node.name); } });
+  const unknown = [...free].filter((n) => !known.has(n) && !(n in globalThis));
+  if (unknown.length) return { ok: false, reason: `bölge dışarıda olmayan adlara bağlı: ${unknown.slice(0, 5).join(', ')}` };
+  const merged = code.slice(0, from) + piece + code.slice(to);
+  try { parse(merged); } catch (e) { return { ok: false, reason: `birleştirilen kod parse edilemedi: ${e.message}` }; }
+  if (sandbox) {
+    const [a, b] = [await snapshot(sandbox, code), await snapshot(sandbox, merged)];
+    if (a.ok && !same(a, b)) return { ok: false, reason: 'bölge değişikliği davranışı değiştirdi' };
+  }
+  return { ok: true, code: merged, region: { from, to, start: from, end: from + piece.length }, before: code.slice(from, to), after: piece };
+}
+
+async function functionRegion(code, ast, target, { sandbox, level, signal }) {
+  const { start: from, end: to } = target.node;
   target.node.body.directives.unshift(t.directive(t.directiveLiteral(MARK)));
   const marked = generate(ast, { jsescOption: { minimal: true } }).code;
-  // rename kapalı: bölge dışında kalan adlar orijinalle eşleşmeli
-  const only = PASSES.filter((p) => p.level <= level && p.id !== 'rename').map((p) => p.id);
-  const r = await deobfuscate(marked, { only, sandbox, deep: Boolean(sandbox), signal });
+  const r = await deobfuscate(marked, { only: ONLY(level), sandbox, deep: Boolean(sandbox), signal });
   if (r.error) return { ok: false, reason: r.error };
   let piece = null;
   let free = null;
@@ -149,25 +171,94 @@ export async function deobfuscateRegion(code, start, end, { sandbox = null, leve
       const i = dirs.findIndex((d) => d.value.value === MARK);
       if (i < 0 || piece) return;
       dirs.splice(i, 1);
-      free = new Set();
-      p.traverse({ Identifier(q) { if (q.isReferencedIdentifier() && !q.scope.hasBinding(q.node.name, true)) free.add(q.node.name); } });
-      // dış kapsamdaki adlar (program ya da üst fonksiyonlar)
-      p.traverse({ Identifier(q) { if (q.isReferencedIdentifier()) { const b = q.scope.getBinding(q.node.name); if (b && !b.path.findParent((x) => x === p)) free.add(q.node.name); } } });
+      free = freeNames(p);
       piece = generate(p.node, { jsescOption: { minimal: true } }).code;
     },
   });
   if (!piece) return { ok: false, reason: 'çözülmüş kodda bölge bulunamadı (fonksiyon kaldırıldı ya da satır içine alındı)' };
-  // orijinal programda görünen adlar: bölge bunların dışında bir ada (ör. silinmiş decoder'ın yerine üretilen yardımcı) bağlıysa reddet
-  const known = new Set();
-  traverse(parse(code), { Identifier(q) { known.add(q.node.name); } });
-  const unknown = [...free].filter((n) => !known.has(n) && !(n in globalThis));
-  if (unknown.length) return { ok: false, reason: `bölge dışarıda olmayan adlara bağlı: ${unknown.slice(0, 5).join(', ')}` };
-  // fonksiyon ifadesi ise parantez/ad durumu korunur: kaynak dilimiyle değiştir
-  const merged = code.slice(0, fs) + piece + code.slice(fe);
-  try { parse(merged); } catch (e) { return { ok: false, reason: `birleştirilen kod parse edilemedi: ${e.message}` }; }
-  if (sandbox) {
-    const [a, b] = [await snapshot(sandbox, code), await snapshot(sandbox, merged)];
-    if (a.ok && !same(a, b)) return { ok: false, reason: 'bölge değişikliği davranışı değiştirdi' };
+  return finish(code, from, to, piece, free, sandbox);
+}
+
+async function programRegion(code, ast, start, end, { sandbox, level, signal }) {
+  const body = ast.program.body;
+  const hit = body.filter((s) => s.end > start && s.start < Math.max(end, start + 1));
+  if (!hit.length) return { ok: false, reason: 'seçim bir deyimle kesişmiyor' };
+  const from = hit[0].start;
+  const to = hit[hit.length - 1].end;
+  // bölge sınırları yorum işaretleriyle taşınır; izleyici (keepComments) pass'lerin kaybettiği yorumları
+  // eşlenen düğümlere geri takar. İşaretler çıktıda sırasıyla bulunursa aradaki metin bölgedir.
+  hit[0].leadingComments = [...(hit[0].leadingComments ?? []), { type: 'CommentBlock', value: `${MARK}:start` }];
+  const last = hit[hit.length - 1];
+  last.trailingComments = [...(last.trailingComments ?? []), { type: 'CommentBlock', value: `${MARK}:end` }];
+  const marked = generate(ast, { comments: true, jsescOption: { minimal: true } }).code;
+  const r = await deobfuscate(marked, { only: ONLY(level), sandbox, deep: Boolean(sandbox), signal, trace: createTrace({ keepComments: true }) });
+  if (r.error) return { ok: false, reason: r.error };
+  const out = r.code;
+  const s0 = out.indexOf(`/*${MARK}:start*/`);
+  const s1 = out.indexOf(`/*${MARK}:end*/`);
+  if (s0 >= 0 && s1 > s0) {
+    const piece = out.slice(s0 + `/*${MARK}:start*/`.length, s1).trim();
+    let pieceAst;
+    try { pieceAst = parse(piece); } catch { pieceAst = null; }
+    if (pieceAst) {
+      let free = new Set();
+      traverse(pieceAst, { Program(p) { free = freeNames(p); p.stop(); } });
+      if (piece) return finish(code, from, to, piece, free, sandbox);
+    }
   }
-  return { ok: true, code: merged, region: { start: fs, end: fs + piece.length }, before: code.slice(fs, fe), after: piece };
+  // işaretler kaybolduysa: çıktının üst seviye deyimleri token hizalamasıyla bölgeye atanır
+  const clean = (x) => x.split(`/*${MARK}:start*/`).join('').split(`/*${MARK}:end*/`).join('');
+  return alignedRegion(code, clean(out), from, to, sandbox);
+}
+
+async function alignedRegion(code, out, from, to, sandbox) {
+  const A = tokenize(out);
+  const B = tokenize(code);
+  if (!A || !B) return { ok: false, reason: 'kod token dizisine ayrılamadı' };
+  const pairs = align(A, B);
+  const outAst = parse(out);
+  const picked = [];
+  traverse(outAst, {
+    Program(prog) {
+      // eşleşmesi olmayan deyim sıradaki konumunu bir önceki deyimden devralır
+      let prevInside = false;
+      for (const sp of prog.get('body')) {
+        let inside = 0;
+        let outside = 0;
+        for (const [i, j] of pairs) {
+          if (A[i].start < sp.node.start || A[i].start >= sp.node.end) continue;
+          if (B[j].start >= from && B[j].start < to) inside++; else outside++;
+        }
+        const isIn = inside || outside ? inside > outside : prevInside;
+        if (isIn) picked.push(sp);
+        prevInside = isIn;
+      }
+      prog.stop();
+    },
+  });
+  if (!picked.length) return { ok: false, reason: 'bölgenin çözülmüş karşılığı yok (tamamen sadeleşti ya da başka deyimlere taşındı)' };
+  const free = new Set();
+  for (const sp of picked) for (const n of freeNames(sp)) free.add(n);
+  // bölgedeki deyimlerin bildirdiği adlar dışarıdan kullanılabilir: orijinalde de bildirilmiş olmalı
+  const piece = picked.map((sp) => out.slice(sp.node.start, sp.node.end)).join('\n');
+  return finish(code, from, to, piece, free, sandbox);
+}
+
+export async function deobfuscateRegion(code, start, end, { sandbox = null, level = 4, signal = null } = {}) {
+  let ast;
+  try { ast = parse(code); } catch (e) { return { ok: false, reason: e.message }; }
+  let target = null;
+  traverse(ast, {
+    Function(p) {
+      const n = p.node;
+      if (n.start <= start && n.end >= end && t.isBlockStatement(n.body)) {
+        if (!target || n.end - n.start < target.node.end - target.node.start) target = p;
+      }
+    },
+  });
+  if (target) {
+    const r = await functionRegion(code, ast, target, { sandbox, level, signal });
+    if (r.ok) return r;
+  }
+  return programRegion(code, parse(code), start, end, { sandbox, level, signal });
 }

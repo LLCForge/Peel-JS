@@ -28,9 +28,9 @@ print(flags, isGlobal, srcLen, asText, host, port, key, val, u === undefined, pi
 // EXPECT: "/a\\/b/m"
 // EXPECT: = "evil.example"
 // EXPECT: = console.log
-// EXPECT: return "mid"
+// EXPECT: if (n > 10)
 // EXPECT: "https://" + host + ".example"
 // GONE: with (
 // GONE: M.length
 // GONE: void 0
-// GONE: ? "mid"
+// EXPECT: } else if (port > 8000) {

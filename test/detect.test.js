@@ -3,12 +3,15 @@
 import assert from 'node:assert/strict';
 import JavaScriptObfuscator from 'javascript-obfuscator';
 import JsConfuser from 'js-confuser';
-import { detectTools, autoProfile, recoverConfig, detectVersions, decoderChains, passConfidence, TOOL_COUNT, PROFILES } from '../src/core/detect.js';
+import { obfuscatorSettings } from '../src/core/engine-report.js';
+import { detectTools, autoProfile, detectVersions, decoderChains, passConfidence, TOOL_COUNT, PROFILES } from '../src/core/detect.js';
 import { PASSES } from '../src/core/registry.js';
 
 const SRC = 'function greet(n){return "Hello, "+n+"!";} var config={endpoint:"https://api.example.com/v1/collect",retries:3}; function sum(a,b){return a+b;} console.log(greet("PEEL"), config.endpoint, sum(1,2));';
 const io = (o) => JavaScriptObfuscator.obfuscate(SRC, o).getObfuscatedCode();
-const opt = (cfg, name) => cfg.find((c) => c.option === name)?.value;
+// E28 engine-report.obfuscatorSettings içinde: burada eklenen yetenekler (kodlanmış splitStrings, selfDefending denetleyicisi) denetlenir
+const recoverConfig = (code) => obfuscatorSettings(code, code).settings;
+const opt = (cfg, name) => cfg[name];
 
 assert.ok(TOOL_COUNT >= 40, `imza sayısı ${TOOL_COUNT}`);
 // profil pass adları kayıtlı pass'lerle tutarlı
@@ -22,14 +25,14 @@ assert.ok(det[0].score >= 70);
 assert.equal(autoProfile(det).profile, 'obfuscator-io');
 assert.equal(autoProfile([]).passes, null, 'bilinmeyen araç: tüm pass\'ler');
 let cfg = recoverConfig(b64);
-assert.deepEqual(opt(cfg, 'stringArrayEncoding'), ['base64']);
-assert.equal(opt(cfg, 'stringArrayRotate'), true);
+assert.equal(opt(cfg, 'stringArrayEncoding'), 'base64');
+assert.equal(opt(cfg, 'rotateStringArray'), true);
 assert.equal(opt(cfg, 'identifierNamesGenerator'), 'hexadecimal');
 assert.ok(opt(cfg, 'stringArrayThreshold') >= 0.75);
 
 const rc4 = io({ stringArrayEncoding: ['rc4'], stringArrayThreshold: 1, splitStrings: true, splitStringsChunkLength: 4, identifierNamesGenerator: 'mangled', selfDefending: true });
 cfg = recoverConfig(rc4);
-assert.deepEqual(opt(cfg, 'stringArrayEncoding'), ['rc4']);
+assert.equal(opt(cfg, 'stringArrayEncoding'), 'rc4');
 assert.equal(opt(cfg, 'identifierNamesGenerator'), 'mangled');
 assert.equal(opt(cfg, 'splitStrings'), true);
 assert.equal(opt(cfg, 'selfDefending'), true);

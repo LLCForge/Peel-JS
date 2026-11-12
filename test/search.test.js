@@ -58,6 +58,19 @@ assert.equal(reg.ok, true, reg.reason);
 assert.ok(reg.code.includes('function untouched() { return "\\x61\\x62"; }'), 'bölge dışı aynen kalmalı');
 assert.ok(reg.after.includes('"hello"'));
 assert.ok(!reg.after.includes('peel:region'));
-assert.equal((await deobfuscateRegion(regionSrc, 0, 5, { sandbox })).ok, false);
+// program seviyesi seçim: decoder ve tablo seçim dışında, bölge tüm programın bağlamıyla çözülür
+const prog = [
+  'var _0xt = ["\\x61\\x62", "\\x63\\x64", "\\x65"];',
+  'function _0xd(i) { return _0xt[i - 1]; }',
+  'console.log(_0xd(1) + _0xd(2));',
+  'console.log(_0xd(3));',
+].join('\n');
+const at2 = prog.indexOf('console.log(_0xd(3))');
+const pr = await deobfuscateRegion(prog, at2, at2 + 8, { sandbox });
+assert.equal(pr.ok, true, pr.reason);
+assert.match(pr.after, /console\.log\("e"\)/);
+assert.ok(pr.code.startsWith(prog.slice(0, at2)), 'seçim öncesi aynen kalmalı');
+assert.ok(!pr.after.includes("peel:region"));
+assert.equal(pr.region.from, at2);
 
 console.log('search: ok');

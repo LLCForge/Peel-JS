@@ -9,7 +9,7 @@ import { createCollection, sampleFeatures } from '../../security/families.js';
 import { createTracker, snapshot } from '../../security/tracking.js';
 import { searchPassOrder, cascade, deobfuscateRegion, rollbackChain } from '../../core/search.js';
 import { splitBundle, moduleFiles } from '../../core/bundle.js';
-import { recoverNames, generateSourceMap } from '../../core/sourcemap.js';
+import { attachInlineMap, generateSourceMap } from '../../core/sourcemap.js';
 import { zipStore } from '../../security/archive.js';
 
 const collection = createCollection();
@@ -206,18 +206,18 @@ function bundleTool(a) {
   const out = status();
   const result = el('div');
   const split = button(tr('Modüllere ayır', 'Split into modules'), () => {
-    const s = splitBundle(a.getOutput() || a.getInput());
-    if (!s.modules.length) { out.textContent = s.note ?? s.error ?? tr('Tanınan bir bundle modül tablosu yok.', 'No recognised bundle module table.'); result.textContent = ''; return; }
-    out.textContent = `${s.kind}: ${s.modules.length} ${tr('modül', 'modules')}${s.entry.length ? ` · ${tr('giriş', 'entry')} ${s.entry.join(', ')}` : ''}`;
+    const s = splitBundle(a.getOutput(), { map: false }) ?? splitBundle(a.getText());
+    if (!s?.modules.length) { out.textContent = tr('Tanınan bir bundle modül tablosu yok.', 'No recognised bundle module table.'); result.textContent = ''; return; }
+    out.textContent = `${s.kind}: ${s.modules.length} ${tr('modül', 'modules')}`;
     const files = moduleFiles(s);
     result.replaceChildren(
       button(tr('ZIP indir', 'Download ZIP'), () => a.download('peel-modules.zip', zipStore(files), 'application/zip')),
       el('table', { class: 'rep-table' }, el('tbody', {}, ...s.modules.slice(0, 200).map((m, i) => el('tr', {},
-        el('td', { class: 'mono' }, m.id), el('td', { class: 'mono' }, m.name ?? '–'), el('td', { class: 'mono' }, m.deps.join(', ') || '–'),
+        el('td', { class: 'mono' }, m.id), el('td', { class: 'mono' }, files[i].name), el('td', { class: 'mono' }, m.deps.join(', ') || '–'),
         el('td', {}, button(tr('Girdiye yükle', 'Load as input'), () => a.setInput(files[i].text), 'ghost small')))))));
   });
   return tool(tr('Bundle ayırma', 'Bundle splitting'),
-    muted('webpack 4/5, webpackChunk, browserify, esbuild, Parcel'), el('div', { class: 'rep-actions' }, split), out, result);
+    muted('webpack 4/5, webpackChunk, browserify, esbuild, Parcel, Rollup (kaynak haritalı)'), el('div', { class: 'rep-actions' }, split), out, result);
 }
 
 function sourceMapTool(a) {
@@ -226,9 +226,9 @@ function sourceMapTool(a) {
     field(tr('Girdinin source map dosyası (.map): isimleri kurtar', 'Source map for the input (.map): recover names'), fileInput('.map,.json', async (f) => {
       try {
         if (f.size > 50 << 20) throw new Error(tr('dosya çok büyük', 'file too large'));
-        const r = recoverNames(a.getInput(), await f.text());
-        a.setInput(r.code);
-        out.textContent = `${r.renamed.length} ${tr('isim kurtarıldı', 'names recovered')} (${r.mapped} ${tr('eşleme', 'mappings')}). ${tr('Girdi güncellendi; yeniden çözün.', 'Input updated; peel again.')}`;
+        // harita girdiye satır içi eklenir; 05-sourcemap pass'i çözme sırasında isimleri kurtarır
+        a.setInput(attachInlineMap(a.getInput(), await f.text()));
+        out.textContent = tr('Harita girdiye eklendi; çözdüğünüzde isimler kurtarılır.', 'Map attached to the input; names are recovered when you peel.');
       } catch (e) { fail(out, e); }
     })),
     el('div', { class: 'rep-actions' }, button(tr('Çıktı source map\'ini indir', 'Download output source map'), () => {

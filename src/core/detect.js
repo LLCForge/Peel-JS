@@ -1,25 +1,21 @@
-// E26/E28/E29/E30/E40/E27: obfuscator imza veritabanı, skor eşiğiyle otomatik pass profili, ayar geri
-// çıkarma, sürüm ayırt etme, decoder zinciri derinliği ve pass başına güven skoru.
+// E26/E29/E30/E40/E27: obfuscator imza veritabanı, skor eşiğiyle otomatik pass profili,
+// sürüm ayırt etme, decoder zinciri derinliği ve pass başına güven skoru.
 // Hepsi kanıtıyla birlikte raporlanan sezgiler; kesin hüküm değildir.
-
-import * as t from '@babel/types';
-import { parse } from './parse.js';
-import { traverse } from '../util/ast.js';
 
 // Profil: araç tanındığında çalıştırılacak pass'ler (skor eşiği aşılırsa). 'all' = bilinmeyen araç modu (E31).
 export const PROFILES = {
   all: null,
-  'obfuscator-io': ['normalize', 'unpack', 'predecoders', 'literals', 'const-arrays', 'const-objects', 'wrappers', 'string-array',
-    'runtime-decoders', 'proxy', 'const-fold', 'dead-code', 'opaque', 'state-var', 'unflatten', 'control-flow', 'simplify', 'unused',
-    'static-decode', 'restructure', 'static-string-array'],
-  'js-confuser': ['normalize', 'unpack', 'predecoders', 'literals', 'const-arrays', 'const-objects', 'wrappers', 'string-array',
-    'runtime-decoders', 'runtime-functions', 'proxy', 'const-fold', 'dead-code', 'opaque', 'state-var', 'unflatten', 'vm',
-    'control-flow', 'simplify', 'unused', 'static-decode', 'restructure', 'dispatcher'],
-  packer: ['normalize', 'unpack', 'predecoders', 'literals', 'const-fold', 'simplify', 'static-decode'],
-  encoder: ['normalize', 'unpack', 'predecoders', 'literals', 'const-fold', 'static-decode'],
-  minifier: ['normalize', 'literals', 'const-fold', 'simplify', 'static-decode', 'restructure', 'rename'],
-  bundler: ['normalize', 'literals', 'simplify', 'static-decode', 'restructure'],
-  transpiler: ['normalize', 'literals', 'simplify', 'restructure', 'static-decode', 'regenerator'],
+  'obfuscator-io': ['normalize', 'sourcemap', 'unpack', 'predecoders', 'literals', 'static-decode', 'integrity', 'const-arrays', 'const-objects', 'wrappers', 'static-strings',
+    'string-array', 'runtime-decoders', 'proxy', 'indirection', 'const-fold', 'dead-code', 'opaque', 'state-var', 'unflatten',
+    'control-flow', 'flow', 'simplify', 'restructure', 'dead-extra', 'unused'],
+  'js-confuser': ['normalize', 'sourcemap', 'unpack', 'predecoders', 'literals', 'static-decode', 'integrity', 'const-arrays', 'const-objects', 'wrappers', 'string-array',
+    'runtime-decoders', 'runtime-functions', 'confuser', 'proxy', 'indirection', 'const-fold', 'dead-code', 'opaque', 'state-var',
+    'unflatten', 'vm', 'control-flow', 'flow', 'simplify', 'restructure', 'dead-extra', 'unused'],
+  packer: ['normalize', 'sourcemap', 'unpack', 'predecoders', 'literals', 'static-decode', 'const-fold', 'simplify'],
+  encoder: ['normalize', 'sourcemap', 'unpack', 'predecoders', 'literals', 'static-decode', 'const-fold'],
+  minifier: ['normalize', 'sourcemap', 'unpack', 'predecoders', 'literals', 'static-decode', 'const-fold', 'indirection', 'flow', 'simplify', 'restructure', 'rename'],
+  bundler: ['normalize', 'sourcemap', 'unpack', 'predecoders', 'literals', 'static-decode', 'indirection', 'simplify', 'restructure'],
+  transpiler: ['normalize', 'sourcemap', 'unpack', 'predecoders', 'literals', 'static-decode', 'confuser', 'indirection', 'flow', 'regenerator', 'simplify', 'restructure'],
 };
 
 // [regex, kanıt, ağırlık(0–100), en az eşleşme]
@@ -120,84 +116,7 @@ export function autoProfile(detections, threshold = 70) {
   return { profile: hit.map((d) => d.profile).join('+'), passes: passes.length ? passes : null, reason: `${hit.map((d) => `${d.name} ${d.score}`).join(', ')} ≥ ${threshold}` };
 }
 
-// stringArrayThreshold tahmini: dizideki string sayısı / (dizi + kullanıcı kodunda literal kalan string).
-// Decoder, rotasyon IIFE'si ve RC4 anahtar argümanları altyapıdır, sayılmaz.
-function estimateThreshold(code) {
-  let ast;
-  try { ast = parse(code); } catch { return null; }
-  let inArray = 0;
-  let arrayNode = null;
-  traverse(ast, {
-    ArrayExpression(p) {
-      const els = p.node.elements;
-      if (els.length >= 3 && els.every((e) => t.isStringLiteral(e)) && els.length > inArray) { inArray = els.length; arrayNode = p.node; }
-    },
-  });
-  if (!arrayNode) return null;
-  let left = 0;
-  traverse(ast, {
-    Function(p) {
-      const src = code.slice(p.node.start, p.node.end);
-      // decoder (ofset çıkarma) ve rotasyon/dizi altyapısı
-      if (/=\s*\w+\s*-\s*\(?-?0x[0-9a-f]+/.test(src.slice(0, 200)) || /'push'\]\(\w+\['shift'\]/.test(src) || src.includes(code.slice(arrayNode.start, arrayNode.start + 40))) p.skip();
-    },
-    StringLiteral(p) {
-      if (p.findParent((x) => x.node === arrayNode)) return;
-      const parent = p.parentPath;
-      // decoder(0x1a2, 'anahtar') çağrısındaki RC4 anahtarı
-      if (parent.isCallExpression() && parent.node.arguments.some((a) => t.isNumericLiteral(a))) return;
-      if (p.node.value.length < 2) return;
-      left++;
-    },
-  });
-  return { value: Number((inArray / (inArray + left)).toFixed(2)), inArray, left };
-}
-
-// --- E28: obfuscator.io ayarlarının geri çıkarılması ---
-export function recoverConfig(code) {
-  const out = [];
-  const add = (option, value, evidence) => out.push({ option, value, evidence });
-  const ids = code.match(/\b_0x[0-9a-f]{4,6}\b/g) ?? [];
-  const mangled = /function\s+[a-z]\(\)\{var\s+[a-z]=\[/.test(code) || /\bvar\s+[a-z]{1,2}=[a-z]\b;function\s+[a-z]{1,2}\([a-z],[a-z]\)\{[a-z]=[a-z]-0x/.test(code);
-  add('identifierNamesGenerator', ids.length > 10 ? 'hexadecimal' : mangled ? 'mangled' : 'bilinmiyor', ids.length > 10 ? `${ids.length} _0x adı` : mangled ? 'tek harfli adlar ve string dizisi' : '');
-  const arrayMatch = code.match(/(?:function\s+(_?\w+)\(\)\{(?:var|const)\s+\w+=\[|var\s+(_0x\w+)\s*=\s*\[)/);
-  add('stringArray', Boolean(arrayMatch), arrayMatch ? 'string dizisi tanımı' : 'dizi yok');
-  if (arrayMatch) {
-    const rotate = /\['push'\]\(\w+\['shift'\]\(\)\)|\.push\(\w+\.shift\(\)\)/.test(code);
-    add('stringArrayRotate', rotate, rotate ? 'push(shift()) rotasyonu' : 'rotasyon yok');
-    const enc = /(?:%\s*0x100|% 256)[\s\S]{0,300}charCodeAt/.test(code) && /abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\+\/=/.test(code)
-      ? 'rc4' : /abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\+\/=/.test(code) ? 'base64' : 'none';
-    add('stringArrayEncoding', [enc], enc === 'rc4' ? 'RC4 anahtar planlama + base64 alfabesi' : enc === 'base64' ? 'küçük harf önce base64 alfabesi' : 'decoder kodlama içermiyor');
-    const shift = /\(\s*\w+\s*-\s*-0x[0-9a-f]+\s*,|\w+\s*-\s*0x[0-9a-f]+\s*,\s*\w+\)\s*;?\s*\}/.test(code) && /function\s+_0x\w+\(_0x\w+,_0x\w+\)\{return _0x\w+\(/.test(code);
-    add('stringArrayWrappersType', /function\s+_0x\w+\(_0x\w+,_0x\w+(?:,_0x\w+)*\)\{return _0x\w+\(/.test(code) ? 'function' : /var\s+_0x\w+=_0x\w+[,;]/.test(code) ? 'variable' : 'yok',
-      'sarmalayıcı biçimi');
-    add('stringArrayIndexShift', shift, shift ? 'çağrılarda ofset kaydırma' : '');
-    const th = estimateThreshold(code);
-    if (th) add('stringArrayThreshold', th.value, `${th.inArray} dizide, ${th.left} literal kaldı (tahmin)`);
-  }
-  // parçalar literal ya da (base64/rc4 kodlamada) dizi çağrısı olarak birleştirilir
-  const part = String.raw`(?:'[^'\\]{1,12}'|\w+\(0x[0-9a-f]+(?:,\s*'[^']{4}')?\))`;
-  const split = code.match(new RegExp(`${part}\\s*\\+\\s*${part}`, 'g')) ?? [];
-  if (split.length >= 3) {
-    // parça uzunluğu yalnızca açık literal parçalardan ölçülebilir (kodlanmış parçalar dizide)
-    const lens = split.flatMap((s) => (s.match(/'([^']*)'/g) ?? []).filter((x) => !/^'[^']{4}'$/.test(x) || !/\(0x/.test(s)).map((x) => x.length - 2));
-    add('splitStrings', true, `${split.length} birleştirme`);
-    if (lens.length) add('splitStringsChunkLength', Math.max(...lens), 'en uzun açık parça');
-  } else add('splitStrings', false, '');
-  const cff = (code.match(/['"]\d+(\|\d+)+['"]\[?['"]?\.?split/g) ?? []).length + (code.match(/switch\s*\(\s*\w+\[\w+\+\+\]\s*\)\s*\{\s*case\s*'\d+'/g) ?? []).length;
-  add('controlFlowFlattening', cff > 0, cff ? `${cff} "0|1|2" dispatcher` : '');
-  add('transformObjectKeys', /var\s+_0x\w+=\{\};_0x\w+\[_0x\w+\(/.test(code), 'boş nesne + ardışık anahtar atamaları');
-  add('deadCodeInjection', /if\s*\(\s*_0x\w+\(0x[0-9a-f]+(?:,'[^']*')?\)\s*!==\s*_0x\w+\(0x/.test(code) || /if\(\w+\['\w{5}'\]\(\w+\(0x[0-9a-f]+/.test(code), 'sabit karşılaştırmalı ölü dal');
-  // regex kodlanmış olabilir: tek seferlik çağrı denetleyicisi (h=!![] … return h=![],k) de selfDefending kalıbıdır
-  const selfDef = /\(\(\(\.\+\)\+\)\+\)\+\$/.test(code) || /return\s+\w+=!\[\],\w+;\}/.test(code) && /'\\x0a'\)!==-0x1/.test(code);
-  add('selfDefending', selfDef, 'self-defending regex ya da tek seferlik çağrı denetleyicisi');
-  add('debugProtection', /debugger/.test(code) && /constructor/.test(code), 'debugger + constructor');
-  add('disableConsoleOutput', /\['log','warn','info','error','exception','table','trace'\]|'console'\)\['log'\]=/.test(code), 'console yöntemleri listesi');
-  add('numbersToExpressions', (code.match(/-?0x[0-9a-f]+\s*\*\s*-?0x[0-9a-f]+\s*\+\s*-?0x[0-9a-f]+/g) ?? []).length >= 3, 'sayılar aritmetik ifadeye çevrilmiş');
-  add('unicodeEscapeSequence', /(\\x[0-9a-f]{2}){6,}/i.test(code), '\\xNN dizileri');
-  add('compact', !/\n\s+\S/.test(code.slice(0, 5000)), 'satır sonu/girinti yok');
-  return out;
-}
+// E28 (obfuscator.io ayarlarının geri çıkarılması) engine-report.js obfuscatorSettings içindedir.
 
 // --- E30: sürüm ayırt etme ---
 export function detectVersions(code) {
@@ -258,7 +177,8 @@ const BASE = {
   normalize: 95, unpack: 90, predecoders: 85, literals: 98, 'const-arrays': 90, 'const-objects': 88, wrappers: 88,
   'string-array': 85, 'runtime-decoders': 70, 'runtime-functions': 60, proxy: 85, 'const-fold': 92, 'dead-code': 80,
   opaque: 80, 'state-var': 75, unflatten: 72, vm: 60, 'control-flow': 75, simplify: 95, unused: 85, rename: 90,
-  'static-decode': 97, restructure: 92, dispatcher: 85, 'static-string-array': 93, regenerator: 88,
+  'static-decode': 97, restructure: 92, 'static-strings': 93, regenerator: 88, confuser: 85, indirection: 88, flow: 90,
+  'dead-extra': 88, integrity: 80, sourcemap: 95,
 };
 export function passConfidence(events, { verified = false } = {}) {
   const byPass = new Map();
