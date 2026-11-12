@@ -19,6 +19,11 @@ import * as deadCode from '../passes/80-dead-code.js';
 import * as simplify from '../passes/85-simplify.js';
 import * as unused from '../passes/90-unused.js';
 import * as rename from '../passes/95-rename.js';
+import * as opaqueSmt from '../passes/62-opaque-smt.js';
+import * as ssaOpt from '../passes/55-ssa-opt.js';
+import * as loopOpt from '../passes/57-loop-opt.js';
+import * as specializeFns from '../passes/58-specialize.js';
+import * as cfgOpt from '../passes/87-cfg-opt.js';
 import * as staticStrings from '../passes/31-static-strings.js';
 import * as integrity from '../passes/24-integrity.js';
 import * as confuser from '../passes/37-confuser.js';
@@ -50,12 +55,17 @@ export const PASSES = [
   { id: 'const-fold',   level: 1, kind: 'ast',  needs: 'sandbox', mod: constFold },
   { id: 'dead-code',    level: 2, kind: 'ast',  needs: null,      mod: deadCode },
   { id: 'opaque',       level: 2, kind: 'ast',  needs: null,      mod: opaque },
+  { id: 'opaque-smt',   level: 2, kind: 'ast',  needs: null,      mod: opaqueSmt },
+  { id: 'ssa-opt',      level: 3, kind: 'ast',  needs: null,      mod: ssaOpt },
+  { id: 'loop-opt',     level: 3, kind: 'ast',  needs: null,      mod: loopOpt },
+  { id: 'specialize',   level: 4, kind: 'ast',  needs: null,      mod: specializeFns },
   { id: 'state-var',    level: 3, kind: 'ast',  needs: null,      mod: stateVar },
   { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
   { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
   { id: 'flow',         level: 2, kind: 'ast',  needs: null,      mod: flow },
   { id: 'simplify',     level: 2, kind: 'ast',  needs: null,      mod: simplify },
+  { id: 'cfg-opt',      level: 3, kind: 'ast',  needs: null,      mod: cfgOpt },
   { id: 'dead-extra',   level: 2, kind: 'ast',  needs: null,      mod: deadExtra },
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
   { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },

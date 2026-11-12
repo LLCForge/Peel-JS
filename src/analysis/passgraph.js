@@ -25,6 +25,11 @@ export const PASS_DEPS = {
   simplify: { after: ['dead-code', 'control-flow'], why: 'sadeleştirme son yapı üzerinde' },
   unused: { after: ['simplify'], why: 'kullanılmayanlar sadeleştirmeden sonra belli olur' },
   rename: { after: ['unused'], why: 'adlandırma en son, kalan binding\'ler üzerinde' },
+  'opaque-smt': { after: ['opaque'], why: 'sabit testler taşındıktan sonra kalan koşullar SMT ile kanıtlanır' },
+  'ssa-opt': { after: ['dead-code', 'opaque-smt'], why: 'SSA kafesleri ölü dallar ve kanıtlı koşullar ayıklandıktan sonra' },
+  'loop-opt': { after: ['ssa-opt'], why: 'IV/aralık tespiti SCCP ve kopya yayılımı sonrası sade döngüde' },
+  specialize: { after: ['loop-opt'], why: 'kısmi değerlendirme sadeleşmiş gövde üzerinde' },
+  'cfg-opt': { after: ['simplify'], why: 'if-dönüşümü ve ipekleme son sadeleştirilmiş yapıda' },
 };
 
 /** Kayıt defteri sırasını bağımlılıklarla denetler; topolojik sıra, döngüler ve ihlaller. */

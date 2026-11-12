@@ -105,6 +105,42 @@ function threat(th, runtime, actions) {
       btn('action.masked', actions.masked)));
 }
 
+// Sembolik/derleyici analizleri (report.symbolic): yalnızca dolu alt bölümler gösterilir
+function symbolic(sym) {
+  if (!sym || sym.skipped) return muted('report.sym.none');
+  const parts = [];
+  const sub = (key, node) => { if (node) parts.push(el('h4', {}, t(key)), node); };
+  const rows = (list) => Array.isArray(list) && list.length ? list : null;
+  const st = sym.static ?? {};
+  if (rows(sym.opaque)) sub('report.sym.opaque', table(['#', 'koşul', '≡', 'kanıt'], sym.opaque.map((o) => [`${o.where}:${o.line}`, o.cond, String(o.value), o.proof]), ['num', 'mono', 'mono', 'rep-muted']));
+  if (rows(st.unreachable)) sub('report.sym.unreachable', table(['fn', '#', 'koşul', 'kanıt'], st.unreachable.map((u) => [u.fn, u.line, u.cond, u.proof]), ['mono', 'num', 'mono', 'rep-muted']));
+  const conc = Array.isArray(sym.concolic) ? sym.concolic : [];
+  const runs = conc.flatMap((c) => c.runs.filter((r) => r.newCoverage).map((r) => [c.target ?? 'program', JSON.stringify(r.minimized ?? r.inputs), (r.out ?? []).join(' | ').slice(0, 120), `${Math.round(c.coverage.ratio * 100)}%`]));
+  if (runs.length) sub('report.sym.concolic', table(['hedef', 'girdi', 'çıktı', 'kapsam'], runs, ['mono', 'mono', 'mono', 'num']));
+  const regex = conc.flatMap((c) => c.regexes ?? []);
+  if (regex.length) sub('report.sym.regex', table(['girdi', '#', 'dal', 'regex'], regex.map((r) => [r.input, r.line, String(r.taken), r.regex]), ['mono', 'num', 'mono', 'mono']));
+  const corr = conc.flatMap((c) => c.correlations ?? []);
+  if (corr.length) sub('report.sym.correlations', table(['A', 'B', 'ilişki', 'kanıt'], corr.map((x) => [x.lineA, x.lineB, x.relation, x.proven ? 'çözücü' : `${x.runs} koşu`]), ['num', 'num', '', 'rep-muted']));
+  const fns = sym.symbolic?.functions;
+  if (rows(fns)) sub('report.sym.functions', table(['fn', 'yol', 'ön koşul', 'son koşul'], fns.map((f) => [`${f.name}${f.exact ? '' : ' ~'}`, f.paths, f.precondition, (f.postcondition ?? []).join(' ; ')]), ['mono', 'num', 'mono', 'mono']));
+  const tr = sym.symbolic?.sampleTrace;
+  if (tr?.steps?.length) sub('report.sym.trace', el('p', { class: 'mono rep-muted' }, `${tr.fn}: ${tr.steps.map((s) => `${s.kind}@${s.line}${s.taken === undefined ? '' : s.taken ? '+' : '-'}`).join(' → ')}`));
+  if (rows(st.taint)) sub('report.sym.taint', table(['#', 'kaynak', 'havuz'], st.taint.map((x) => [x.line, x.sources.join(', '), x.sink]), ['num', 'mono', 'mono']));
+  if (rows(st.effects)) sub('report.sym.effects', table(['fn', 'saf', 'etkiler'], st.effects.map((e) => [e.name, e.pure ? '✓' : '–', [...e.writesGlobal.map((g) => `yaz:${g}`), e.writesHeap ? 'yığın' : '', ...e.callsUnknown, ...e.nondet, e.throws ? 'throw' : ''].filter(Boolean).join(', ')]), ['mono', '', 'rep-muted']));
+  if (rows(st.aliases)) sub('report.sym.alias', table(['a', 'b', 'nesne'], st.aliases.map((a) => [a.a, a.b, a.objects.join(', ')]), ['mono', 'mono', 'rep-muted']));
+  if (rows(st.shapes)) sub('report.sym.shapes', table(['yer', 'şekil', 'kaçış'], st.shapes.map((s) => [s.site, s.shape, (st.escape ?? []).find((e) => e.site === s.site)?.escapes ? 'evet' : 'hayır']), ['mono', 'mono', '']));
+  if (rows(st.variables)) sub('report.sym.vars', table(['fn', 'ad', 'tip', 'aralık / uzunluk', 'null'], st.variables.map((v) => [v.fn, v.name, v.types.join('|'), v.range ? `[${v.range.map((x) => x ?? '∞').join(', ')}]` : v.length ? `len [${v.length.map((x) => x ?? '∞').join(', ')}]` : '–', v.nullable]), ['mono', 'mono', 'mono', 'mono', '']));
+  const dyn = sym.dynamic;
+  if (dyn?.ok) {
+    const inv = dyn.invariants.flatMap((f) => f.items.map((i) => [f.fn, i.at ?? 'giriş', i.expr]));
+    const asserts = (dyn.assertions ?? []).filter((a) => a.valid).map((a) => [a.fn, a.at, a.assertion]);
+    if (inv.length || asserts.length) sub('report.sym.invariants', table(['fn', '', 'ifade'], [...inv.slice(0, 30), ...asserts.slice(0, 20)], ['mono', '', 'mono']));
+    if (rows(dyn.specs)) sub('report.sym.specs', table(['kural', 'tür', 'destek'], dyn.specs.map((s) => [s.rule, s.kind, s.support]), ['mono', '', 'num']));
+  }
+  if (sym.solver) parts.push(el('p', { class: 'rep-muted' }, `${t('report.sym.solver')}: ${sym.solver.calls} sorgu · ${sym.solver.sat} sat · ${sym.solver.unsat} unsat · ${sym.solver.unknown} ? · ${sym.ms} ms`));
+  return parts.length ? el('div', {}, ...parts) : muted('report.sym.none');
+}
+
 // Çözme motoru analizi: obfuscator ayarları, akış, bütünlük, ölü kod türleri, paket modülleri
 function engine(e, stats) {
   const parts = [];
@@ -152,6 +188,28 @@ function engine(e, stats) {
   return el('div', {}, ...parts);
 }
 
+// report.symbolic tembel bir fonksiyondur (analyze.js lazySymbolic): bölüm açılınca hesaplanır;
+// sonuç report.symbolicData'ya yazılır (JSON dışa aktarımına girer). Düz nesne de kabul edilir.
+function lazySymbolic(report) {
+  const s = report.symbolic;
+  if (typeof s !== 'function') return symbolic(s);
+  if (s.data) return symbolic(s.data);
+  const body = el('div', {}, muted('report.sym.pending'));
+  const box = el('details', { class: 'rep-lazy' }, el('summary', {}, t('report.sym.open')), body);
+  box.addEventListener('toggle', () => {
+    if (!box.open || box.dataset.loading) return;
+    box.dataset.loading = '1';
+    body.textContent = '';
+    body.append(muted('report.sym.loading'));
+    s().then((data) => {
+      report.symbolicData = data;
+      body.textContent = '';
+      body.append(symbolic(data));
+    });
+  });
+  return box;
+}
+
 function semanticsBody(data) {
   const box = el('div', { class: 'rep-semantics' });
   renderSemantics(box, data);
@@ -195,6 +253,7 @@ export function renderReport(root, report, onExport, actions = {}) {
       : muted('report.rollbacks.none')),
     report.engine ? section('report.engine', engine(report.engine, report.stats)) : null,
     report.semantics ? section('report.semantics', semanticsBody(report.semantics)) : null,
+    'symbolic' in report ? section('report.sym', lazySymbolic(report)) : null,
     exportBtn,
   ));
   // çalışma anı, doğrulama ve sandbox ayarları (src/ui/runtime)

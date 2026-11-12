@@ -129,6 +129,8 @@ export async function startServer({ host = '127.0.0.1', port = 8787, token = nul
         const out = { code: r.code, stats: r.stats, verified: r.verified, events: r.events };
         if (withReport) {
           out.report = await analyze({ input: code, text: r.text, output: r.code, events: r.events, sandbox });
+          // tembel sembolik rapor JSON yanıtında hesaplanmış hâliyle döner
+          out.report.symbolic = await out.report.symbolic();
           out.why = explainWhy({ input: code, report: out.report });
         }
         return out;

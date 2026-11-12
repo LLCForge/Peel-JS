@@ -204,6 +204,8 @@ async function processOne(item, o, ctx) {
   if (needReport) {
     report = await analyze({ input, text: r.text, output: code, events: r.events, sandbox, trace, stats: r.stats });
     report.stats = r.stats;
+    // sembolik rapor pahalı: yalnızca JSON rapor istendiğinde hesaplanır
+    report.symbolic = o.report || o.json ? await report.symbolic() : undefined;
     result.risk = report.threat.risk;
     result.techniques = detectTechniques(input).map((x) => x.id);
     result.why = explainWhy({ input, report }).map((x) => x.id);

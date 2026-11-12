@@ -6,6 +6,7 @@ import { encodingReport } from './encodings.js';
 import { runtimeExtras } from '../verify/run.js';
 import { analysisReport } from '../analysis/report.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
+import { symbolicReport } from '../symbolic/report.js';
 import { engineReport } from './engine-report.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
@@ -217,8 +218,18 @@ export async function analyze({ input, text, output, events = [], sandbox = null
       outputHash: fnv1a(output),
     },
     semantics,
+    // sembolik yürütme, concolic, SMT kanıtları, nokta/etki/taint, değişmezler: pahalı, isteğe bağlı
+    // report.symbolic() ilk çağrıda hesaplar (rapor bölümü açılınca); sonuç report.symbolicData'ya yazılır
+    symbolic: lazySymbolic({ text: text ?? input, output, sandbox }),
   };
   // çalışma anı (coverage, taint, worker, WASM…) ve doğrulama (güven, pass riski, denetimler) bölümleri
   Object.assign(report, await runtimeExtras({ report, input, text, output, events, sandbox, config }));
   return report;
+}
+
+// Tek seferlik tembel hesap: fonksiyon (JSON dışa aktarımda görünmez), sonuç önbellekte
+export function lazySymbolic(args) {
+  let p = null;
+  const fn = () => (p ??= symbolicReport(args).catch((e) => ({ skipped: e.message })).then((r) => { fn.data = r; return r; }));
+  return fn;
 }
