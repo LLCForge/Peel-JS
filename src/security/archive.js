@@ -1,6 +1,6 @@
 // Tarayıcı içinde arşiv açma: ZIP (XPI, CRX içindeki zip), CRX2/CRX3 başlığı ve tar (npm paketleri).
 // Dosyalar diske yazılmaz; yalnızca bellekte okunur. Boyut ve girdi sayısı sınırlıdır (zip bombası).
-import { inflateRaw } from '../compress/inflate.js';
+import { inflateRaw, crc32 } from '../compress/inflate.js';
 
 const MAX_ENTRIES = 5000;
 const MAX_TOTAL = 200 << 20;
@@ -86,4 +86,39 @@ export function parseTar(bytes) {
     paxPath = null;
   }
   return files;
+}
+
+// Sıkıştırmasız (stored) ZIP yazıcı: ayrılmış modülleri tek dosyada indirmek için
+export function zipStore(files) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let off = 0;
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const data = typeof f.text === 'string' ? enc.encode(f.text) : f.data;
+    const crc = crc32(data);
+    const local = new Uint8Array(30);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(6, 0x0800, true);
+    lv.setUint32(14, crc, true); lv.setUint32(18, data.length, true); lv.setUint32(22, data.length, true); lv.setUint16(26, name.length, true);
+    const cd = new Uint8Array(46);
+    const cv = new DataView(cd.buffer);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(8, 0x0800, true);
+    cv.setUint32(16, crc, true); cv.setUint32(20, data.length, true); cv.setUint32(24, data.length, true);
+    cv.setUint16(28, name.length, true); cv.setUint32(42, off, true);
+    parts.push(local, name, data);
+    central.push(cd, name);
+    off += 30 + name.length + data.length;
+  }
+  const cdSize = central.reduce((a, p) => a + p.length, 0);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+  ev.setUint32(12, cdSize, true); ev.setUint32(16, off, true);
+  const all = [...parts, ...central, end];
+  const out = new Uint8Array(all.reduce((a, p) => a + p.length, 0));
+  let o = 0;
+  for (const p of all) { out.set(p, o); o += p.length; }
+  return out;
 }
