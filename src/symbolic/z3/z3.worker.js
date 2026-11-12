@@ -39,7 +39,7 @@ self.onmessage = async (e) => {
   let result;
   try {
     if (type === 'init') { await start(); result = { ok: true }; }
-    else if (type === 'check') result = await checkWith(await start(), e.data.goal, e.data.timeoutMs);
+    else if (type === 'check') result = await checkWith(await start(), e.data.prep, e.data.timeoutMs);
     else result = { ok: false, error: `bilinmeyen istek: ${type}` };
   } catch (err) {
     result = type === 'init' ? { ok: false, error: err?.message ?? String(err) } : { status: 'unknown', backend: 'z3', ms: 0, reason: `z3: ${err?.message ?? err}` };

@@ -1,7 +1,7 @@
 import * as t from '@babel/types';
 import { parse } from '../core/parse.js';
 import { gen } from '../util/ast.js';
-import { proveEquivalent, synthesizeInputs } from './symbolic/api.js';
+import { proveEquivalent, synthesizeInputs } from '../symbolic/verify.js';
 import { argVectors, toSource } from './grammar.js';
 
 // I179: fonksiyon bazında eşdeğerlik testi. Girdi ve çıktıdaki üst seviye fonksiyonlar eşleştirilir; her çift
@@ -135,7 +135,7 @@ export async function functionEquivalence(sandbox, codeA, codeB, { samples = 12,
           const t0 = Date.now();
           const p = await proveEquivalent(fa.src, fb.src, { backend: 'auto', timeoutMs: left }).catch((e) => ({ status: 'unknown', reason: e.message }));
           budget?.charge?.({ solverMs: Date.now() - t0 });
-          res.proof = { status: p.status, backend: p.backend ?? null, reason: p.reason ?? null, counterexample: p.minimized ?? p.counterexample ?? null };
+          res.proof = { status: p.status, backend: p.backend ?? null, checked: p.checked ?? false, reason: p.reason ?? null, counterexample: p.minimized ?? p.counterexample ?? null };
           if (p.status === 'proved') res.status = 'proved';
           // çözücünün karşı örneği somut çalıştırmayla teyit edilir (model ile JS anlamı ayrışırsa kanıt sayılmaz)
           if (p.status === 'refuted') {

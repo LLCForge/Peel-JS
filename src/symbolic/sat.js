@@ -36,7 +36,7 @@ export class Sat {
   }
 
   /** @returns {{status:'sat'|'unsat'|'unknown', model?:Int8Array, proof?:number[][], conflicts:number}} */
-  solve({ maxConflicts = 200000, deadline = Infinity } = {}) {
+  solve({ maxConflicts = 200000, deadline = Infinity, assumptions = [] } = {}) {
     const n = this.n;
     const proof = [];
     if (this.trivialUnsat) { proof.push([]); return { status: 'unsat', proof, conflicts: 0 }; }
@@ -239,6 +239,16 @@ export class Sat {
         if (conflicts >= maxConflicts || (conflicts % 256 === 0 && Date.now() > deadline)) return { status: 'unknown', conflicts };
         if (--budget <= 0) { cancel(0); budget = luby(++restartNo) * 100; }
       } else {
+        // varsayımlar ilk karar seviyelerinde sırayla verilir (artımlı çözüm); yanlışlanan varsayım: varsayım altında UNSAT.
+        // Öğrenilen yan tümceler yalnızca veritabanından türer, DRUP günlüğü geçerli kalır (boş yan tümce yazılmaz).
+        if (lim.length < assumptions.length) {
+          const a = assumptions[lim.length];
+          const cur = value(a);
+          if (cur === -1) return { status: 'unsat', proof, conflicts, failedAssumption: a };
+          lim.push(trail.length);
+          if (cur === 0) assign(a, -1);
+          continue;
+        }
         const d = pick();
         if (!d) return { status: 'sat', model: val, conflicts };
         lim.push(trail.length);
@@ -249,48 +259,83 @@ export class Sat {
 }
 
 // DRUP denetleyici: her lemma için olumsuzlanmış literaller varsayılıp birim yayılımı çatışma üretmeli.
-// Çözücüden bağımsız, sade bir yayılım motoru kullanır.
-export function checkDrup(n, clauses, proof, { maxWork = 5e7 } = {}) {
-  const db = clauses.map((c) => c.slice());
-  let work = 0;
+// Çözücüden bağımsız, kendi iki-izlenen-literal yayılım motorunu kullanır (birimler kalıcı seviye 0'da).
+export function checkDrup(n, clauses, proof, { maxWork = 2e8 } = {}) {
   const val = new Int8Array(n + 1);
   const value = (l) => (l > 0 ? val[l] : -val[-l]);
-  const unitPropagate = (assumptions) => {
-    const set = [];
-    const put = (l) => { val[Math.abs(l)] = l > 0 ? 1 : -1; set.push(Math.abs(l)); };
-    let conflict = false;
-    for (const a of assumptions) {
-      const cur = value(a);
-      if (cur === -1) { conflict = true; break; }
-      if (cur === 0) put(a);
-    }
-    let changed = !conflict;
-    while (changed && !conflict) {
-      changed = false;
-      for (const c of db) {
-        work += c.length;
-        let unassigned = 0;
-        let last = 0;
-        let sat = false;
-        for (const l of c) {
-          const v = value(l);
-          if (v === 1) { sat = true; break; }
-          if (v === 0) { unassigned++; last = l; if (unassigned > 1) break; }
+  const watches = Array.from({ length: (n + 1) * 2 }, () => []);
+  const db = [];
+  const trail = [];
+  let qhead = 0;
+  let work = 0;
+  let rootConflict = false;
+  const put = (l) => { val[Math.abs(l)] = l > 0 ? 1 : -1; trail.push(l); };
+  // true: çatışma
+  const propagate = () => {
+    while (qhead < trail.length) {
+      const p = trail[qhead++];
+      const ws = watches[idx(p)];
+      let i = 0;
+      let j = 0;
+      let conflict = false;
+      while (i < ws.length) {
+        const c = db[ws[i++]];
+        work++;
+        if (c[0] === -p) { c[0] = c[1]; c[1] = -p; }
+        if (value(c[0]) === 1) { ws[j++] = ws[i - 1]; continue; }
+        let moved = false;
+        for (let k = 2; k < c.length; k++) {
+          if (value(c[k]) !== -1) { c[1] = c[k]; c[k] = -p; watches[idx(-c[1])].push(ws[i - 1]); moved = true; break; }
         }
-        if (sat || unassigned > 1) continue;
-        if (unassigned === 0) { conflict = true; break; }
-        put(last);
-        changed = true;
+        if (moved) continue;
+        ws[j++] = ws[i - 1];
+        if (value(c[0]) === -1) { conflict = true; while (i < ws.length) ws[j++] = ws[i++]; }
+        else put(c[0]);
       }
-      if (work > maxWork) break;
+      ws.length = j;
+      if (conflict) return true;
     }
-    for (const v of set) val[v] = 0;
+    return false;
+  };
+  const add = (clause) => {
+    const c = [...new Set(clause)];
+    if (c.some((l) => c.includes(-l))) return;
+    if (!c.length) { rootConflict = true; return; }
+    if (c.length === 1) {
+      const v = value(c[0]);
+      if (v === -1) rootConflict = true;
+      else if (v === 0) { put(c[0]); if (propagate()) rootConflict = true; }
+      return;
+    }
+    // izlenecek iki literal: mümkünse yanlış olmayanlar başta
+    c.sort((a, b) => value(b) - value(a));
+    db.push(c);
+    watches[idx(-c[0])].push(db.length - 1);
+    watches[idx(-c[1])].push(db.length - 1);
+    if (value(c[0]) === 0 && value(c[1]) === -1) { put(c[0]); if (propagate()) rootConflict = true; }
+    else if (value(c[0]) === -1) rootConflict = true;
+  };
+  for (const c of clauses) add(c);
+  const rup = (lemma) => {
+    if (rootConflict) return true;
+    const base = trail.length;
+    let conflict = false;
+    for (const l of lemma) {
+      const v = value(-l);
+      if (v === -1) { conflict = true; break; }
+      if (v === 0) put(-l);
+    }
+    if (!conflict) conflict = propagate();
+    for (let k = trail.length - 1; k >= base; k--) val[Math.abs(trail[k])] = 0;
+    trail.length = base;
+    qhead = base;
     return conflict;
   };
   for (const lemma of proof) {
-    if (!unitPropagate(lemma.map((l) => -l))) return { ok: false, reason: work > maxWork ? 'bütçe' : 'RUP başarısız' };
+    if (work > maxWork) return { ok: false, reason: 'bütçe' };
+    if (!rup(lemma)) return { ok: false, reason: 'RUP başarısız' };
     if (!lemma.length) return { ok: true, lemmas: proof.length };
-    db.push(lemma);
+    add(lemma);
   }
   return { ok: false, reason: 'boş yan tümce yok' };
 }
