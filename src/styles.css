@@ -329,3 +329,17 @@ table.rep-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* ── güvenlik araçları (src/ui/security) ───── */
+.sec-tool { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.sec-tool + .sec-tool { margin-top: 8px; }
+.sec-tool > summary { cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: 13px; }
+.sec-tool > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sec-body { display: grid; gap: 10px; padding: 0 14px 14px; }
+.sec-field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.sec-input { font: 13px var(--mono); color: var(--text); background: var(--raised); border: 1px solid var(--line-strong); border-radius: 6px; padding: 7px 10px; }
+.sec-input:focus-visible, .sec-file:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sec-file { font-size: 12px; color: var(--muted); }
+.sec-check { font-size: 13px; color: var(--muted); }
+.sec-pre { font: 12px var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.sec-status:empty { display: none; }

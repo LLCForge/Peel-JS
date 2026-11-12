@@ -426,7 +426,7 @@ export function encodingReport(strings) {
     const c = decodeCandidates(s);
     const chain = decodeChain(s);
     if (chain && chain.depth > 1 && (!c.length || chain.score >= c[0].score - 0.02)) {
-      rows.push({ value: s.slice(0, 120), best: { encoding: chain.layers.join(' → '), text: chain.text.slice(0, 300), score: chain.score, layers: chain.depth }, others: c.slice(0, 2) });
+      rows.push({ value: s.slice(0, 120), best: { encoding: `${chain.layers.join(' → ')} (${chain.depth} katman)`, text: chain.text.slice(0, 300), score: chain.score, layers: chain.depth }, others: c.slice(0, 2) });
     } else if (c.length) {
       rows.push({ value: s.slice(0, 120), best: { ...c[0], layers: 1 }, others: c.slice(1) });
     }

@@ -2,6 +2,8 @@
 // karakter dağılımı, rastgelelik testleri, ECB tekrarları, Kasiski / tesadüf indeksi, XOR anahtar
 // kurtarma (korelasyon, bilinen düz metin, küçük anahtar uzayında kaba kuvvet) ve doğal dil tespiti.
 
+import { decompressAny } from '../compress/index.js';
+
 const toBytes = (x) => (typeof x === 'string' ? Uint8Array.from(x, (c) => c.charCodeAt(0) & 255) : Uint8Array.from(x));
 
 // --- E617 / E618: entropi ---
@@ -387,6 +389,12 @@ const b64ToBytes = (s) => {
 };
 const hexToBytes = (s) => (/^(?:[0-9a-f]{2})+$/i.test(s) ? Uint8Array.from(s.match(/../g), (h) => parseInt(h, 16)) : null);
 const hexKey = (k) => k.map((x) => x.toString(16).padStart(2, '0')).join('');
+function readableText(bytes) {
+  let s;
+  try { s = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { return null; }
+  const printable = [...s].filter((c) => c >= ' ' || c === '\n' || c === '\r' || c === '\t').length;
+  return s.length && printable / [...s].length >= 0.9 ? s : null;
+}
 
 export async function blobReport(strings, code = '') {
   const rows = [];
@@ -399,6 +407,10 @@ export async function blobReport(strings, code = '') {
     if (bytes && bytes.length >= 16) {
       row.bytes = entropyVerdict(bytes);
       row.compression = await compressionRatio(bytes);
+      // E90: sıkıştırılmış blob (gzip/zlib/deflate DecompressionStream ya da saf JS; brotli)
+      const dz = await decompressAny(bytes).catch(() => null);
+      const dzText = dz ? readableText(dz.data) : null;
+      if (dzText) row.decompressed = { format: dz.format, size: dz.data.length, text: dzText.slice(0, 300), language: detectLanguage(dzText) };
       row.ecb = [ecbRepeats(bytes, 16), ecbRepeats(bytes, 8)].find((e) => e.ecbLikely) ?? null;
       row.randomness = randomnessTests(bytes);
       row.ioc = indexOfCoincidence(bytes, false);

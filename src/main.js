@@ -32,6 +32,8 @@ let controller = null;
 let lastStatus = ['status.ready', {}, ''];
 let lastStats = {};
 let lastReport = null;
+let lastText = null;
+let lastSnapshots = [];
 let diffDirty = true;
 let activeTab = 'code';
 
@@ -112,6 +114,8 @@ function resetResults() {
   clearLog();
   passbar.textContent = '';
   lastReport = null;
+  lastText = null;
+  lastSnapshots = [];
   renderReport(views.report, null);
   timeline.reset();
   diffDirty = true;
@@ -141,7 +145,7 @@ async function run() {
       signal: controller.signal,
       onLog: log,
       onPass: markPass,
-      onSnapshot: (s) => timeline.push(s),
+      onSnapshot: (s) => { timeline.push(s); lastSnapshots.push(s); },
     });
     setOutput(res.code);
     timeline.finish();
@@ -161,7 +165,8 @@ async function run() {
     } else {
       setStatus(res.code.trim() === src.trim() ? 'status.unchanged' : 'status.done', { s }, 'ok');
     }
-    lastReport = await analyze({ input: src, text: res.text, output: res.code, events: res.events, sandbox: sandboxOk ? sandbox : null });
+    lastText = res.text;
+    lastReport = await analyze({ input: src, text: res.text, output: res.code, events: res.events, sandbox: sandboxOk ? sandbox : null, verified: res.verified });
     lastReport.stats = res.stats;
     renderReport(views.report, lastReport, exportReport, reportActions);
   } catch (e) {
@@ -203,6 +208,18 @@ const reportActions = {
     const { code, count } = maskSecrets(els.output.value);
     download('peeled.masked.js', code, 'text/javascript');
     setStatus('status.masked', { n: count }, 'ok');
+  },
+  // güvenlik/motor araçları (src/ui/security): indirme, sandbox, girdi/çıktı erişimi, seçim, anlık görüntüler
+  security: {
+    download,
+    get sandbox() { return sandboxOk ? sandbox : null; },
+    getInput: () => els.input.value,
+    setInput: (text) => { els.input.value = text; els.input.dispatchEvent(new Event('input')); },
+    getOutput: () => els.output.value,
+    setOutput: (text) => setOutput(text),
+    getText: () => lastText ?? els.input.value,
+    getSelection: () => ({ start: els.input.selectionStart, end: els.input.selectionEnd }),
+    snapshots: () => lastSnapshots,
   },
 };
 

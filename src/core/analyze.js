@@ -221,8 +221,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
     passConfidence: passConfidence(events, { verified }),
     // E611–E616, E75–E79: kripto sabitleri, anahtar/IV/mod/dolgu, gömülü şifreli verinin çözümü
     crypto: cryptoScan({ code: output, strings: after.strings, runtimeCrypto: runtime.crypto }),
-    // E617–E630: blob istatistikleri
-    stats: await blobReport(after.strings.slice(0, 500), output),
+    // E617–E630: blob istatistikleri ('stats' adı main.js'te pass sayaçlarına ayrılmış)
+    statistics: await blobReport(after.strings.slice(0, 500), output),
     // E98/E103/E107: canary'li exfiltration haritası, bot/insan profil farkı, phishing uç noktaları
     security: await securityRuntime({ sandbox, text: text ?? input, code: output, urls: found.urls }),
   };
