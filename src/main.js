@@ -31,6 +31,8 @@ import { t, applyI18n, toggleLang, onLang, getLang, LANGS } from './i18n.js';
 import { SAMPLE } from './sample.js';
 import { mountIntegrations } from './ui/integrations/index.js';
 import { createTrace } from './analysis/trace.js';
+import { detectTools, autoProfile } from './core/detect.js';
+import { deobfuscateRegion } from './core/search.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -272,13 +274,21 @@ async function run({ mode = 'normal' } = {}) {
     edIn.focus();
     return null;
   }
-  const only = enabledPasses();
+  let only = enabledPasses();
+  // E26: ayarlarda otomatik profil açıksa eşiği aşan araç tespitinin profili uygulanır (eşik altında tüm pass'ler)
+  let profileNote = null;
+  if (settings().autoProfile) {
+    const prof = autoProfile(detectTools(src));
+    if (prof.passes) only = only.filter((id) => prof.passes.includes(id));
+    profileNote = t('log.autoProfile', { p: prof.profile, r: prof.reason });
+  }
   if (!only.length) { setStatus('status.noPasses', {}, 'err'); return null; }
   controller = new AbortController();
   runBtn.disabled = true;
   runBtn.setAttribute('aria-busy', 'true');
   stopBtn.hidden = false;
   if (mode !== 'dry') { resetResultsView(); clearLog(); }
+  if (profileNote) log(profileNote, 'info');
   setStatus(mode === 'dry' ? 'status.dryRunning' : 'status.running', {}, 'busy');
   const t0 = performance.now();
   const snapshots = [];
@@ -350,7 +360,8 @@ async function run({ mode = 'normal' } = {}) {
       setStatus(output.trim() === src.trim() ? 'status.unchanged' : 'status.done', { s: secs }, 'ok');
     }
     announce(status.textContent);
-    const report = await analyze({ input: src, text: res.text, output, events: res.events, sandbox: sandboxOk ? sandbox : null, trace });
+    doc.text = res.text;
+    const report = await analyze({ input: src, text: res.text, output, events: res.events, sandbox: sandboxOk ? sandbox : null, trace, verified: res.verified });
     report.stats = res.stats;
     doc.report = report;
     doc.runs = [...(doc.runs ?? []), {
@@ -471,6 +482,18 @@ async function runSelection() {
   stopBtn.hidden = false;
   setStatus('status.running', {}, 'busy');
   try {
+    // E36: girdideki seçim önce tüm program bağlamıyla çözülür (decoder'lar seçim dışında olabilir);
+    // bölge eşlenemezse seçim tek başına çözülür
+    if (activeSide === 'in') {
+      const reg = await deobfuscateRegion(ed.text, sel.from, sel.to, { sandbox: sandboxOk ? sandbox : null, signal: controller.signal });
+      if (reg.ok) {
+        ed.applyEdits([{ from: reg.region.from, to: reg.region.to, insert: reg.after }]);
+        ed.select(reg.region.from, reg.region.from + reg.after.length);
+        setStatus('status.selectionDone', { n: reg.after.length }, 'ok');
+        return;
+      }
+      log(`seçim bağlamla çözülemedi: ${reg.reason}`, 'info');
+    }
     const res = await deobfuscate(sel.text, { level: LEVEL, only: enabledPasses(), order: enabledPasses(), sandbox: sandboxOk ? sandbox : null, deep: false, signal: controller.signal, onLog: log });
     if (res.error) { setStatus('status.selectionParse', { m: res.error }, 'err'); return; }
     const out = (await formatCode(res.code)).replace(/\n$/, '');
@@ -519,6 +542,18 @@ const reportActions = {
     const { code, count } = maskSecrets(edOut.text);
     download('peeled.masked.js', code, 'text/javascript');
     setStatus('status.masked', { n: count }, 'ok');
+  },
+  // güvenlik/motor araçları (src/ui/security): indirme, sandbox, girdi/çıktı erişimi, seçim, anlık görüntüler
+  security: {
+    download,
+    get sandbox() { return sandboxOk ? sandbox : null; },
+    getInput: () => edIn.text,
+    setInput: (text) => edIn.setText(text),
+    getOutput: () => edOut.text,
+    setOutput: (text) => edOut.setText(text),
+    getText: () => ws.active?.text ?? edIn.text,
+    getSelection: () => ({ start: edIn.selection.from, end: edIn.selection.to }),
+    snapshots: () => ws.active?.snapshots ?? [],
   },
 };
 

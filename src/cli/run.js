@@ -22,6 +22,10 @@ import { fastImportStream } from '../integrations/gitexport.js';
 import { createHistory } from '../integrations/history.js';
 import { fileStore } from '../integrations/history-node.js';
 import { parseArgs, UsageError } from './args.js';
+import { detectTools, autoProfile, PROFILES } from '../core/detect.js';
+import { searchPassOrder, cascade } from '../core/search.js';
+import { incidentReport } from '../security/incident.js';
+import { generateSourceMap } from '../core/sourcemap.js';
 import { EXIT, getSandbox, makeLogger, readInput, readJson } from './common.js';
 
 export const RUN_SPEC = {
@@ -51,6 +55,11 @@ export const RUN_SPEC = {
   lang: { type: 'string' },
   'source-map': { alias: 'm', type: 'string' },
   split: { alias: 's', type: 'string' },
+  profile: { alias: 'p', type: 'string' },
+  'order-search': { type: 'bool' },
+  cascade: { type: 'bool' },
+  incident: { type: 'string' },
+  'out-map': { type: 'string' },
   help: { alias: 'h', type: 'bool' },
 };
 
@@ -171,8 +180,18 @@ async function processOne(item, o, ctx) {
   const snapshots = [];
   // pass kayıtları ve yama günlüğü yalnızca rapor istenirken tutulur (çalıştırmayı yavaşlatır)
   const trace = o.report || o.html || o.json ? createTrace({ keepComments: true }) : null;
-  const r = await deobfuscate(input, {
+  // E26: pass profili — auto: eşiği aşan araç tespitine göre, aksi halde tüm pass'ler (bilinmeyen araç modu)
+  let only = null;
+  if (o.profile === 'auto') {
+    const prof = autoProfile(detectTools(input));
+    only = prof.passes;
+    log(`profil: ${prof.profile} (${prof.reason})`, 'info');
+  } else if (o.profile && o.profile !== 'all') {
+    only = PROFILES[o.profile];
+  }
+  let r = await deobfuscate(input, {
     trace,
+    only,
     level: o.level ?? 4,
     sandbox,
     deep: o.deep ?? Boolean(sandbox),
@@ -180,6 +199,16 @@ async function processOne(item, o, ctx) {
     plugins: ctx.plugins,
     onSnapshot: o.git ? (s) => snapshots.push(s) : undefined,
   });
+  // E32 / E33: daha iyi doğrulanmış sonuç bulunursa çıktı onunla değişir (rapor ilk çalıştırmanın metin katmanını kullanır)
+  if (!r.error && o.orderSearch) {
+    const best = (await searchPassOrder(input, { sandbox, onLog: log })).best;
+    if (best) { log(`sıra arama: ${best.name} (skor ${best.score})`, 'ok'); r = { ...r, code: best.code, verified: best.verified }; }
+  }
+  if (!r.error && o.cascade) {
+    const c = await cascade(input, { sandbox, onLog: log });
+    log(`kademeli saldırı: skor ${c.score}`, 'ok');
+    r = { ...r, code: c.code };
+  }
   const result = { file: item.path, ok: !r.error, verified: r.verified ?? false, stats: r.stats };
   if (r.error) {
     result.error = r.error;
@@ -199,10 +228,10 @@ async function processOne(item, o, ctx) {
   }
   result.code = code;
 
-  const needReport = o.report || o.sarif || o.html || o.failOn || o.json || o.semgrep;
+  const needReport = o.report || o.sarif || o.html || o.failOn || o.json || o.semgrep || o.incident;
   let report = null;
   if (needReport) {
-    report = await analyze({ input, text: r.text, output: code, events: r.events, sandbox, trace, stats: r.stats });
+    report = await analyze({ input, text: r.text, output: code, events: r.events, sandbox, trace, stats: r.stats, verified: r.verified });
     report.stats = r.stats;
     // sembolik rapor pahalı: yalnızca JSON rapor istendiğinde hesaplanır
     report.symbolic = o.report || o.json ? await report.symbolic() : undefined;
@@ -228,6 +257,19 @@ async function processOne(item, o, ctx) {
   }
   const sideFile = (opt, ext) => (ctx.batch ? `${target ?? item.rel}${ext}` : opt);
   if (o.report) await writeFile(sideFile(o.report, '.report.json'), JSON.stringify(report, null, 2));
+  // E114: olay müdahale raporu (Markdown + yanında JSON)
+  if (o.incident) {
+    const inc = await incidentReport({ report, input, output: code, meta: { title: basename(item.rel), source: basename(item.rel) } });
+    const mdPath = sideFile(o.incident, '.incident.md');
+    await writeFile(mdPath, inc.markdown);
+    await writeFile(`${mdPath.replace(/\.md$/i, '')}.json`, inc.json);
+  }
+  // E60: çıktıdan girdiye Source Map v3
+  if (o.outMap) {
+    const sm = generateSourceMap(r.text ?? input, code, { file: target ? basename(target) : 'peeled.js', source: basename(item.rel) });
+    await writeFile(sideFile(o.outMap, '.map'), JSON.stringify(sm.map));
+    log(`çıktı haritası: ${sm.matched} token, kapsam %${Math.round(sm.coverage * 100)}`, 'info');
+  }
   if (o.sarif) await writeFile(sideFile(o.sarif, '.sarif'), JSON.stringify(toSarif(report, { output: code, uri: target ? relative(process.cwd(), target).replace(/\\/g, '/') : item.rel, semgrep }), null, 2));
   if (o.html) {
     await writeFile(sideFile(o.html, '.report.html'), buildReportHtml({
@@ -283,7 +325,12 @@ Seçenekler / Options:
       --html <dosya>         önce/sonra raporu (bağımsız HTML)
       --git <dizin>          her pass bir commit olacak şekilde git deposu
   -m, --source-map <dosya>   kaynak haritasından isim kurtar (kısmi harita da olur)
-  -s, --split <dizin>        webpack/esbuild/browserify/haritalı paket modüllerini dizine yaz
+  -s, --split <dizin>        webpack/esbuild/browserify/Parcel/haritalı paket modüllerini dizine yaz
+      --out-map <dosya>      çıktıdan girdiye kaynak haritası (Source Map v3) yaz
+  -p, --profile <ad>         pass profili: all (varsayılan), auto (tanınan araca göre) ya da profil adı
+      --order-search         birden çok pass sırası dene, en iyi doğrulanmış sonucu tut
+      --cascade              seviye 1→4 kademeli çöz (her aşama öncekinin doğrulanmış çıktısı üzerinde)
+      --incident <dosya>     olay müdahale raporu (Markdown; yanında JSON)
       --json                 sonuçları JSON olarak stdout'a yaz
   -l, --level <1-4>          pass seviyesi (varsayılan 4)
       --no-sandbox           sandbox kullanma (yalnızca statik pass'ler)
@@ -327,6 +374,11 @@ export async function runCommand(argv) {
     git: opts.git,
     sourceMap: opts['source-map'],
     split: opts.split,
+    profile: opts.profile,
+    orderSearch: opts['order-search'],
+    cascade: opts.cascade,
+    incident: opts.incident,
+    outMap: opts['out-map'],
     json: opts.json,
     failOn: opts['fail-on'] ?? cfg.failOn,
     semgrep: opts.semgrep ?? cfg.semgrep,
@@ -336,6 +388,7 @@ export async function runCommand(argv) {
   };
   if (o.level !== undefined && ![1, 2, 3, 4].includes(o.level)) throw new UsageError('--level 1-4 olmalı');
   if (o.failOn && !RISK_ORDER.slice(1).includes(o.failOn)) throw new UsageError('--fail-on low|medium|high olmalı');
+  if (o.profile && o.profile !== 'auto' && !Object.hasOwn(PROFILES, o.profile)) throw new UsageError(`--profile: ${Object.keys(PROFILES).join(', ')}, auto`);
   const log = makeLogger(opts.quiet);
 
   // proje dosyası: girdiler ve seçenekler oradan gelir (komut satırı bayrakları önceliklidir)

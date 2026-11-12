@@ -1,6 +1,7 @@
 import { t, td } from '../i18n.js';
 import { mountRuntime } from './runtime/mount.js';
 import { render as renderSemantics } from './analysis/semantics.js';
+import { render as renderSecurity } from './security/index.js';
 
 const MAX_ROWS = 60;
 
@@ -258,4 +259,8 @@ export function renderReport(root, report, onExport, actions = {}) {
   ));
   // çalışma anı, doğrulama ve sandbox ayarları (src/ui/runtime)
   mountRuntime(root, report);
+  // güvenlik, kripto, motor bulguları ve araçlar (src/ui/security): dışa aktarma düğmesinden önce
+  const sec = document.createDocumentFragment();
+  renderSecurity(sec, report, actions.security);
+  exportBtn.before(sec);
 }

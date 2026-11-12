@@ -28,6 +28,7 @@ export function obfuscatorSettings(text, output) {
   let ids = 0;
   let numberExprs = 0;
   let splitStrings = 0;
+  let splitChunk = 0;
   let deadBranches = 0;
   let dispatchers = 0;
   let objectKeyBuilders = 0;
@@ -46,8 +47,14 @@ export function obfuscatorSettings(text, output) {
     },
     BinaryExpression(p) {
       if (!p.parentPath.isBinaryExpression() && numericLeaves(p.node) >= 3) numberExprs++;
-      if (p.node.operator === '+' && t.isStringLiteral(p.node.left) && t.isStringLiteral(p.node.right) &&
-          p.node.left.value.length <= 10 && p.node.right.value.length <= 10) splitStrings++;
+      // parçalar literal ya da (base64/rc4 kodlamada diziye taşınmış) literal argümanlı decoder çağrısı olabilir
+      const part = (x) => (t.isStringLiteral(x) && x.value.length <= 10) ||
+        (t.isCallExpression(x) && t.isIdentifier(x.callee) && x.arguments.length > 0 && x.arguments.every((a) => t.isLiteral(a)));
+      if (p.node.operator === '+' && part(p.node.left) && part(p.node.right) &&
+          (t.isStringLiteral(p.node.left) || t.isStringLiteral(p.node.right) || decoder)) {
+        splitStrings++;
+        for (const x of [p.node.left, p.node.right]) if (t.isStringLiteral(x)) splitChunk = Math.max(splitChunk, x.value.length);
+      }
     },
     IfStatement(p) {
       const test = p.node.test;
@@ -107,8 +114,12 @@ export function obfuscatorSettings(text, output) {
   if (deadBranches) evidence.push(`${deadBranches} sabit karşılaştırmalı ölü dal`);
   settings.numbersToExpressions = numberExprs >= 3;
   settings.splitStrings = splitStrings >= 3;
+  if (settings.splitStrings && splitChunk) settings.splitStringsChunkLength = splitChunk;
   settings.transformObjectKeys = objectKeyBuilders > 0;
-  settings.selfDefending = GUARD_STRINGS.some((g) => all.includes(g));
+  // koruma regex'i diziye taşınıp kodlanmış olabilir: tek seferlik çağrı denetleyicisi (h=!![] … return h=![],k)
+  // ve toString().search('\n') denetimi de selfDefending kalıbıdır
+  settings.selfDefending = GUARD_STRINGS.some((g) => all.includes(g)) ||
+    (/return\s+\w+\s*=\s*!\[\]\s*,\s*\w+;?\s*\}/.test(text) && /'\\x0a'\)\s*!==\s*-0x1/.test(text));
   settings.debugProtection = /debugger|["']debu["']\s*\+\s*["']gger["']/.test(all) && /constructor/.test(all);
   settings.debugProtectionInterval = settings.debugProtection && /setInterval/.test(all);
   settings.disableConsoleOutput = CONSOLE_METHODS.every((m) => new RegExp(`["']${m}["']`).test(all));

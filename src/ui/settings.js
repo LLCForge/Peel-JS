@@ -16,6 +16,7 @@ export const DEFAULTS = Object.freeze({
   activeLine: true,
   syncScroll: false,
   mapToInput: true,
+  autoProfile: false,
   layout: 2, // 2 | 3 | 4
   split: 50,
   reading: false,

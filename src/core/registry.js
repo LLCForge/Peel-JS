@@ -31,6 +31,9 @@ import * as indirection from '../passes/42-indirection.js';
 import * as flow from '../passes/78-flow.js';
 import * as deadExtra from '../passes/82-dead-extra.js';
 import * as sourcemap from '../passes/05-sourcemap.js';
+import * as staticDecode from '../passes/26-static-decode.js';
+import * as restructure from '../passes/86-restructure.js';
+import * as regenerator from '../passes/79-regenerator.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
@@ -42,6 +45,7 @@ export const PASSES = [
   { id: 'predecoders',  level: 1, kind: 'text', needs: 'sandbox', mod: predecoders },
   { id: 'integrity',    level: 1, kind: 'ast',  needs: 'sandbox', mod: integrity },
   { id: 'literals',     level: 1, kind: 'ast',  needs: null,      mod: literals },
+  { id: 'static-decode', level: 1, kind: 'ast', needs: null,      mod: staticDecode },
   { id: 'const-arrays', level: 1, kind: 'ast',  needs: null,      mod: constArrays },
   { id: 'const-objects', level: 1, kind: 'ast',  needs: null,      mod: constObjects },
   { id: 'wrappers',     level: 2, kind: 'ast',  needs: null,      mod: wrappers },
@@ -64,8 +68,10 @@ export const PASSES = [
   { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
   { id: 'flow',         level: 2, kind: 'ast',  needs: null,      mod: flow },
+  { id: 'regenerator',  level: 2, kind: 'ast',  needs: null,      mod: regenerator },
   { id: 'simplify',     level: 2, kind: 'ast',  needs: null,      mod: simplify },
   { id: 'cfg-opt',      level: 3, kind: 'ast',  needs: null,      mod: cfgOpt },
+  { id: 'restructure',  level: 2, kind: 'ast',  needs: null,      mod: restructure },
   { id: 'dead-extra',   level: 2, kind: 'ast',  needs: null,      mod: deadExtra },
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
   { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },

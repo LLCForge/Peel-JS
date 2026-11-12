@@ -7,6 +7,10 @@ import { runtimeExtras } from '../verify/run.js';
 import { analysisReport } from '../analysis/report.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
 import { symbolicReport } from '../symbolic/report.js';
+import { detectTools, autoProfile, detectVersions, decoderChains, passConfidence } from './detect.js';
+import { cryptoScan } from './cryptoscan.js';
+import { blobReport } from './stats.js';
+import { securityRuntime } from '../security/runtime.js';
 import { engineReport } from './engine-report.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
@@ -175,7 +179,7 @@ async function runtimeScan(sandbox, text, config) {
   };
 }
 
-export async function analyze({ input, text, output, events = [], sandbox = null, config = null, stats = null, trace = null }) {
+export async function analyze({ input, text, output, events = [], sandbox = null, config = null, stats = null, trace = null, verified = false }) {
   const before = staticScan(text ?? input);
   const after = staticScan(output);
   const runtime = await runtimeScan(sandbox, text ?? input, config);
@@ -221,6 +225,18 @@ export async function analyze({ input, text, output, events = [], sandbox = null
     // sembolik yürütme, concolic, SMT kanıtları, nokta/etki/taint, değişmezler: pahalı, isteğe bağlı
     // report.symbolic() ilk çağrıda hesaplar (rapor bölümü açılınca); sonuç report.symbolicData'ya yazılır
     symbolic: lazySymbolic({ text: text ?? input, output, sandbox }),
+    // E26/E29/E30/E40: araç tespiti, otomatik profil, ayarlar, sürümler, decoder zinciri; E27: pass güveni
+    detection: (() => {
+      const tools = detectTools(input);
+      return { tools, profile: autoProfile(tools), versions: detectVersions(input), chains: decoderChains(input) };
+    })(),
+    passConfidence: passConfidence(events, { verified }),
+    // E611–E616, E75–E79: kripto sabitleri, anahtar/IV/mod/dolgu, gömülü şifreli verinin çözümü
+    crypto: cryptoScan({ code: output, strings: after.strings, runtimeCrypto: runtime.crypto }),
+    // E617–E630: blob istatistikleri ('stats' adı main.js'te pass sayaçlarına ayrılmış)
+    statistics: await blobReport(after.strings.slice(0, 500), output),
+    // E98/E103/E107: canary'li exfiltration haritası, bot/insan profil farkı, phishing uç noktaları
+    security: await securityRuntime({ sandbox, text: text ?? input, code: output, urls: found.urls }),
   };
   // çalışma anı (coverage, taint, worker, WASM…) ve doğrulama (güven, pass riski, denetimler) bölümleri
   Object.assign(report, await runtimeExtras({ report, input, text, output, events, sandbox, config }));
@@ -233,3 +249,6 @@ export function lazySymbolic(args) {
   const fn = () => (p ??= symbolicReport(args).catch((e) => ({ skipped: e.message })).then((r) => { fn.data = r; return r; }));
   return fn;
 }
+
+// Eklenti analizi ve diğer modüller için: statik tarama ve IOC çıkarımı
+export { staticScan, iocs as extractIocs };

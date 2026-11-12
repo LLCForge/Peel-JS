@@ -180,9 +180,46 @@ function sourceMapped(ast, code) {
   return { kind: 'source-map', modules: crossDeps([...merged.values()]).slice(0, MAX_MODULES) };
 }
 
+// Parcel: parcelRequire.register("id", function (module, exports) {…}) / parcelRegister("id", …)
+function parcel(ast) {
+  const found = [];
+  traverse(ast, {
+    CallExpression(p) {
+      const { callee, arguments: args } = p.node;
+      const isRegister = (t.isMemberExpression(callee) && keyName(callee.property) === 'register' && /parcelRequire/.test(generate(callee.object).code)) ||
+        t.isIdentifier(callee, { name: 'parcelRegister' });
+      if (!isRegister || args.length !== 2 || !isFn(args[1])) return;
+      const id = keyName(args[0]) ?? '?';
+      const m = moduleFromFn(id, args[1], -1);
+      // Parcel bağımlılıkları parcelRequire("id") çağrılarıdır
+      t.traverseFast(args[1].body, (n) => {
+        if (t.isCallExpression(n) && t.isIdentifier(n.callee) && /^(parcelRequire|require)$/.test(n.callee.name) && n.arguments.length === 1) {
+          const a = n.arguments[0];
+          if ((t.isStringLiteral(a) || t.isNumericLiteral(a)) && !m.deps.includes(String(a.value))) m.deps.push(String(a.value));
+        }
+      });
+      found.push(m);
+    },
+  });
+  return found.length ? { kind: 'parcel', modules: found.slice(0, MAX_MODULES) } : null;
+}
+
 // map: false iken kaynak haritası kullanılmaz (konumları haritayla uyuşmayan, yeniden üretilmiş kod için)
 export function splitBundle(code, { map = true } = {}) {
   let ast;
   try { ast = parse(code); } catch { return null; }
-  return webpack(ast, code) ?? browserify(ast) ?? esbuild(ast) ?? commentMarkers(ast) ?? (map ? sourceMapped(ast, code) : null);
+  return webpack(ast, code) ?? browserify(ast) ?? esbuild(ast) ?? parcel(ast) ?? commentMarkers(ast) ?? (map ? sourceMapped(ast, code) : null);
+}
+
+// Modülleri indirilebilir dosyalara çevirir (ZIP için): güvenli ad, çakışmada kimlik eki
+export function moduleFiles(split) {
+  const used = new Set();
+  return (split?.modules ?? []).map((m) => {
+    const base = String(m.id).replace(/^(\.\.?\/)+/, '').replace(/[^\w./-]/g, '_').replace(/\.\.+/g, '.').replace(/^\/+/, '') || 'module';
+    let name = /\.(m?js|cjs|ts|jsx|tsx)$/.test(base) ? base : `${/^\d+$/.test(base) ? `module-${base}` : base}.js`;
+    if (used.has(name)) name = name.replace(/(\.\w+)$/, `.${used.size}$1`);
+    used.add(name);
+    const header = `// PEEL modül ${m.id}${m.deps.length ? ` — bağımlılıklar: ${m.deps.join(', ')}` : ''}\n`;
+    return { name, text: `${header}${m.code}\n` };
+  });
 }

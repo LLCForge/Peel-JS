@@ -79,6 +79,8 @@ export function openSettings({ onClearSession } = {}) {
         field(t('settings.format.trailingComma'), select('trailingComma', [['all', 'all'], ['es5', 'es5'], ['none', 'none']], { path: 'format' })),
         field(t('settings.format.arrowParens'), select('arrowParens', [['always', 'always'], ['avoid', 'avoid']], { path: 'format' })),
         h('p', { class: 'rep-muted small' }, t('settings.format.hint'))),
+      section(t('settings.engine'),
+        field(t('settings.autoProfile'), toggle('autoProfile'), t('settings.autoProfile.hint'))),
       section(t('settings.privacy'),
         field(t('settings.persist'), toggle('persist'), t('settings.persist.hint')),
         h('div', { class: 'set-row' }, h('span', { class: 'set-label' }, t('settings.hosts')), hosts),
