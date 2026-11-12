@@ -134,6 +134,7 @@ const DICT = {
     'report.sym.invariants': 'Değişmezler ve doğrulanmış iddialar',
     'report.sym.specs': 'Çağrı dizisi kuralları',
     'report.sym.solver': 'Çözücü',
+    'report.sym.trace': 'Sembolik iz örneği',
   },
   en: {
     'brand.sub': 'JS DEOBFUSCATOR',
@@ -269,6 +270,7 @@ const DICT = {
     'report.sym.invariants': 'Invariants and validated assertions',
     'report.sym.specs': 'Call sequence rules',
     'report.sym.solver': 'Solver',
+    'report.sym.trace': 'Sample symbolic trace',
   },
 };
 

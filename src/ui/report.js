@@ -121,6 +121,8 @@ function symbolic(sym) {
   if (corr.length) sub('report.sym.correlations', table(['A', 'B', 'ilişki', 'kanıt'], corr.map((x) => [x.lineA, x.lineB, x.relation, x.proven ? 'çözücü' : `${x.runs} koşu`]), ['num', 'num', '', 'rep-muted']));
   const fns = sym.symbolic?.functions;
   if (rows(fns)) sub('report.sym.functions', table(['fn', 'yol', 'ön koşul', 'son koşul'], fns.map((f) => [`${f.name}${f.exact ? '' : ' ~'}`, f.paths, f.precondition, (f.postcondition ?? []).join(' ; ')]), ['mono', 'num', 'mono', 'mono']));
+  const tr = sym.symbolic?.sampleTrace;
+  if (tr?.steps?.length) sub('report.sym.trace', el('p', { class: 'mono rep-muted' }, `${tr.fn}: ${tr.steps.map((s) => `${s.kind}@${s.line}${s.taken === undefined ? '' : s.taken ? '+' : '-'}`).join(' → ')}`));
   if (rows(st.taint)) sub('report.sym.taint', table(['#', 'kaynak', 'havuz'], st.taint.map((x) => [x.line, x.sources.join(', '), x.sink]), ['num', 'mono', 'mono']));
   if (rows(st.effects)) sub('report.sym.effects', table(['fn', 'saf', 'etkiler'], st.effects.map((e) => [e.name, e.pure ? '✓' : '–', [...e.writesGlobal.map((g) => `yaz:${g}`), e.writesHeap ? 'yığın' : '', ...e.callsUnknown, ...e.nondet, e.throws ? 'throw' : ''].filter(Boolean).join(', ')]), ['mono', '', 'rep-muted']));
   if (rows(st.aliases)) sub('report.sym.alias', table(['a', 'b', 'nesne'], st.aliases.map((a) => [a.a, a.b, a.objects.join(', ')]), ['mono', 'mono', 'rep-muted']));

@@ -1,6 +1,6 @@
 import * as t from '@babel/types';
 import { traverse } from '../util/ast.js';
-import { ssaFor, versionAt, insertOnEdge, walkEval } from '../opt/ssa.js';
+import { ssaFor, versionAt, insertOnEdge, walkEval, destruct } from '../opt/ssa.js';
 import { sccp, absint, ALL } from '../opt/lattice.js';
 import { isPureTyped, literalFor, functionPaths, hasDynamicScope, exprType, nodeSize, stmtOf } from '../opt/util.js';
 
@@ -37,6 +37,9 @@ function optimize(fn, st) {
     if (!fx) {
       fx = ssaFor(fn);
       if (!fx) return;
+      // E683: dönüşümler özgün adlara geri yazılır (φ-ağları birleştirilir); bu ancak SSA girişimsizse geçerli.
+      // Girişim varsa (kopya gerekecekse) fonksiyon atlanır.
+      if (!destruct(fx, { allowCopies: false })) return;
       sccp(fx);
       absint(fx);
     }

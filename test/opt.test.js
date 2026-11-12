@@ -166,5 +166,23 @@ const run = (code) => {
   assert.ok(!/% 2\) return -1/.test(cur));
 }
 
+// ── E676 kuyruk çoğaltma (dönüş), E677 ipekleme ─────────
+{
+  const cfg = await import('../src/passes/87-cfg-opt.js');
+  const ssa = await import('../src/passes/55-ssa-opt.js');
+  const code = `function td(a) { a = a | 0; var k; if (a > 3) { k = 2; console.log("x"); } else { k = 5; console.log("y"); } return k * 10; }
+    function tj(a) { a = a | 0; var f; if (a > 3) { f = 1; console.log("p"); } else { f = 0; console.log("q"); } if (f) console.log("F1"); else console.log("F0"); }
+    for (var i = 0; i < 6; i++) { console.log(td(i)); tj(i); }`;
+  let cur = code;
+  for (const ps of [cfg, ssa, cfg, ssa]) {
+    const ast = parse(cur);
+    await ps.run(ast, { onLog: () => {}, bump: () => {}, level: 4 });
+    cur = generate(ast).code;
+  }
+  assert.equal(run(cur), run(code));
+  assert.ok(/return 2 \* 10/.test(cur) && /return 5 \* 10/.test(cur), 'dönüş kuyruğu dallara çoğaltılıp katlandı');
+  assert.ok(!/if \(f\)/.test(cur), 'f üzerinden dal ipeklendi');
+}
+
 void t;
 console.log('opt.test: ok');
