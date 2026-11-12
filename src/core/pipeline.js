@@ -17,6 +17,7 @@ const DEEP_MAX_LEN = 1_000_000; // QuickJS'te 1 MB'lık programı çalıştırma
 export async function deobfuscate(input, {
   level = 2, only = null, sandbox = null, deep = false, signal = null,
   onLog = () => {}, onProgress = () => {}, onPass = () => {}, onSnapshot = () => {},
+  naming = {}, format = 'default',
 } = {}) {
   const stats = {};
   const bump = (k, n = 1) => { if (n) stats[k] = (stats[k] || 0) + n; };
@@ -31,7 +32,8 @@ export async function deobfuscate(input, {
   let step = 0;
   const tick = () => onProgress(Math.min(99, Math.round((++step / totalSteps) * 100)));
 
-  const ctx = { onLog, bump, level, sandbox, ctx: null };
+  // naming: ad haritası/sözlük ve okunabilirlik seçenekleri; source: metin katmanları açılmış girdi (yorum geri yükleme)
+  const ctx = { onLog, bump, level, sandbox, ctx: null, naming, source: null };
 
   // Pass başına süre ve sonuç: rapor ve zaman çizelgesi için
   const events = [];
@@ -65,6 +67,7 @@ export async function deobfuscate(input, {
     tick();
   }
 
+  ctx.source = text;
   let code;
   try {
     code = raw(parse(text));
@@ -105,9 +108,13 @@ export async function deobfuscate(input, {
 
     // 3) AST pass'leri: değişiklik durana kadar tur
     const seen = new Set([fnv1a(code)]);
+    // finish: true olan okunabilirlik pass'leri, çözme pass'leri sabitlendikten sonra devreye girer
+    // (ör. kısa metot sözdizimi proxy tanımayı engellemesin)
+    let finishing = !astPasses.some((p) => !p.finish);
     for (round = 1; round <= MAX_ROUNDS; round++) {
       let changed = false;
       for (const p of astPasses) {
+        if (p.finish && !finishing) continue;
         checkAbort();
         pass(p.id, 'run');
         // her pass taze ağaçla başlar: Babel'in scope önbelleği önceki pass'in mutasyonlarından etkilenmez
@@ -151,6 +158,7 @@ export async function deobfuscate(input, {
         tick();
       }
       const h = fnv1a(code);
+      if (!changed && !finishing && astPasses.some((p) => p.finish)) { finishing = true; continue; }
       if (!changed || seen.has(h)) break;
       seen.add(h);
     }
@@ -159,7 +167,7 @@ export async function deobfuscate(input, {
     if (ctx.ctx && !signal?.aborted) await sandbox.close(ctx.ctx);
   }
 
-  const out = await pretty(code);
+  const out = await pretty(code, format);
   onProgress(100);
   // text: metin katmanları açıldıktan sonraki program; rapor çalışma anı analizini bunun üzerinde yapar
   return { code: out, stats, events, text, verified: Boolean(baseline) };
