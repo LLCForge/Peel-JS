@@ -33,7 +33,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js && node test/compare.test.js && node test/techniques.test.js && node test/integrations.test.js && node test/ctf.test.js",
+    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js && node test/compare.test.js && node test/techniques.test.js && node test/integrations.test.js && node test/ctf.test.js && node test/vscode-service.test.js",
     "bench": "node test/bench.js"
   },
   "dependencies": {
@@ -63,5 +63,13 @@
       "default": "./src/node.js"
     },
     "./package.json": "./package.json"
-  }
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "extensions/semgrep/",
+    "README.md",
+    "README.tr.md",
+    "LICENSE"
+  ]
 }
