@@ -173,7 +173,25 @@ function privateMembers(ast) {
 
 // ── E214 ────────────────────────────────────────────────
 
-const isExit = (s) => t.isReturnStatement(s) || t.isThrowStatement(s) || t.isBreakStatement(s) || t.isContinueStatement(s);
+// while (true) / for (;;): içinden kendisini ya da dışarıyı hedefleyen break yoksa ardından gelen deyime hiç ulaşılmaz
+// (iç fonksiyonlara girilmez; iç döngü/switch'teki etiketsiz break yalnızca onu bitirir)
+function isEndlessLoop(s) {
+  const always = (x) => !x || t.isBooleanLiteral(x, { value: true }) || (t.isNumericLiteral(x) && x.value !== 0);
+  if (!(t.isWhileStatement(s) && always(s.test)) && !(t.isForStatement(s) && always(s.test))) return false;
+  let escapes = false;
+  const walk = (n, inner) => {
+    if (escapes || !n || typeof n !== 'object' || t.isFunction(n)) return;
+    if (t.isBreakStatement(n) && (n.label || !inner)) { escapes = true; return; }
+    const nested = inner || t.isLoop(n) || t.isSwitchStatement(n);
+    for (const k of t.VISITOR_KEYS[n.type] ?? []) {
+      const v = n[k];
+      if (Array.isArray(v)) v.forEach((c) => walk(c, nested)); else walk(v, nested);
+    }
+  };
+  walk(s.body, false);
+  return !escapes;
+}
+const isExit = (s) => t.isReturnStatement(s) || t.isThrowStatement(s) || t.isBreakStatement(s) || t.isContinueStatement(s) || isEndlessLoop(s);
 
 // Deyimin kendi var adları (iç fonksiyonlarınki hariç)
 function ownVarNames(stmt) {
@@ -270,8 +288,39 @@ function duplicates(ast) {
   return n;
 }
 
+// [1, "i", null, undefined];  — sonucu kullanılmayan literal dizi/nesne deyimi (js-confuser sabit tablosu kalıntısı).
+// Program sonundaki deyim tamamlanma değeri olabilir (eval): dokunulmaz.
+function literalStatements(ast) {
+  let n = 0;
+  traverse(ast, {
+    ExpressionStatement(p) {
+      if (!Array.isArray(p.container) || (p.parentPath.isProgram() && p.key === p.container.length - 1)) return;
+      const e = p.node.expression;
+      // Object.create(null);  — sonucu kullanılmayan önbellek nesnesi (dispatcher önbelleğinin kalıntısı)
+      if (t.isCallExpression(e) && t.isMemberExpression(e.callee, { computed: false }) && t.isIdentifier(e.callee.object, { name: 'Object' }) &&
+          !p.scope.getBinding('Object') && t.isIdentifier(e.callee.property, { name: 'create' }) && e.arguments.length === 1 &&
+          t.isNullLiteral(e.arguments[0])) {
+        p.remove();
+        n++;
+        return;
+      }
+      if (!t.isArrayExpression(e) && !t.isObjectExpression(e)) return;
+      const inert = (x) => x === null || t.isStringLiteral(x) || t.isNumericLiteral(x) || t.isBooleanLiteral(x) || t.isNullLiteral(x) ||
+        (t.isIdentifier(x, { name: 'undefined' }) && !p.scope.getBinding('undefined')) ||
+        (t.isUnaryExpression(x, { operator: '-' }) && t.isNumericLiteral(x.argument)) ||
+        (t.isArrayExpression(x) && x.elements.every(inert)) ||
+        (t.isObjectExpression(x) && x.properties.every((q) => t.isObjectProperty(q) && !q.computed && inert(q.value)));
+      if (!inert(e)) return;
+      p.remove();
+      n++;
+    },
+  });
+  return n;
+}
+
 export async function run(ast, { onLog, bump, level }) {
   const steps = [
+    ['dead.literalStmt', 'etkisiz literal deyim', () => literalStatements(ast)],
     ['dead.unreachable', 'E214 erişilemeyen deyim', () => unreachable(ast)],
     ['dead.duplicate', 'E215 yinelenen tanım', () => duplicates(ast)],
     ['dead.extraArgs', 'E219 fazla argüman', () => extraArgs(ast)],

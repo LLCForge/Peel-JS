@@ -79,12 +79,38 @@ function isProtectionIife(stmt) {
 }
 
 // Boş ve hiç değiştirilmeyen bir değere karşı "k" in X testi: sonucu host'ta taze bir eşi ile hesapla
+const emptyFn = (f) => (t.isFunctionExpression(f) || t.isFunctionDeclaration(f)) && !f.async && !f.generator &&
+  f.body.body.every((x) => t.isReturnStatement(x) && !x.argument);
+// let V; …; V = function () { return; };  — tek atama, gövde düzeyinde; her test atama deyiminden sonraki bir
+// deyimde (hoisting'li fonksiyon bildirimi değil): test çalıştığında V her zaman bu boş fonksiyondur
+function assignedEmptyFn(binding) {
+  if (binding.constantViolations.length !== 1 || !binding.path.isVariableDeclarator() || binding.path.node.init) return false;
+  const v = binding.constantViolations[0];
+  const stmt = v.parentPath;
+  if (!v.isAssignmentExpression({ operator: '=' }) || !emptyFn(v.node.right) || !stmt.isExpressionStatement() ||
+      !Array.isArray(stmt.container) || stmt.parentPath !== binding.path.parentPath.parentPath) return false;
+  // ref, atama deyiminden sonra çalışır: sonraki bir deyimde ya da önceki bir deyimde tek kez atanan bir fonksiyon
+  // ifadesinin (W = function () {…}) içinde ve W'nin her kullanımı da böyle (sınırlı derinlik)
+  const after = (r, depth) => {
+    const top = r.findParent((x) => x.parentPath === stmt.parentPath);
+    if (!top) return false;
+    if (top.key > stmt.key) return !top.isFunctionDeclaration();
+    const e = top.isExpressionStatement() ? top.get('expression') : null;
+    if (depth > 3 || !e?.isAssignmentExpression({ operator: '=' }) || !t.isIdentifier(e.node.left) || !e.get('right').isFunctionExpression() ||
+        !r.findParent((x) => x === e.get('right'))) return false;
+    const wb = e.scope.getBinding(e.node.left.name);
+    return Boolean(wb && wb.constantViolations.length === 1 && wb.constantViolations[0] === e && wb.path.isVariableDeclarator() &&
+      !wb.path.node.init && wb.referencePaths.every((q) => after(q, depth + 1)));
+  };
+  return binding.referencePaths.every((r) => after(r, 0));
+}
 function emptyShapeOf(binding) {
-  if (!binding?.constant) return null;
+  if (!binding) return null;
   const onlyInTests = binding.referencePaths.every((r) => r.parentPath.isBinaryExpression({ operator: 'in', right: r.node }));
   if (!onlyInTests) return null;
+  if (!binding.constant) return assignedEmptyFn(binding) ? () => function () {} : null;
   const n = binding.path.node;
-  if (t.isFunctionDeclaration(n) && !n.body.body.length && !n.async && !n.generator) return () => function () {};
+  if (t.isFunctionDeclaration(n) && emptyFn(n)) return () => function () {};
   if (t.isVariableDeclarator(n)) {
     if (t.isObjectExpression(n.init) && !n.init.properties.length) return () => ({});
     if (t.isArrayExpression(n.init) && !n.init.elements.length) return () => [];

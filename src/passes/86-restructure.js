@@ -1,5 +1,5 @@
 import * as t from '@babel/types';
-import { traverse } from '../util/ast.js';
+import { traverse, generate } from '../util/ast.js';
 
 // Yapısal gizleme geri alma (anlamı koruyan, yerel olarak kanıtlanabilen dönüşümler). Literal kaynaklı
 // destructuring, with ve rest+length dönüşümleri 42-indirection ve 37-confuser pass'lerindedir; burada
@@ -7,6 +7,28 @@ import { traverse } from '../util/ast.js';
 //   E50  var { log: l, warn: w } = console → var l = console.log, w = console.warn   (kaynak düz ad)
 //   E51  void 0 → undefined (undefined gölgelenmemişse)
 //   E54  return a ? b : c ? d : e → if/else zinciri; x = a ? b : c ? d : e; ve var x = … için de
+//   Kuyruk birleştirme: if (c) { A; T } T  (T return/throw ile biter) → if (c) { A } T — durum makinesi
+//   açılırken dallara kopyalanan ortak kuyruk (dağıtıcı bayrak testleri) tek kopyaya iner
+
+const isExit = (s) => t.isReturnStatement(s) || t.isThrowStatement(s);
+const code = (n) => generate(n, { compact: true, comments: false }).code;
+const sameCode = (a, b) => a.length === b.length && a.every((x, i) => code(x) === code(b[i]));
+function mergeTails(list) {
+  let n = 0;
+  for (let i = 0; i < list.length - 1; i++) {
+    const s = list[i];
+    if (!t.isIfStatement(s) || s.alternate || !t.isBlockStatement(s.consequent)) continue;
+    const tail = list.slice(i + 1);
+    const cons = s.consequent.body;
+    if (!isExit(tail[tail.length - 1]) || cons.length < tail.length) continue;
+    // let/const/class/function bildirimleri blok kapsamı nedeniyle taşınmaz
+    if (tail.some((x) => t.isClassDeclaration(x) || t.isFunctionDeclaration(x) || (t.isVariableDeclaration(x) && x.kind !== 'var'))) continue;
+    if (!sameCode(cons.slice(cons.length - tail.length), tail)) continue;
+    cons.splice(cons.length - tail.length, tail.length);
+    n++;
+  }
+  return n;
+}
 
 function chain(cond, leaf) {
   const branch = (e) => (t.isConditionalExpression(e) ? chain(e, leaf) : t.blockStatement([leaf(e)]));
@@ -32,6 +54,8 @@ function splitIdentifierPattern(id, init) {
 export async function run(ast, { onLog, bump }) {
   let n = 0;
   traverse(ast, {
+    BlockStatement(p) { n += mergeTails(p.node.body); },
+    Program(p) { n += mergeTails(p.node.body); },
     UnaryExpression(p) {
       if (p.node.operator === 'void' && t.isNumericLiteral(p.node.argument) && !p.scope.hasBinding('undefined', true)) {
         p.replaceWith(t.identifier('undefined'));

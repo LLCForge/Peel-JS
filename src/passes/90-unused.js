@@ -138,9 +138,21 @@ export async function run(ast, { onLog, bump, level }) {
       // for (var n = e, r = 0; …): başka bildirim kalıyorsa kullanılmayan alias çıkarılabilir
       if ((decl.parentPath.isForStatement() && decl.node.declarations.length === 1) || decl.parentPath.isForXStatement()) return;
       const b = p.scope.getBinding(p.node.id.name);
-      if (!b || b.referenced || b.constantViolations.length) return;
-      if (b.scope.path.isProgram() && !allowGlobal) return;
-      if (b.path !== p) return;
+      if (!b || (b.scope.path.isProgram() && !allowGlobal) || b.path !== p) return;
+      // V = function () { … V … };  — tek atama, okumaların hepsi fonksiyonun kendi içinde (kendini çağıran ölü
+      // yardımcı): atama deyimi ve bildirim silinir
+      if (!p.node.init && b.constantViolations.length === 1 && b.referenced) {
+        const v = b.constantViolations[0];
+        const fn = v.isAssignmentExpression({ operator: '=' }) && v.parentPath.isExpressionStatement() && Array.isArray(v.parentPath.container) &&
+          (v.get('right').isFunctionExpression() || v.get('right').isArrowFunctionExpression()) ? v.get('right') : null;
+        if (!fn || !b.referencePaths.every((r) => r.findParent((x) => x === fn))) return;
+        v.parentPath.remove();
+        p.remove();
+        n++;
+        bump('dead.unusedVariable');
+        return;
+      }
+      if (b.referenced || b.constantViolations.length) return;
 
       if (!p.node.init || isInertInit(p.get('init'))) {
         p.remove();
