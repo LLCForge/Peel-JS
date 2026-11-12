@@ -3,6 +3,7 @@ import { traverse, gen } from '../util/ast.js';
 import { literalOf } from '../util/literal.js';
 import { isLiteralTree } from '../util/pure.js';
 import { keyPath, placeAt } from '../util/keypath.js';
+import { caseSummaries, machineReport } from '../core/vm/sm.js';
 
 // Durum makinesini düz koda çevirir.
 //
@@ -660,7 +661,7 @@ function collectSumFns(ast) {
 }
 
 // Değişkenli makine: P = 0, Q = 0 sabit başlangıçlı yerel değişkenler, yalnızca döngü içinde değişiyor
-function identifierMachine(p, mach, sumFns, onLog, done) {
+function identifierMachine(p, mach, sumFns, onLog, done, findings) {
   const target = mach.label ? p.parentPath : p;
   const names = new Set();
   const collect = (n, parent, key) => {
@@ -697,6 +698,7 @@ function identifierMachine(p, mach, sumFns, onLog, done) {
   const m = { ...mach, vars: new Set(vars.keys()), arrays: new Set(), sumFns };
   try {
     const out = tidyList(unflatten(m, new State(new Map(vars))));
+    recordMachine(findings, p, mach, [vars], sumFns, 'düz koda çevrildi');
     if (Array.isArray(target.container)) {
       if (out.length) target.replaceWithMultiple(out); else target.remove();
     } else {
@@ -910,7 +912,7 @@ function __peelEntry(k, v, a) {
   return n;
 }
 
-export async function run(ast, { onLog, bump, sandbox }) {
+export async function run(ast, { onLog, bump, sandbox, findings }) {
   const sumFns = collectSumFns(ast);
   const used = new Set();
   traverse(ast, { Identifier(q) { used.add(q.node.name); } });
@@ -923,11 +925,11 @@ export async function run(ast, { onLog, bump, sandbox }) {
         if (!mach) return;
         if (p.findParent((x) => x.isWithStatement())) return;
         if (normalizeCaseDecls(mach.sw, used)) p.scope.crawl();
-        if (identifierMachine(p, mach, sumFns, onLog, done)) n++;
+        if (identifierMachine(p, mach, sumFns, onLog, done, findings)) n++;
       },
     },
   });
-  n += paramMachines(ast, sumFns, { onLog, used });
+  n += paramMachines(ast, sumFns, { onLog, used, findings });
   n += await arrayMachines(ast, sumFns, { sandbox, onLog });
   n += await observedMachines(ast, sumFns, { sandbox, onLog, done });
   const cleaned = dropDeadState(ast, done);
@@ -969,7 +971,7 @@ function dropDeadState(ast, names) {
 // Madde 45: durumu parametreden başlayan makine (function F(s) { var P = s; while (…) switch (P) … }) farklı
 // çağrı yerlerinden farklı sabit başlangıçlarla çağrılıyorsa, aslında birleştirilmiş ayrı fonksiyonlardır.
 // Her başlangıç değeri için o noktadan açılmış bir kopya üretilir ve çağrı yerleri kopyalara bağlanır.
-function paramMachines(ast, sumFns, { onLog, used }) {
+function paramMachines(ast, sumFns, { onLog, used, findings }) {
   const targets = [];
   traverse(ast, {
     Loop(p) {
@@ -1028,7 +1030,7 @@ function paramMachines(ast, sumFns, { onLog, used }) {
         sites.push({ call: call.node, vals });
       }
       if (!sites.length) return;
-      targets.push({ fn: fn.node, stmt: target.node, mach, names: [...entry.keys()], sites });
+      targets.push({ fn: fn.node, stmt: target.node, mach, names: [...entry.keys()], sites, path: p });
     },
   });
   let made = 0;
@@ -1039,6 +1041,8 @@ function paramMachines(ast, sumFns, { onLog, used }) {
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k).push(s);
     }
+    recordMachine(findings, tg.path, tg.mach, [...groups.keys()].map((k) => new Map(tg.names.map((n, i) => [n, JSON.parse(k)[i]]))), sumFns,
+      'başlangıç durumlarına göre ayrı fonksiyonlara bölündü');
     const kp = keyPath(tg.fn, tg.stmt);
     const owner = ast.program;
     const fnKp = keyPath(owner, tg.fn);
@@ -1077,6 +1081,37 @@ function paramMachines(ast, sumFns, { onLog, used }) {
     onLog(`unflatten: ${tg.fn.id.name} — ${groups.size} farklı başlangıç durumu, ${clones.length} ayrı fonksiyona bölündü (madde 45)`, 'info');
   }
   return made;
+}
+
+// Çevrilen makinenin raporu (dönüşümden önce, orijinal yapı üzerinde): her başlangıç durumu için keşif yapılır,
+// kenarlar birleştirilir; birden çok başlangıç varsa her biri ayrı bölge (madde 45)
+function recordMachine(findings, p, mach, starts, sumFns, outcome) {
+  if (!findings?.sm) return;
+  const merged = { nodes: [], edges: [], terms: [], complete: true, reason: null };
+  const seenE = new Set();
+  const seenN = new Set();
+  for (const vars of starts) {
+    const g = exploreMachine(p.node, mach.label, vars, sumFns);
+    if (!g) continue;
+    for (const n of g.nodes) if (!seenN.has(n.id)) { seenN.add(n.id); merged.nodes.push(n); }
+    for (const e of g.edges) {
+      const k = `${e.from}→${e.to}|${e.cond}`;
+      if (!seenE.has(k)) { seenE.add(k); merged.edges.push(e); }
+    }
+    merged.terms.push(...g.terms);
+    if (!g.complete) { merged.complete = false; merged.reason = g.reason; }
+  }
+  const names = new Set([...starts[0].keys(), ...(mach.preName ? [mach.preName] : [])]);
+  const fn = p.getFunctionParent();
+  const entries = merged.edges.filter((e) => e.from === 'GİRİŞ').map((e) => e.to);
+  const report = machineReport({
+    id: findings.sm.length, fn: fn?.node.id?.name ?? (fn ? '(anonim)' : '(program)'), line: p.node.loc?.start.line ?? null,
+    discriminant: gen(mach.disc), stateNames: [...names], cases: caseSummaries(mach.sw, [...names]), staticGraph: merged, entries,
+  });
+  report.kind = 'switch makinesi';
+  report.outcome = outcome;
+  report.steps = [];
+  findings.sm.push(report);
 }
 
 // Rapor için durum makinesi keşfi (madde 26/36, E186/E187): unflatten yorumlayıcısı kayıt modunda
