@@ -17,7 +17,16 @@ function hasDynamicScope(ast) {
 function isInertInit(path) {
   const n = path.node;
   if (isLiteralTree(n) || t.isFunction(n) || t.isClassExpression(n) && !n.superClass) return true;
+  // literal anahtarlı nesne: değerleri de yan etkisizse (getter/metotlar tanım anında çalışmaz)
+  if (t.isObjectExpression(n)) {
+    return path.get('properties').every((p) => (p.isObjectMethod() || p.isObjectProperty()) && !p.node.computed &&
+      (p.isObjectMethod() || isInertInit(p.get('value'))));
+  }
   if (t.isIdentifier(n)) return Boolean(path.scope.getBinding(n.name)) || n.name === 'undefined';
+  // Object.create(null) / Object.create({...}): yeni boş nesne, yan etkisiz
+  if (t.isCallExpression(n) && n.arguments.length === 1 && t.isMemberExpression(n.callee) && !n.callee.computed &&
+      t.isIdentifier(n.callee.object, { name: 'Object' }) && t.isIdentifier(n.callee.property, { name: 'create' }) &&
+      !path.scope.getBinding('Object') && (t.isNullLiteral(n.arguments[0]) || isLiteralTree(n.arguments[0]) && t.isObjectExpression(n.arguments[0]))) return true;
   return isFactoryIife(n);
 }
 
@@ -98,6 +107,7 @@ export async function run(ast, { onLog, bump, level }) {
   const allowGlobal = level >= 4;
   // ölü özellik atamaları yalnızca maksimum seviyede; kalan fonksiyon bildirimleri sonraki turda temizlenir
   let n = allowGlobal ? deadPropertyStores(ast) : 0;
+  bump('dead.propertyStore', n);
 
   traverse(ast, {
     FunctionDeclaration(p) {
@@ -108,6 +118,7 @@ export async function run(ast, { onLog, bump, level }) {
       if (b.referencePaths.some((r) => !r.findParent((x) => x === p))) return;
       p.remove();
       n++;
+      bump('dead.unusedFunction');
     },
     VariableDeclarator(p) {
       if (!t.isIdentifier(p.node.id) || isExported(p)) return;
@@ -121,9 +132,11 @@ export async function run(ast, { onLog, bump, level }) {
       if (!p.node.init || isInertInit(p.get('init'))) {
         p.remove();
         n++;
+        bump('dead.unusedVariable');
       } else if (decl.node.declarations.length === 1 && Array.isArray(decl.container)) {
         decl.replaceWith(t.expressionStatement(p.node.init));
         n++;
+        bump('dead.unusedVariable');
       }
     },
   });
