@@ -276,10 +276,11 @@ async function run({ mode = 'normal' } = {}) {
   }
   let only = enabledPasses();
   // E26: ayarlarda otomatik profil açıksa eşiği aşan araç tespitinin profili uygulanır (eşik altında tüm pass'ler)
+  let profileNote = null;
   if (settings().autoProfile) {
     const prof = autoProfile(detectTools(src));
     if (prof.passes) only = only.filter((id) => prof.passes.includes(id));
-    log(t('log.autoProfile', { p: prof.profile, r: prof.reason }), 'info');
+    profileNote = t('log.autoProfile', { p: prof.profile, r: prof.reason });
   }
   if (!only.length) { setStatus('status.noPasses', {}, 'err'); return null; }
   controller = new AbortController();
@@ -287,6 +288,7 @@ async function run({ mode = 'normal' } = {}) {
   runBtn.setAttribute('aria-busy', 'true');
   stopBtn.hidden = false;
   if (mode !== 'dry') { resetResultsView(); clearLog(); }
+  if (profileNote) log(profileNote, 'info');
   setStatus(mode === 'dry' ? 'status.dryRunning' : 'status.running', {}, 'busy');
   const t0 = performance.now();
   const snapshots = [];
