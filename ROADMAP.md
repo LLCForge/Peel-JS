@@ -283,18 +283,18 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 ## E-B. String kodlama ve çözme (E61–E95)
 
 - [~] E61. Base64 varyantları — koddaki decoder sandbox'ta çalışınca; js-confuser base91 dahil
-- [ ] E62. Base32/Base58/Base85
+- [x] E62. Base32/Base58/Base85 — Base32, Base58, Ascii85 (rapor)
 - [x] E63. Hex string
 - [x] E64. Unicode kaçışları
 - [x] E65. Octal kaçışları
-- [ ] E66. HTML entity
+- [x] E66. HTML entity — HTML entity (rapor)
 - [~] E67. Percent encoding — `eval(decodeURIComponent(…))`
-- [ ] E68. UTF-16 / UTF-7 / CESU-8
-- [ ] E69. ROT-n
-- [ ] E70. Atbash
-- [ ] E71. Vigenère / Sezar
-- [ ] E72. Tek bayt XOR
-- [ ] E73. Çok bayt XOR (Kasiski)
+- [~] E68. UTF-16 / UTF-7 / CESU-8 — UTF-16 LE/BE bayt dizileri; UTF-7/CESU-8 yok
+- [x] E69. ROT-n — ROT-n, İngilizce harf sıklığı (ki-kare)
+- [x] E70. Atbash
+- [x] E71. Vigenère / Sezar — Vigenère anahtarı sütun sütun ki-kare ile; Sezar = ROT-n
+- [x] E72. Tek bayt XOR — 255 anahtar, okunabilirlik puanı
+- [x] E73. Çok bayt XOR (Kasiski) — anahtar uzunluğu 2–8, sütun başına tek bayt XOR
 - [x] E74. RC4 (obfuscator.io rc4 benchmark'ta tam)
 - [ ] E75. AES-CBC/CTR
 - [ ] E76. DES/3DES
@@ -308,15 +308,15 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [~] E84. `parseInt(x, 16)` zinciri — saf ifadeyse
 - [~] E85. `unescape`/`escape`
 - [~] E86. `encodeURI` ailesi
-- [ ] E87. BigInt ile paketlenmiş string
-- [ ] E88. Bitsel paketleme
-- [ ] E89. Uint8Array + TextDecoder
+- [x] E87. BigInt ile paketlenmiş string — büyük tamsayıdan bayt açma
+- [~] E88. Bitsel paketleme — 8 bit paketleme; 7 bit ve özel genişlikler yok
+- [~] E89. Uint8Array + TextDecoder — çalışma anında TextDecoder stub'ı üzerinden
 - [~] E90. Sıkıştırılmış blob — LZString programın kendi koduyla; pako/gzip/brotli yok
 - [x] E91. `atob(x).split("").reverse().join("")`
 - [~] E92. Çok katmanlı zincir — katman sayısı raporlanmıyor
 - [~] E93. Ayrı fonksiyondan anahtar toplayan şifreli tablo
 - [x] E94. Çalışma anında üretilen alfabe
-- [ ] E95. Kodlama raporu
+- [x] E95. Kodlama raporu — rapor: çıktıdaki string'lerin kodlama adayları ve çözümleri
 
 ## E-C. Proxy ve dolaylılık (E96–E120)
 

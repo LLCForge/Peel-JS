@@ -129,6 +129,10 @@ export function renderReport(root, report, onExport, actions = {}) {
       ? table(['API', '', '#'], report.apis.map((a) => [a.name, td(a.why), a.count]), ['mono', 'rep-muted', 'num'])
       : muted('report.apis.none')),
     section('report.iocs', iocs(report.iocs)),
+    section('report.encodings', report.encodings?.length
+      ? table([t('report.enc.value'), t('report.enc.kind'), t('report.enc.decoded')],
+        report.encodings.map((e) => [e.value, e.best.key ? `${e.best.encoding} (${e.best.key})` : e.best.encoding, e.best.text]), ['mono', 'mono', 'mono'])
+      : muted('report.encodings.none')),
     section('report.passes', passTimes(report.passTimes)),
     section('report.rollbacks', report.rollbacks.length
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])

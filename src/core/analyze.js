@@ -2,6 +2,7 @@ import * as t from '@babel/types';
 import { parse } from './parse.js';
 import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
+import { encodingReport } from './encodings.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
@@ -190,6 +191,8 @@ export async function analyze({ input, text, output, events = [], sandbox = null
       yara: yaraRule({ strings: after.strings, iocs: found, hash: fnv1a(output) }),
       ids: idsRules({ runtime, iocs: found }),
     },
+    // shortcut: en fazla 300 string denenir (her biri XOR/Vigenère araması yapar); büyük çıktılarda örnekleme gerekirse artır
+    encodings: encodingReport(after.strings.slice(0, 300)),
     apis: after.apis,
     regexes: after.regexes,
     runtime,
