@@ -1,3 +1,6 @@
+import { UI_TR, UI_EN } from './ui/i18n-ui.js';
+import { EXTRA_LANGS } from './ui/i18n-langs.js';
+
 // Arayüz metinleri. Pass log'ları ve rapordaki teknik etiketler şimdilik Türkçe kalır.
 const DICT = {
   tr: {
@@ -118,6 +121,96 @@ const DICT = {
     'stat.proxy': 'proxy', 'stat.constFold': 'katlama', 'stat.deadCode': 'ölü kod', 'stat.opaque': 'sabit test',
     'stat.stateVar': 'durum değişkeni', 'stat.vm': 'VM', 'stat.controlFlow': 'akış', 'stat.unused': 'kullanılmayan',
     'stat.rename': 'isim',
+    'report.engine': 'Çözme motoru analizi',
+    'report.engine.obf': 'obfuscator.io ayarları (tahmin)',
+    'report.engine.flow': 'Akış raporu',
+    'report.engine.flowStats': 'Fonksiyon {f} · döngü {l} · en derin iç içelik {d} · toplam karmaşıklık {c} · dispatcher {b} → {a}',
+    'report.engine.recursion': 'Özyineleme',
+    'report.engine.recursion.none': 'Özyinelemeli fonksiyon yok.',
+    'report.engine.complex': 'En karmaşık fonksiyonlar',
+    'report.engine.unresolved': 'Açılamayan durum makineleri (Mermaid / DOT)',
+    'report.engine.integrity': 'Bütünlük ve konsol kontrolleri',
+    'report.engine.integrity.summary': '{n} kontrol bulundu · {x} etkisizleştirildi · çıktıda kalan {r}',
+    'report.engine.integrity.none': 'Bütünlük (hash/kaynak) kontrolü bulunamadı.',
+    'report.engine.console': 'Konsol tespiti / müdahalesi',
+    'report.engine.dead': 'Ölü kod türleri',
+    'report.engine.dead.none': 'Türüne göre sayılmış ölü kod yok.',
+    'report.engine.bundle': 'Paket modülleri ({k})',
+    'report.engine.bundle.none': 'Paket (webpack/esbuild/browserify/kaynak haritalı) yapısı bulunamadı.',
+    'report.semantics': 'Semantik analiz',
+    'rt.runtime': 'Çalışma anı',
+    'rt.settings': 'Sandbox ayarları',
+    'rt.profile': 'Tarayıcı profili',
+    'rt.now': 'Zaman (zaman makinesi)',
+    'rt.seed': 'Rastgelelik tohumu',
+    'rt.cookie': 'Çerez (document.cookie)',
+    'rt.storage': 'localStorage (JSON nesnesi)',
+    'rt.responses': 'Sahte yanıtlar (JSON dizisi: match, status, body)',
+    'rt.memory': 'Bellek sınırı (MB)',
+    'rt.timeout': 'Süre sınırı (ms)',
+    'rt.verifyLevel': 'Doğrulama seviyesi',
+    'rt.watch': 'İzlenen yollar (virgülle; ör. navigator.userAgent)',
+    'rt.save': 'Kaydet',
+    'rt.reset': 'Varsayılan',
+    'rt.saved': 'Kaydedildi; sonraki çalıştırmada uygulanır.',
+    'rt.invalid': 'Geçersiz alan',
+    'rt.engineDefault': 'motor varsayılanı',
+    'rt.coverage': 'Coverage',
+    'rt.covered': 'çalışan deyim',
+    'rt.callgraph': 'Çalışma anı çağrı grafiği',
+    'rt.calls': 'çağrı',
+    'rt.loops': 'Döngüler',
+    'rt.traps': 'Sonsuz döngü / anti-debug tuzakları',
+    'rt.infinite': 'Program zaman aşımına uğradı; olası sonsuz döngü',
+    'rt.taint': 'Taint akışları',
+    'rt.dyncode': 'Çalışma anında üretilen kod',
+    'rt.wasm': 'WebAssembly modülleri',
+    'rt.workers': 'Worker kodu (ayrı sandbox)',
+    'rt.fp': 'Canvas / WebGL / Audio parmak izi çağrıları',
+    'rt.hooks': 'Kanca kayıtları',
+    'rt.effects': 'Etki günlüğü',
+    'rt.trust': 'Güven skoru',
+    'rt.passRisk': 'Pass riski',
+    'rt.success': 'Başarı metriği',
+    'rt.checks': 'Doğrulama denetimleri',
+    'rt.failure': 'Başarısız kanıt raporu',
+    'rt.rationale': 'Dönüşüm gerekçeleri',
+    'rt.memoryUse': 'Bellek kullanımı',
+    'rt.telemetry': 'Motor telemetrisi',
+    'rt.observed': 'gözlemle üretilen değer',
+    'rt.hit': 'çalıştı',
+    'rt.miss': 'çalışmadı',
+    'rt.tools': 'Araçlar',
+    'rt.compare': 'Profilleri karşılaştır',
+    'rt.realdom': 'Gerçek DOM\'da çalıştır',
+    'rt.consent': 'Kodun gerçek tarayıcı motorunda, ağ ve sayfa erişimi engellenmiş yalıtılmış bir çerçevede çalışmasını onaylıyorum.',
+    'rt.fuzz': 'Diferansiyel fuzz',
+    'rt.equiv': 'Fonksiyon denkliği',
+    'rt.determinism': 'Determinizm ve idempotans',
+    'rt.replay': 'Kaydet ve yeniden oynat',
+    'rt.escape': 'Kaçış testi paketi',
+    'rt.issue': 'Yanlış sonuç bildir',
+    'rt.proof': 'İmzalı kanıt paketi',
+    'rt.signedReport': 'İmzalı rapor',
+    'rt.running': 'Çalışıyor…',
+    'rt.none': 'yok',
+    'rt.step': 'Adım',
+    'rt.skipped': 'atlandı',
+    'rt.passed': 'geçti',
+    'rt.failed': 'başarısız',
+    'rt.noSandbox': 'Sandbox yok',
+    'rt.mutation': 'Doğrulama gücü (mutant)',
+    'rt.copy': 'Panoya kopyala',
+    'rt.download': 'İndir',
+    'rt.includeCode': 'Kodu ekle (maskelenmiş)',
+    'rt.ms': 'ms',
+    'rt.level': 'seviye',
+    'rt.budget': 'bütçe',
+    'rt.patch': 'Kural sentezi (semantik yama)',
+    'rt.patchHelp': 'Her satıra bir çift: önce => sonra (ör. x ^ 5 ^ 5 => x)',
+    'rt.apply': 'Çıktıya uygula',
+    'rt.redos': 'Felaket regex (ReDoS) riski',
+    'rt.solver': 'Çözücü arka ucu',
   },
   en: {
     'brand.sub': 'JS DEOBFUSCATOR',
@@ -237,6 +330,96 @@ const DICT = {
     'stat.proxy': 'proxies', 'stat.constFold': 'folds', 'stat.deadCode': 'dead code', 'stat.opaque': 'opaque tests',
     'stat.stateVar': 'state vars', 'stat.vm': 'VMs', 'stat.controlFlow': 'flows', 'stat.unused': 'unused',
     'stat.rename': 'renames',
+    'report.engine': 'Deobfuscation engine analysis',
+    'report.engine.obf': 'obfuscator.io settings (inferred)',
+    'report.engine.flow': 'Flow report',
+    'report.engine.flowStats': 'Functions {f} · loops {l} · max nesting {d} · total complexity {c} · dispatchers {b} → {a}',
+    'report.engine.recursion': 'Recursion',
+    'report.engine.recursion.none': 'No recursive functions.',
+    'report.engine.complex': 'Most complex functions',
+    'report.engine.unresolved': 'Unresolved state machines (Mermaid / DOT)',
+    'report.engine.integrity': 'Integrity and console checks',
+    'report.engine.integrity.summary': '{n} checks found · {x} neutralized · {r} left in output',
+    'report.engine.integrity.none': 'No integrity (hash/source) checks found.',
+    'report.engine.console': 'Console detection / tampering',
+    'report.engine.dead': 'Dead code by type',
+    'report.engine.dead.none': 'No dead code counted by type.',
+    'report.engine.bundle': 'Bundle modules ({k})',
+    'report.engine.bundle.none': 'No bundle (webpack/esbuild/browserify/source-mapped) structure found.',
+    'report.semantics': 'Semantic analysis',
+    'rt.runtime': 'Runtime',
+    'rt.settings': 'Sandbox settings',
+    'rt.profile': 'Browser profile',
+    'rt.now': 'Time (time machine)',
+    'rt.seed': 'Random seed',
+    'rt.cookie': 'Cookie (document.cookie)',
+    'rt.storage': 'localStorage (JSON object)',
+    'rt.responses': 'Fake responses (JSON array: match, status, body)',
+    'rt.memory': 'Memory limit (MB)',
+    'rt.timeout': 'Time limit (ms)',
+    'rt.verifyLevel': 'Verification level',
+    'rt.watch': 'Watched paths (comma separated, e.g. navigator.userAgent)',
+    'rt.save': 'Save',
+    'rt.reset': 'Defaults',
+    'rt.saved': 'Saved; applied on the next run.',
+    'rt.invalid': 'Invalid field',
+    'rt.engineDefault': 'engine default',
+    'rt.coverage': 'Coverage',
+    'rt.covered': 'statements executed',
+    'rt.callgraph': 'Runtime call graph',
+    'rt.calls': 'calls',
+    'rt.loops': 'Loops',
+    'rt.traps': 'Infinite loop / anti-debug traps',
+    'rt.infinite': 'The program timed out; possible infinite loop',
+    'rt.taint': 'Taint flows',
+    'rt.dyncode': 'Code generated at runtime',
+    'rt.wasm': 'WebAssembly modules',
+    'rt.workers': 'Worker code (separate sandbox)',
+    'rt.fp': 'Canvas / WebGL / Audio fingerprint calls',
+    'rt.hooks': 'Hook records',
+    'rt.effects': 'Effect log',
+    'rt.trust': 'Trust score',
+    'rt.passRisk': 'Pass risk',
+    'rt.success': 'Success metric',
+    'rt.checks': 'Verification checks',
+    'rt.failure': 'Failed proof report',
+    'rt.rationale': 'Transformation rationale',
+    'rt.memoryUse': 'Memory use',
+    'rt.telemetry': 'Engine telemetry',
+    'rt.observed': 'value produced by observation',
+    'rt.hit': 'executed',
+    'rt.miss': 'not executed',
+    'rt.tools': 'Tools',
+    'rt.compare': 'Compare profiles',
+    'rt.realdom': 'Run in real DOM',
+    'rt.consent': 'I consent to running the code in the real browser engine inside an isolated frame with network and page access blocked.',
+    'rt.fuzz': 'Differential fuzz',
+    'rt.equiv': 'Function equivalence',
+    'rt.determinism': 'Determinism and idempotence',
+    'rt.replay': 'Record and replay',
+    'rt.escape': 'Escape test suite',
+    'rt.issue': 'Report wrong result',
+    'rt.proof': 'Signed proof bundle',
+    'rt.signedReport': 'Signed report',
+    'rt.running': 'Running…',
+    'rt.none': 'none',
+    'rt.step': 'Step',
+    'rt.skipped': 'skipped',
+    'rt.passed': 'passed',
+    'rt.failed': 'failed',
+    'rt.noSandbox': 'No sandbox',
+    'rt.mutation': 'Verification strength (mutants)',
+    'rt.copy': 'Copy',
+    'rt.download': 'Download',
+    'rt.includeCode': 'Include code (masked)',
+    'rt.ms': 'ms',
+    'rt.level': 'level',
+    'rt.budget': 'budget',
+    'rt.patch': 'Rule synthesis (semantic patch)',
+    'rt.patchHelp': 'One pair per line: before => after (e.g. x ^ 5 ^ 5 => x)',
+    'rt.apply': 'Apply to output',
+    'rt.redos': 'Catastrophic regex (ReDoS) risk',
+    'rt.solver': 'Solver backend',
   },
 };
 
@@ -278,36 +461,61 @@ const DATA_EN = {
   davranış: 'behaviour changed',
 };
 
-// Rapor verisindeki etiketi etkin dile çevirir (karşılığı yoksa olduğu gibi)
-export const td = (s) => (lang === 'en' && s && DATA_EN[s]) || s;
+// Arayüz katmanının metinleri ve ek diller (DE/ES/AR) ayrı dosyalarda; burada birleştirilir
+Object.assign(DICT.tr, UI_TR);
+Object.assign(DICT.en, UI_EN);
+for (const [code, dict] of Object.entries(EXTRA_LANGS)) DICT[code] = dict;
+
+// Desteklenen diller: [kod, kendi dilindeki adı]. ar sağdan sola yazılır.
+export const LANGS = [['tr', 'Türkçe'], ['en', 'English'], ['de', 'Deutsch'], ['es', 'Español'], ['ar', 'العربية']];
+const RTL = new Set(['ar']);
+const CODES = LANGS.map(([c]) => c);
+
+// Rapor verisindeki etiketi etkin dile çevirir (karşılığı yoksa olduğu gibi); TR dışı diller İngilizce veri etiketi alır
+export const td = (s) => (lang !== 'tr' && s && DATA_EN[s]) || s;
 
 const KEY = 'peel.lang';
 let lang = (() => {
   try {
     const saved = localStorage.getItem(KEY);
-    if (saved === 'tr' || saved === 'en') return saved;
+    if (CODES.includes(saved)) return saved;
   } catch { /* depolama kapalı */ }
-  return navigator.language?.toLowerCase().startsWith('tr') ? 'tr' : 'en';
+  const nav = navigator.language?.toLowerCase().slice(0, 2);
+  return CODES.includes(nav) ? nav : 'en';
 })();
 
 export const getLang = () => lang;
+export const isRtl = () => RTL.has(lang);
 
+// Eksik anahtar: TR dışı dillerde önce İngilizceye, sonra Türkçeye düşer
 export function t(key, vars = {}) {
-  const s = DICT[lang][key] ?? DICT.tr[key] ?? key;
+  const s = DICT[lang]?.[key] ?? (lang !== 'tr' ? DICT.en[key] : undefined) ?? DICT.tr[key] ?? key;
   return s.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ''));
 }
 
-// data-i18n (metin), data-i18n-placeholder, data-i18n-label (aria-label) özniteliklerini doldurur
+// data-i18n (metin), data-i18n-placeholder, data-i18n-label (aria-label), data-i18n-title özniteliklerini doldurur
 export function applyI18n(root = document) {
   document.documentElement.lang = lang;
+  document.documentElement.dir = RTL.has(lang) ? 'rtl' : 'ltr';
   for (const el of root.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n);
   for (const el of root.querySelectorAll('[data-i18n-placeholder]')) el.placeholder = t(el.dataset.i18nPlaceholder);
   for (const el of root.querySelectorAll('[data-i18n-label]')) el.setAttribute('aria-label', t(el.dataset.i18nLabel));
+  for (const el of root.querySelectorAll('[data-i18n-title]')) el.title = t(el.dataset.i18nTitle);
 }
 
-export function toggleLang() {
-  lang = lang === 'tr' ? 'en' : 'tr';
+const listeners = new Set();
+export const onLang = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+
+export function setLang(code) {
+  if (!CODES.includes(code)) return lang;
+  lang = code;
   try { localStorage.setItem(KEY, lang); } catch { /* depolama kapalı */ }
   applyI18n();
+  for (const fn of listeners) fn(lang);
   return lang;
+}
+
+// Sıradaki dile geç (dil düğmesi)
+export function toggleLang() {
+  return setLang(CODES[(CODES.indexOf(lang) + 1) % CODES.length]);
 }

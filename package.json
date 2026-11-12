@@ -33,17 +33,25 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node test/run.js && node test/threat.test.js && node test/encodings.test.js && node test/solver.test.js && node test/symbolic.test.js && node test/patch.test.js && node test/sandbox-runtime.test.js && node test/replay.test.js && node test/verify.test.js && node test/sandbox-escape.test.js && node test/runtime-ui.test.js && node test/sbom.test.js",
+    "test": "node test/run.js && node test/all.js",
+    "bench": "node test/bench.js",
     "sbom": "node scripts/sbom.js --prod -o peel-sbom.cdx.json",
-    "bench": "node test/bench.js"
+    "build:lib": "vite build -c vite.lib.config.js"
   },
   "dependencies": {
     "@babel/generator": "^7.26.0",
     "@babel/parser": "^7.26.0",
     "@babel/traverse": "^7.26.0",
     "@babel/types": "^7.26.0",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-javascript": "6.2.5",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/search": "6.7.2",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.15",
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@lezer/highlight": "1.2.5",
     "prettier": "^3.4.0",
     "quickjs-emscripten": "^0.31.0"
   },
@@ -54,5 +62,26 @@
   },
   "optionalDependencies": {
     "z3-solver": "5.4.1"
-  }
+  },
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./node": {
+      "types": "./src/node.d.ts",
+      "default": "./src/node.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "extensions/semgrep/",
+    "README.md",
+    "README.tr.md",
+    "LICENSE"
+  ]
 }

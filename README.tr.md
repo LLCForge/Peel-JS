@@ -138,6 +138,35 @@ bir modüldür. Sıra ve seviyeler [`src/core/registry.js`](src/core/registry.js
 - Durum makineleri işaretlenir ama henüz düz koda çevrilmez.
 - WebAssembly içindeki mantık ve anahtarı sunucudan gelen şifreli string'ler kapsam dışıdır.
 
+## Entegrasyonlar
+
+Aşağıdakilerin hepsi yerelde çalışır. Kodun hiçbir yere yüklenmez; sunucular yalnızca `127.0.0.1`'e bağlanır.
+
+**CLI.** Toplu iş (`peel src/ --out-dir out`), `--json`, `--sarif`, `--html` (önce/sonra raporu), `--git <dizin>` (her pass bir commit),
+`--watch`, `--style auto` (`.prettierrc` / `.editorconfig` / `.eslintrc.json` kurallarına uyar), `--rules`, `--plugin` + `--trust`,
+`--project dosya.peel`, `--semgrep`, `--history`, `--fail-on high`, yapılandırma dosyası `peel.config.json`.
+Çıkış kodları: 0 tamam, 1 hata, 2 kullanım, 3 değişiklik, 4 risk eşiği. Alt komutlar (`peel <komut> --help`):
+
+| Komut | |
+|---|---|
+| `peel diff eski.js yeni.js -D` | yeniden adlandırmayı yok sayan semantik diff, sürümler arası fonksiyon eşleştirme, yeni teknik uyarısı; `--port-names çıktı.js` adları taşır |
+| `peel track <dosya\|url>` | script'i izler, her yeni sürümü çözer ve neyin değiştiğini raporlar |
+| `peel history` | yerel çözüm geçmişi (`~/.peel`), etiket ve notlar, "daha önce görüldü" sorgusu |
+| `peel serve` | 127.0.0.1 üzerinde Bearer token'lı REST API (`/v1/deobfuscate`, `/v1/diff`, `/v1/sarif`) |
+| `peel bot` | Slack / Discord eğik çizgi komutu botu (imza doğrulamalı) |
+| `peel asar app.asar -o dizin -D` | Electron arşivini açar, script'lerini çözer |
+| `peel symbols a.js b.js` | dosyalar arası sembol haritası; `--rename eski=yeni` tüm dosyalarda adlandırır |
+| `peel share` / `unshare` | kodu URL'nin # kısmında taşıyan, isteğe bağlı AES-GCM ile şifreli bağlantı |
+| `peel plugin keygen\|sign\|verify` | Ed25519 imzalı pass eklentileri |
+| `peel explain`, `techniques`, `learn`, `ctf`, `obfuscate --test`, `anonymize`, `changelog` | öğrenme araçları |
+
+**Kütüphane.** `npm i peel-js`, ardından `import { peel, deobfuscate, analyze, semanticDiff } from 'peel-js'` (tipler dahil;
+yalnızca Node'a özgü yardımcılar `peel-js/node` altında). **GitHub Action:** `uses: LLCForge/Peel-JS@main`, `files: dist/**/*.js`
+(SARIF ve adım özeti üretir). **Editör ve araçlar:** `extensions/vscode` (VS Code), `extensions/mitmproxy`, `extensions/burp`,
+`extensions/jupyter`, `extensions/observable` (`npm run build:lib` eklenecek tek dosyalık ESM paketini üretir), `extensions/semgrep`. **Masaüstü:** `src-tauri`
+(`cargo install tauri-cli --version ^2 && cargo tauri build`). Web uygulaması PWA olarak çevrimdışı çalışır; **Araçlar**
+penceresinde karşılaştırma, geçmiş, paylaşım, `.asar` dosyaları, kurallar/eklentiler ve eğitim / CTF / ansiklopedi bulunur.
+
 ## Yol haritası
 
 Her birinin durumu belli 200 fikir: **23 yapıldı, 14 kısmen, 163 planlandı**. Bkz. [ROADMAP.md](ROADMAP.md).

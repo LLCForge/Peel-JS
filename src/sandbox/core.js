@@ -1,4 +1,6 @@
 import { STUBS } from './stubs.js';
+import { SEMANTIC_STUBS } from './semantics-stubs.js';
+import { hostIntl, hostTzOffset, hostTzName } from './host-intl.js';
 
 const MAX_CONTEXTS = 4;
 const TELEMETRY_MAX = 200;
@@ -71,10 +73,11 @@ export function createHost(QuickJS, options = {}) {
         if (/interrupted/i.test(message)) { interrupted = true; telemetry.interrupts++; }
         return { ok: false, error: message };
       }
-      // tamamlanma değeri (ör. Promise) her zaman dökülemez: değer yalnızca bilgi amaçlı
-      let value;
-      try { value = vm.dump(r.value); } catch { value = undefined; }
-      if (r.value.alive) r.value.dispose();
+      // nesneler (özellikle Promise) dump edilmez: dump Promise tutamacını kendisi serbest bırakır ve
+      // ardından gelen dispose "Lifetime not alive" ile host'u düşürür. Çağıranlar yalnızca ilkel değer okur.
+      const kind = vm.typeof(r.value);
+      const value = kind === 'object' || kind === 'function' ? undefined : vm.dump(r.value);
+      r.value.dispose();
       return { ok: true, value };
     };
     const memory = () => {
@@ -102,11 +105,20 @@ export function createHost(QuickJS, options = {}) {
       vm.setProp(vm.global, name, fn);
       fn.dispose();
     }
+    // Intl ve IANA saat dilimi verisi QuickJS'te yok: host Intl'ine senkron köprü (yalnızca string alır/verir)
+    const bridges = { __peelHostIntl: hostIntl, __peelHostTz: (z, ms) => hostTzOffset(z, Number(ms)), __peelHostTzName: (z, ms) => hostTzName(z, Number(ms)) };
+    for (const [name, f] of Object.entries(bridges)) {
+      const fn = vm.newFunction(name, (...args) => vm.newString(f(...args.map((x) => String(vm.dump(x))))));
+      vm.setProp(vm.global, name, fn);
+      fn.dispose();
+    }
     // sandbox yapılandırması (zaman, tarayıcı profili, çerez/depolama, sahte yanıtlar): stub'lar okur
     const c = evalRaw(`globalThis.__peelConfig = ${JSON.stringify(config ?? {})};`, 500);
     if (!c.ok) { dispose(); throw new Error(`config: ${c.error}`); }
     const s = evalRaw(STUBS, 2000);
     if (!s.ok) { dispose(); throw new Error(`stubs: ${s.error}`); }
+    const sm = evalRaw(SEMANTIC_STUBS, 2000);
+    if (!sm.ok) { dispose(); throw new Error(`semantic stubs: ${sm.error}`); }
     const all = [...hostPlugins, ...plugins];
     for (const p of all) {
       if (!p.prelude) continue;
@@ -172,6 +184,17 @@ export function createHost(QuickJS, options = {}) {
           const r = box.evalRaw(`(function () {\n${code}\n})()`, timeoutMs);
           const timedOut = box.interrupted();
           box.runJobs(Math.min(timeoutMs, 2000));
+          // olay döngüsü modeli (E516/E517): her makro görevden önce mikro kuyruk boşaltılır, reddedilen sözler denetlenir
+          if (config?.eventLoop) {
+            for (let i = 0; i < 200; i++) {
+              box.evalRaw('__peelProbe()', 500);
+              box.runJobs(500);
+              box.evalRaw('__peelCheck()', 500);
+              const tick = box.evalRaw('__peelTick()', Math.min(timeoutMs, 2000));
+              if (!tick.ok || tick.value !== true) break;
+              box.runJobs(1000);
+            }
+          }
           // analiz: program bittikten sonra zamanlayıcılar/olay işleyicileri tetiklenir (davranış karşılaştırmasında yok)
           if (post) {
             box.evalRaw(post, 2000);
@@ -184,6 +207,7 @@ export function createHost(QuickJS, options = {}) {
             // dışarıdan gözlenebilir etkiler (E706/E711): davranış karşılaştırması ve rapor için
             effects: box.readArray('__peelEffects'),
             extra: box.collect(), mem: box.memory(),
+            sem: config?.eventLoop ? box.readArray('__peelSem') : [],
           };
         });
 

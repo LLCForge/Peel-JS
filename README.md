@@ -136,6 +136,35 @@ Every pass is a small module in [`src/passes/`](src/passes) with the signature
 - State machines are annotated, not yet rebuilt into plain code.
 - Logic inside WebAssembly and strings encrypted with a key fetched from a server are out of reach.
 
+## Integrations
+
+Everything below runs locally. Nothing uploads your code; servers bind to `127.0.0.1` only.
+
+**CLI.** Batch (`peel src/ --out-dir out`), `--json`, `--sarif`, `--html` (before/after report), `--git <dir>` (one commit per pass),
+`--watch`, `--style auto` (follows `.prettierrc` / `.editorconfig` / `.eslintrc.json`), `--rules`, `--plugin` + `--trust`,
+`--project file.peel`, `--semgrep`, `--history`, `--fail-on high`, config file `peel.config.json`.
+Exit codes: 0 ok, 1 error, 2 usage, 3 changed, 4 risk threshold. Subcommands (`peel <cmd> --help`):
+
+| Command | |
+|---|---|
+| `peel diff old.js new.js -D` | semantic diff that ignores renames, function matching across versions, new-technique warning; `--port-names out.js` carries names over |
+| `peel track <file\|url>` | watches a script, deobfuscates each new version and reports what changed |
+| `peel history` | local solution history (`~/.peel`), labels and notes, "seen before" lookup |
+| `peel serve` | REST API on 127.0.0.1 with a bearer token (`/v1/deobfuscate`, `/v1/diff`, `/v1/sarif`) |
+| `peel bot` | Slack / Discord slash-command bot (signature-verified) |
+| `peel asar app.asar -o dir -D` | unpacks an Electron archive and deobfuscates its scripts |
+| `peel symbols a.js b.js` | cross-file symbol map; `--rename old=new` renames across files |
+| `peel share` / `unshare` | link that carries the code in the URL fragment, optionally AES-GCM encrypted |
+| `peel plugin keygen\|sign\|verify` | Ed25519-signed pass plugins |
+| `peel explain`, `techniques`, `learn`, `ctf`, `obfuscate --test`, `anonymize`, `changelog` | learning tools |
+
+**Library.** `npm i peel-js`, then `import { peel, deobfuscate, analyze, semanticDiff } from 'peel-js'` (types included;
+Node-only helpers in `peel-js/node`). **GitHub Action:** `uses: LLCForge/Peel-JS@main` with `files: dist/**/*.js`
+(outputs SARIF and a step summary). **Editors and tools:** `extensions/vscode` (VS Code), `extensions/mitmproxy`,
+`extensions/burp`, `extensions/jupyter`, `extensions/observable` (`npm run build:lib` builds a single-file ESM bundle to attach), `extensions/semgrep`. **Desktop:** `src-tauri`
+(`cargo install tauri-cli --version ^2 && cargo tauri build`). The web app works offline as a PWA and has a **Tools**
+dialog for comparison, history, sharing, `.asar` files, rules/plugins and the tutorial / CTF / encyclopedia.
+
 ## Roadmap
 
 200 ideas, each with a status: **23 done, 14 partial, 163 planned**. See [ROADMAP.md](ROADMAP.md).
