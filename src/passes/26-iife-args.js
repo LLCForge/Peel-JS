@@ -10,7 +10,7 @@ import { literalOf } from '../util/literal.js';
 // (ters çevirme, sıfır genişlikli karakterlerden ikilik kod, parametre sırasını tersleme).
 // Bu pass: önsözü (koruma + arguments döngüleri) sandbox'ta çalıştırıp parametrelerin son değerini alır;
 // primitive olanları kullanım yerlerine yazar, nesne olanları (regex, String, parseInt) parametre olarak bırakır.
-// Önsöz yoksa (yalnızca sabit argümanlı IIFE) sandbox gerekmez: primitive argümanlar doğrudan yazılır.
+// Yalnızca jfogs korumasıyla başlayan IIFE'ler ele alınır; sıradan sabit argümanlı IIFE'lere dokunulmaz.
 
 const MAX_PARAMS = 5000;
 const SAFE_ARG_GLOBALS = new Set(['String', 'Number', 'Boolean', 'Array', 'Object', 'RegExp', 'Math', 'JSON',
@@ -58,20 +58,6 @@ function preludeLength(body, params) {
     break;
   }
   return i;
-}
-
-function usesArgumentsOrEval(fnPath) {
-  let hit = false;
-  fnPath.traverse({
-    Identifier(p) {
-      if (p.node.name === 'arguments' && p.isReferencedIdentifier() && p.getFunctionParent() === fnPath) { hit = true; p.stop(); }
-    },
-    CallExpression(p) {
-      if (t.isIdentifier(p.node.callee, { name: 'eval' })) { hit = true; p.stop(); }
-    },
-    WithStatement(p) { hit = true; p.stop(); },
-  });
-  return hit;
 }
 
 function candidates(ast) {
@@ -136,23 +122,15 @@ export async function run(ast, { onLog, bump, sandbox }) {
     const paramSet = new Set(params);
     const pre = preludeLength(body, paramSet);
 
-    let finals;
-    if (pre) {
-      if (!sandbox) continue;
-      // modül, "use strict" ya da sınıf içi: arguments parametrelere bağlı değildir, önsöz o kipte çalıştırılır
-      const strict = fn.get('body').isInStrictMode();
-      const r = await sandbox.batch([probeSource(fn.node, body.slice(0, pre), call, strict)], { timeoutMs: 3000 });
-      const res = r.ok ? r.results[0] : null;
-      if (!res?.ok || res.type !== 'string') continue;
-      finals = JSON.parse(res.value);
-      if (!Array.isArray(finals) || finals.length !== params.length || finals.some((d) => 'x' in d)) continue;
-    } else {
-      finals = call.node.arguments.map((a, i) => {
-        const lit = literalValue(a);
-        return lit.ok ? (lit.value === undefined ? { u: 1 } : { v: lit.value }) : { i };
-      });
-      if (finals.every((d) => 'i' in d)) continue;
-    }
+    // yalnızca jfogs koruması olan IIFE'ler: sıradan sabit argümanlı IIFE'lere dokunulmaz
+    if (!pre || !sandbox) continue;
+    // modül, "use strict" ya da sınıf içi: arguments parametrelere bağlı değildir, önsöz o kipte çalıştırılır
+    const strict = fn.get('body').isInStrictMode();
+    const r = await sandbox.batch([probeSource(fn.node, body.slice(0, pre), call, strict)], { timeoutMs: 3000 });
+    const res = r.ok ? r.results[0] : null;
+    if (!res?.ok || res.type !== 'string') continue;
+    const finals = JSON.parse(res.value);
+    if (!Array.isArray(finals) || finals.length !== params.length || finals.some((d) => 'x' in d)) continue;
 
     // Önsöz kaldırıldıktan sonra gövde arguments/eval/with kullanmamalı; parametreler önsöz dışında değiştirilmemeli
     const preludePaths = fn.get('body.body').slice(0, pre);
@@ -169,7 +147,7 @@ export async function run(ast, { onLog, bump, sandbox }) {
       });
       return hit;
     })();
-    if (restUsesArgs || (!pre && usesArgumentsOrEval(fn))) continue;
+    if (restUsesArgs) continue;
 
     const bindings = params.map((name) => fn.scope.getBinding(name));
     if (bindings.some((b) => !b || b.constantViolations.some((v) => !inPrelude(v)))) continue;
@@ -189,8 +167,8 @@ export async function run(ast, { onLog, bump, sandbox }) {
       }
       const node = valueNode(d);
       if (!node || shadowed(node, refs) || (t.isUnaryExpression(node) && shadowed(node.argument, refs))) {
-        // literal olarak yazılamayan primitive: yalnızca önsözsüz durumda parametre olduğu gibi kalabilir
-        if (pre) ok = false;
+        // literal olarak yazılamayan primitive: önsöz silinince parametre çözülmemiş değeri taşırdı
+        ok = false;
         keepParams.push(fn.node.params[i]);
         keepArgs.push(call.node.arguments[i]);
         return;

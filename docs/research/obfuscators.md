@@ -180,7 +180,7 @@ Kipler (`type`):
 PEEL: **`iife-args`** (yeni). Sabit argümanlı IIFE'nin önsözü (koruma, `var a = arguments`, `arguments`
 döngüleri) sandbox'ta aynı katılık kipinde çalıştırılır, parametrelerin son değerleri alınır; primitive olanlar
 kullanım yerlerine yazılır, nesne değerler (regex, `String`, `parseInt`) orijinal argümanıyla parametre olarak
-kalır ya da kullanılmıyorsa silinir. Önsözsüz sabit argümanlı IIFE'lerde sandbox gerekmez.
+kalır ya da kullanılmıyorsa silinir. Korumasız (sıradan) sabit argümanlı IIFE'lere dokunulmaz.
 Kalan: dış IIFE (`(function () { … })()`) korunur, çünkü açmak üst seviye bildirimleri global yapar.
 
 Bench: `test/corpus/jfogs/` (default, reverse, zero, her biri Unicode'lu ve breakout varyantları).
