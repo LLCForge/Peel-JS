@@ -28,12 +28,25 @@ function __peelObs(k, v) {
   else if (s !== v) __peelSeen[k] = null;
   return v;
 }
+// js-confuser global gizleme: getter("dZGlvoH") → console. Sonuç bir global nesneyse adını döndür.
+function __peelGlobalName(v) {
+  if (v === globalThis) return "\\u0000global:globalThis";
+  if (v === null || (typeof v !== "object" && typeof v !== "function")) return null;
+  var names = Object.getOwnPropertyNames(globalThis);
+  for (var i = 0; i < names.length; i++) {
+    var k = names[i];
+    if (k.indexOf("__peel") === 0 || !/^[A-Za-z_$][\\w$]*$/.test(k)) continue;
+    try { if (globalThis[k] === v) return "\\u0000global:" + k; } catch (e) {}
+  }
+  return null;
+}
 function __peelEval(id, args) {
   var f = __peelFns[id];
   if (!f) return null;
   var a = f.apply(undefined, args);
   var b = f.apply(undefined, args);
-  return typeof a === "string" && a === b ? a : null;
+  if (a !== b) return null;
+  return typeof a === "string" ? a : __peelGlobalName(a);
 }
 `;
 
@@ -229,7 +242,14 @@ async function resolveCalls(ast, ctx) {
       for (const c of g.calls) {
         const v = values.get(argsKey(c));
         if (v === undefined || !c.node) continue;
-        c.replaceWith(t.stringLiteral(v));
+        const global = v.startsWith('\u0000global:') ? v.slice(8) : null;
+        if (global) {
+          // çağrı yerinde aynı ad başka bir şeye bağlıysa global'e işaret etmez
+          if (c.scope.getBinding(global)) continue;
+          c.replaceWith(t.identifier(global));
+        } else {
+          c.replaceWith(t.stringLiteral(v));
+        }
         n++;
       }
       total += n;

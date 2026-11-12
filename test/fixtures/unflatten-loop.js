@@ -1,4 +1,4 @@
-// Makine gerçek bir döngü içeriyor (aynı durum tekrar ediyor): dokunulmamalı, davranış korunmalı
+// Makine gerçek bir döngü içeriyor (aynı durum tekrar ediyor): etiketli while olarak geri kurulmalı
 function count(n) {
   var P = 0, Q = 1;
   var i = 0;
@@ -12,6 +12,9 @@ function count(n) {
   }
   return i;
 }
-console.log(count(3));
+console.log(count(3), count(1));
 // LEVEL: 3
-// EXPECT: switch
+// EXPECT: do {
+// EXPECT: } while (!(i >= n));
+// GONE: switch
+// GONE: P + Q

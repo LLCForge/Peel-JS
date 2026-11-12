@@ -10,8 +10,8 @@ import { literalOf } from '../util/literal.js';
 // case gövdesi çıktıya yazılır, durum güncellemeleri (P += 2) yalnızca iç durumda uygulanır ve
 // gövdedeki durum okumaları o anki sabit değerle değiştirilir. Durumdan bağımsız bir koşul (if (x))
 // iki yolu da ayrı ayrı yürütülerek gerçek bir if/else'e dönüşür.
-// shortcut: aynı (durum, case) bir yolda tekrar ederse makine gerçek bir döngü içeriyordur ve dokunulmaz;
-// döngüleri while'a geri kurmak (yol haritası E165/E28) eklenene kadar böyle kalır.
+// Aynı (durum, case) bir yolda tekrar ederse orası gerçek bir döngünün başıdır: etiketli while(true)
+// ile sarılır, geri dönüşler continue, makineden çıkan yollar break olur.
 
 const MAX_STEPS = 4000;      // tüm yollar boyunca toplam dispatch adımı
 const MAX_OUTPUT = 400_000;  // üretilen kodun karakter sınırı (dal kopyalama patlamasına karşı)
@@ -48,7 +48,7 @@ function machineOf(loop) {
     pre = body[0].expression;
     sw = body[1];
   }
-  if (!sw || sw.cases.length < 2) return null;
+  if (!sw || !sw.cases.length) return null;
   return { loop, sw, disc: pre ? pre.right : sw.discriminant, preName: pre?.left.name ?? null };
 }
 
@@ -60,21 +60,35 @@ class State {
   key() { return JSON.stringify([[...this.vars], [...this.arrays]]); }
 }
 
+// Durum konumunun adı: P, states ya da scope.X.Y (js-confuser iç fonksiyon makineleri durumu kapsam nesnesinde tutar)
+function pathOf(n) {
+  if (t.isIdentifier(n)) return n.name;
+  if (t.isMemberExpression(n) && !n.computed && t.isIdentifier(n.property)) {
+    const base = pathOf(n.object);
+    return base && `${base}.${n.property.name}`;
+  }
+  return null;
+}
+const rootOf = (path) => path.split('.')[0];
+
+// Düğüm bir durum dizisinin elemanı mı? (A[i], scope.X.Y[i])
+const isArrayElem = (n, m) => t.isMemberExpression(n) && n.computed && m.arrays.has(pathOf(n.object));
+
 function makeEval(m) {
   const isSum = (n) => t.isCallExpression(n) && t.isIdentifier(n.callee) && m.sumFns.has(n.callee.name) &&
-    n.arguments.length === 1 && t.isIdentifier(n.arguments[0]) && m.arrays.has(n.arguments[0].name);
+    n.arguments.length === 1 && m.arrays.has(pathOf(n.arguments[0]));
 
   function ev(n, S) {
     if (t.isNumericLiteral(n) || t.isStringLiteral(n) || t.isBooleanLiteral(n)) return n.value;
     if (t.isParenthesizedExpression(n)) return ev(n.expression, S);
     if (t.isIdentifier(n) && m.vars.has(n.name)) return S.vars.get(n.name);
-    if (t.isMemberExpression(n) && n.computed && t.isIdentifier(n.object) && m.arrays.has(n.object.name)) {
-      const arr = S.arrays.get(n.object.name);
+    if (isArrayElem(n, m)) {
+      const arr = S.arrays.get(pathOf(n.object));
       const i = ev(n.property, S);
       if (!Number.isInteger(i) || i < 0 || i >= arr.length) fail('dizi indeksi');
       return arr[i];
     }
-    if (isSum(n)) return S.arrays.get(n.arguments[0].name).reduce((a, b) => a + b, 0);
+    if (isSum(n)) return S.arrays.get(pathOf(n.arguments[0])).reduce((a, b) => a + b, 0);
     if (t.isUnaryExpression(n)) {
       const v = ev(n.argument, S);
       switch (n.operator) {
@@ -109,31 +123,45 @@ function makeEval(m) {
   return { ev, isSum };
 }
 
-// Düğüm durum okuyor/yazıyor mu? (iç fonksiyonda durum referansı = closure: desteklenmez)
+const isLocation = (n, m) => (t.isIdentifier(n) && m.vars.has(n.name)) || isArrayElem(n, m) ||
+  m.arrays.has(pathOf(n));
+
+// Düğüm durum okuyor/yazıyor mu? İç fonksiyondaki okuma closure demektir: o makinede durum güncellemeleri
+// gerçekten yazılır (m.live), böylece closure sonradan çağrılsa da orijinaldeki değeri görür.
 function scanState(node, m) {
   let reads = false;
   let writes = false;
-  const isLoc = (n) => (t.isIdentifier(n) && m.vars.has(n.name)) ||
-    (t.isMemberExpression(n) && t.isIdentifier(n.object) && m.arrays.has(n.object.name));
+  const roots = new Set([...m.vars, ...[...m.arrays].map(rootOf)]);
   const walk = (n, inFn, parent, key) => {
     if (!n || typeof n !== 'object') return;
-    if (t.isIdentifier(n) && (m.vars.has(n.name) || m.arrays.has(n.name))) {
-      const isProp = (t.isMemberExpression(parent) && key === 'property' && !parent.computed) ||
-        (t.isObjectProperty(parent) && key === 'key' && !parent.computed);
-      if (!isProp) {
-        if (inFn) fail('iç fonksiyonda durum referansı');
-        // dizi durumunun kendisi yalnızca A[i] ya da sum(A) içinde kullanılabilir
-        if (m.arrays.has(n.name) && !(t.isMemberExpression(parent) && key === 'object' && parent.computed) &&
-            !(t.isCallExpression(parent) && key === 'arguments' && t.isIdentifier(parent.callee) && m.sumFns.has(parent.callee.name))) {
-          fail('durum dizisi başka biçimde kullanılıyor');
-        }
-        reads = true;
+    const isName = (t.isMemberExpression(parent) && key === 'property' && !parent.computed) ||
+      (t.isObjectProperty(parent) && key === 'key' && !parent.computed);
+    const p = !isName && (t.isIdentifier(n) || t.isMemberExpression(n)) ? pathOf(n) : null;
+    if (p && (m.vars.has(p) || m.arrays.has(p))) {
+      if (inFn) m.live = true;
+      // dizi durumunun kendisi yalnızca A[i] ya da sum(A) içinde kullanılabilir
+      if (m.arrays.has(p) && !(t.isMemberExpression(parent) && key === 'object' && parent.computed) &&
+          !(t.isCallExpression(parent) && key === 'arguments' && t.isIdentifier(parent.callee) && m.sumFns.has(parent.callee.name))) {
+        fail('durum dizisi başka biçimde kullanılıyor');
       }
+      reads = true;
+      return;
     }
-    if ((t.isAssignmentExpression(n) && isLoc(n.left)) || (t.isUpdateExpression(n) && isLoc(n.argument))) writes = true;
+    if ((t.isAssignmentExpression(n) && isLocation(n.left, m)) || (t.isUpdateExpression(n) && isLocation(n.argument, m))) {
+      if (inFn) fail('iç fonksiyonda durum yazma');
+      writes = true;
+    }
     if ((t.isVariableDeclarator(n) || t.isFunctionDeclaration(n) || t.isClassDeclaration(n) || t.isCatchClause(n)) &&
-        Object.keys(t.getBindingIdentifiers(n.id ?? n.param ?? n)).some((k) => m.vars.has(k) || m.arrays.has(k))) {
+        !inFn && Object.keys(t.getBindingIdentifiers(n.id ?? n.param ?? n)).some((k) => roots.has(k))) {
       fail('durum adı gölgeleniyor');
+    }
+    // durum kökünü kendi parametresi ya da var'ıyla gölgeleyen iç fonksiyon başka bir nesneye bakar:
+    // içindeki referanslar bu makinenin durumu değildir (js-confuser her iç fonksiyona aynı adlı scope verir)
+    if (t.isFunction(n)) {
+      const own = [...n.params.flatMap((x) => Object.keys(t.getBindingIdentifiers(x))),
+        ...(t.isBlockStatement(n.body) ? n.body.body.filter((s) => t.isVariableDeclaration(s, { kind: 'var' }))
+          .flatMap((s) => s.declarations.flatMap((d) => Object.keys(t.getBindingIdentifiers(d.id)))) : [])];
+      if (own.some((k) => roots.has(k))) return;
     }
     const fnNow = inFn || t.isFunction(n);
     for (const k of t.VISITOR_KEYS[n.type] ?? []) {
@@ -150,8 +178,9 @@ function substitute(node, S, m, E) {
   const copy = t.cloneNode(node, true);
   const replace = (n) => {
     if (!n || typeof n !== 'object') return n;
-    if ((t.isIdentifier(n) && m.vars.has(n.name)) ||
-        (t.isMemberExpression(n) && n.computed && t.isIdentifier(n.object) && m.arrays.has(n.object.name)) || E.isSum(n)) {
+    // closure gövdesi sonradan çalışır: oradaki okumalar canlı kalır (m.live ile durum gerçekten yazılıyor)
+    if (t.isFunction(n)) return n;
+    if ((t.isIdentifier(n) && m.vars.has(n.name)) || isArrayElem(n, m) || E.isSum(n)) {
       const lit = literalOf(t, E.ev(n, S));
       if (!lit) fail('sabite çevrilemeyen durum');
       return lit;
@@ -187,10 +216,19 @@ function hasMachineJump(node) {
 
 function unflatten(m, S0) {
   const E = makeEval(m);
+  // ön tarama: case gövdelerindeki closure'lar durumu okuyorsa canlı moda geç
+  m.live = false;
+  for (const c of m.sw.cases) c.consequent.forEach((s) => scanState(s, m));
   const budget = { steps: 0, size: 0 };
 
-  const applyUpdate = (n, S) => {
+  // somut atama deyimi: P = 5;  states[9] = 1234;
+  const assignStmt = (targetNode, index, value) => t.expressionStatement(t.assignmentExpression('=',
+    index === null ? t.cloneNode(targetNode, true) : t.memberExpression(t.cloneNode(targetNode, true), t.numericLiteral(index), true),
+    literalOf(t, value)));
+
+  const applyUpdate = (n, S, out) => {
     const target = t.isAssignmentExpression(n) ? n.left : n.argument;
+    if (!t.isIdentifier(target) && !isArrayElem(target, m)) fail('durum dizisinin tamamına atama');
     const read = () => E.ev(target, S);
     let value;
     if (t.isUpdateExpression(n)) value = n.operator === '++' ? read() + 1 : read() - 1;
@@ -204,22 +242,35 @@ function unflatten(m, S0) {
         value = E.ev(t.binaryExpression(bin, t.valueToNode(cur), t.valueToNode(rhs)), S);
       }
     }
-    if (t.isIdentifier(target)) S.vars.set(target.name, value);
-    else {
-      const arr = S.arrays.get(target.object.name);
-      const i = E.ev(target.property, S);
-      if (!Number.isInteger(i) || i < 0 || i >= arr.length) fail('dizi yazma indeksi');
-      arr[i] = value;
+    if (t.isIdentifier(target)) {
+      S.vars.set(target.name, value);
+      if (m.live) out.push(assignStmt(target, null, value));
+      return;
     }
+    const arr = S.arrays.get(pathOf(target.object));
+    const i = E.ev(target.property, S);
+    if (!Number.isInteger(i) || i < 0 || i >= arr.length) fail('dizi yazma indeksi');
+    arr[i] = value;
+    if (m.live) out.push(assignStmt(target.object, i, value));
+  };
+
+  // Makineden çıkışta, dışarıdan okunabilecek durum konumlarını son değerleriyle eşitle (canlı modda gerekmez)
+  const exitSync = (S) => {
+    if (!m.syncOnExit || m.live) return [];
+    const out = [];
+    for (const [name, v] of S.vars) if (S0.vars.get(name) !== v) out.push(assignStmt(t.identifier(name), null, v));
+    for (const [path, arr] of S.arrays) {
+      const node = m.pathNodes.get(path);
+      arr.forEach((v, i) => { if (S0.arrays.get(path)[i] !== v) out.push(assignStmt(node, i, v)); });
+    }
+    return out;
   };
 
   // ifade deyimi: durum güncellemeleri uygulanır, geri kalanı sabitlenmiş haliyle yazılır
   const expression = (e, S, out) => {
     if (t.isSequenceExpression(e)) { e.expressions.forEach((x) => expression(x, S, out)); return; }
-    const isLoc = (x) => (t.isIdentifier(x) && m.vars.has(x.name)) ||
-      (t.isMemberExpression(x) && t.isIdentifier(x.object) && m.arrays.has(x.object.name));
-    if ((t.isAssignmentExpression(e) && isLoc(e.left)) || (t.isUpdateExpression(e) && isLoc(e.argument))) {
-      applyUpdate(e, S);
+    if ((t.isAssignmentExpression(e) && isLocation(e.left, m)) || (t.isUpdateExpression(e) && isLocation(e.argument, m))) {
+      applyUpdate(e, S, out);
       return;
     }
     if (t.isIdentifier(e, { name: m.preName })) return;
@@ -236,13 +287,26 @@ function unflatten(m, S0) {
     return m.sw.cases.slice(idx).flatMap((c) => c.consequent);
   };
 
+  // Aynı (durum, case) bu yolda daha önce görüldüyse geri kenardır: orası bir döngünün başı.
+  // Başa dönüşte durum birebir aynı olduğu için gövdeye yazılan sabitler her turda geçerlidir.
+  const headers = new Map(); // yol üstündeki başlık anahtarı → etiket
+  let labelSeq = 0;
+
   function iterate(S, path) {
     if (++budget.steps > MAX_STEPS) fail('adım bütçesi aşıldı');
-    if (!isAlwaysTrue(m.loop.test) && !E.ev(m.loop.test, S)) return [];
+    if (!isAlwaysTrue(m.loop.test) && !E.ev(m.loop.test, S)) return exitSync(S);
     const key = `${E.ev(m.disc, S)}|${S.key()}`;
-    if (path.has(key)) fail('döngü (aynı durum tekrar etti)');
-    const next = new Set(path).add(key);
-    return exec(casesFrom(S), S, next);
+    if (path.has(key)) {
+      if (!headers.has(key)) headers.set(key, `peel_loop_${++labelSeq}`);
+      return [t.continueStatement(t.identifier(headers.get(key)))];
+    }
+    const body = exec(casesFrom(S), S, new Set(path).add(key));
+    const label = headers.get(key);
+    if (!label) return body;
+    // başka bir dalda aynı başlık yeniden üretilirse yeni etiket alsın
+    headers.delete(key);
+    return [t.labeledStatement(t.identifier(label), t.whileStatement(t.booleanLiteral(true),
+      t.blockStatement([...body, t.breakStatement(t.identifier(label))])))];
   }
 
   function exec(list, S, path) {
@@ -306,6 +370,101 @@ function unflatten(m, S0) {
   return result;
 }
 
+// ── üretilen döngüleri toparlama ────────────────────────
+// L: while (true) { S; if (c) {} else { continue L; } break L; }  →  do { S } while (!c);
+
+const negate = (e) => (t.isUnaryExpression(e, { operator: '!' }) ? e.argument : t.unaryExpression('!', e));
+
+// L'ye giden bir atlama başka bir döngü/switch içinde mi? (öyleyse etiket gerekli)
+function labelNeeded(body, label) {
+  let needed = false;
+  const walk = (n, nested) => {
+    if (!n || typeof n !== 'object' || needed || t.isFunction(n)) return;
+    if ((t.isBreakStatement(n) || t.isContinueStatement(n)) && n.label?.name === label && nested) { needed = true; return; }
+    const inner = nested || t.isLoop(n) || t.isSwitchStatement(n);
+    for (const k of t.VISITOR_KEYS[n.type] ?? []) {
+      const v = n[k];
+      if (Array.isArray(v)) v.forEach((c) => walk(c, inner)); else walk(v, inner);
+    }
+  };
+  body.forEach((s) => walk(s, false));
+  return needed;
+}
+
+function dropLabel(node, label) {
+  if (!node || typeof node !== 'object' || t.isFunction(node)) return;
+  if ((t.isBreakStatement(node) || t.isContinueStatement(node)) && node.label?.name === label) node.label = null;
+  for (const k of t.VISITOR_KEYS[node.type] ?? []) {
+    const v = node[k];
+    if (Array.isArray(v)) v.forEach((c) => dropLabel(c, label)); else dropLabel(v, label);
+  }
+}
+
+// Etiketsiz break bu döngüyü mü hedefliyor? (kendi döngü/switch'i içinde olmayan)
+function breaksLoop(stmts) {
+  let found = false;
+  const walk = (n, nested) => {
+    if (!n || typeof n !== 'object' || found || t.isFunction(n)) return;
+    if (t.isBreakStatement(n) && !n.label && !nested) { found = true; return; }
+    const inner = nested || t.isLoop(n) || t.isSwitchStatement(n);
+    for (const k of t.VISITOR_KEYS[n.type] ?? []) {
+      const v = n[k];
+      if (Array.isArray(v)) v.forEach((c) => walk(c, inner)); else walk(v, inner);
+    }
+  };
+  stmts.forEach((s) => walk(s, false));
+  return found;
+}
+
+const isEmptyBlock = (b) => t.isBlockStatement(b) && !b.body.length;
+const isJump = (s, type) => (type === 'continue' ? t.isContinueStatement(s) : t.isBreakStatement(s)) && !s.label;
+
+function tidyList(stmts) {
+  return stmts.flatMap((s) => {
+    if (t.isIfStatement(s)) {
+      if (t.isBlockStatement(s.consequent)) s.consequent.body = tidyList(s.consequent.body);
+      if (t.isBlockStatement(s.alternate)) s.alternate.body = tidyList(s.alternate.body);
+      if (isEmptyBlock(s.alternate)) s.alternate = null;
+      if (isEmptyBlock(s.consequent) && s.alternate) {
+        s.test = negate(s.test);
+        s.consequent = t.isBlockStatement(s.alternate) ? s.alternate : t.blockStatement([s.alternate]);
+        s.alternate = null;
+      }
+      return [s];
+    }
+    if (t.isLabeledStatement(s) && t.isWhileStatement(s.body) && t.isBlockStatement(s.body.body)) {
+      const label = s.label.name;
+      let body = tidyList(s.body.body.body);
+      if (labelNeeded(body, label)) { s.body.body.body = body; return [s]; }
+      body.forEach((x) => dropLabel(x, label));
+      body = tidyList(body);
+      // sonda: if (C) { continue; } break;  →  do { … } while (C)
+      const [last, prev] = [body[body.length - 1], body[body.length - 2]];
+      if (isJump(last, 'break') && t.isIfStatement(prev) && !prev.alternate && t.isBlockStatement(prev.consequent) &&
+          prev.consequent.body.length === 1 && isJump(prev.consequent.body[0], 'continue')) {
+        return [t.doWhileStatement(prev.test, t.blockStatement(body.slice(0, -2)))];
+      }
+      // tek deyim: if (C) { X; continue; } else { Y }  →  while (C) { X } Y   (X döngüden break etmemeli)
+      const only = body.length === 1 ? body[0] : body.length === 2 && isJump(body[1], 'break') ? body[0] : null;
+      if (t.isIfStatement(only) && only.alternate) {
+        const asList = (b) => (t.isBlockStatement(b) ? b.body : [b]);
+        let [test, loopPart, exitPart] = [only.test, asList(only.consequent), asList(only.alternate)];
+        if (!isJump(loopPart[loopPart.length - 1], 'continue') && isJump(exitPart[exitPart.length - 1], 'continue')) {
+          [test, loopPart, exitPart] = [negate(test), exitPart, loopPart];
+        }
+        const x = loopPart.slice(0, -1);
+        const y = isJump(exitPart[exitPart.length - 1], 'break') ? exitPart.slice(0, -1) : exitPart;
+        if (isJump(loopPart[loopPart.length - 1], 'continue') && !breaksLoop(x) && !hasMachineJump(t.blockStatement(y))) {
+          return [t.whileStatement(test, t.blockStatement(x)), ...y];
+        }
+      }
+      if (isJump(body[body.length - 1], 'continue')) body.pop();
+      return [t.whileStatement(t.booleanLiteral(true), t.blockStatement(body))];
+    }
+    return [s];
+  });
+}
+
 // ── sürücüler ───────────────────────────────────────────
 
 function collectSumFns(ast) {
@@ -352,7 +511,7 @@ function identifierMachine(p, mach, sumFns, onLog) {
 
   const m = { ...mach, vars: new Set(vars.keys()), arrays: new Set(), sumFns };
   try {
-    const out = unflatten(m, new State(new Map(vars)));
+    const out = tidyList(unflatten(m, new State(new Map(vars))));
     if (Array.isArray(p.container)) {
       if (out.length) p.replaceWithMultiple(out); else p.remove();
     } else {
@@ -374,13 +533,17 @@ async function arrayMachines(ast, sumFns, { sandbox, onLog }) {
   const targets = [];
   traverse(ast, {
     FunctionDeclaration(p) {
+      // gövde: [ …önce çalışan deyimler (parametre açma vb.), makine döngüsü ]
       const body = p.node.body.body;
-      if (!p.node.id || body.length !== 1) return;
-      const mach = machineOf(body[0]);
+      if (!p.node.id || !body.length) return;
+      const mach = machineOf(body[body.length - 1]);
       if (!mach || !t.isCallExpression(mach.disc) || !t.isIdentifier(mach.disc.callee) || !sumFns.has(mach.disc.callee.name)) return;
       const arg = mach.disc.arguments[0];
       const pi = p.node.params.findIndex((x) => t.isIdentifier(x, { name: arg?.name }));
       if (pi < 0) return;
+      // döngüden önceki deyimler durum dizisine dokunmamalı: başlangıç değeri çağrı yerindeki argümandır
+      const prefix = body.slice(0, -1);
+      if (prefix.some((s) => gen(s).match(new RegExp(`\\b${arg.name.replace(/\$/g, '\\$')}\\b`)))) return;
       const b = p.parentPath.scope.getBinding(p.node.id.name);
       if (!b) return;
       const calls = b.referencePaths.map((r) => r.parentPath);
@@ -427,11 +590,11 @@ function __peelInit(k, v) {
       let name = clones.get(json);
       if (name === undefined) {
         try {
-          const body = unflatten(m, new State(new Map(), new Map([[tg.arrayName, JSON.parse(json)]])));
+          const body = tidyList(unflatten(m, new State(new Map(), new Map([[tg.arrayName, JSON.parse(json)]]))));
           name = tg.p.scope.generateUid(`${tg.p.node.id.name}_${clones.size}`);
           const fn = t.cloneNode(tg.p.node, true);
           fn.id = t.identifier(name);
-          fn.body = t.blockStatement(body);
+          fn.body = t.blockStatement([...fn.body.body.slice(0, -1), ...body]);
           tg.p.insertAfter(fn);
           made++;
         } catch (e) {
@@ -453,6 +616,101 @@ function __peelInit(k, v) {
   return made;
 }
 
+// Diğer sürücülerin açamadığı makineler (başlangıcı sabit olmayan değişkenler, scope.X.Y gibi kapsam
+// nesnesinde tutulan durum dizileri): döngüye giriş anındaki durum sandbox'ta gözlenir. Yalnızca tek bir
+// başlangıç gözlenirse makine yerinde açılır; çıkışta değişen durum değerleri gerçekten yazılır.
+async function observedMachines(ast, sumFns, { sandbox, onLog }) {
+  if (!sandbox) return 0;
+  const cands = [];
+  traverse(ast, {
+    WhileStatement(p) {
+      const mach = machineOf(p.node);
+      if (!mach || !Array.isArray(p.container) || p.findParent((x) => x.isWithStatement())) return;
+      const vars = new Set();
+      const arrays = new Map();
+      let ok = true;
+      const collect = (n, parent, key) => {
+        if (!n || typeof n !== 'object' || !ok) return;
+        if (t.isCallExpression(n) && t.isIdentifier(n.callee) && sumFns.has(n.callee.name)) {
+          const path = n.arguments.length === 1 ? pathOf(n.arguments[0]) : null;
+          if (!path) { ok = false; return; }
+          arrays.set(path, n.arguments[0]);
+          return;
+        }
+        if (t.isIdentifier(n) && !(t.isMemberExpression(parent) && key === 'property' && !parent.computed)) {
+          const b = p.scope.getBinding(n.name);
+          if (!b) { ok = false; return; }
+          // değişkeni başka bir fonksiyon değiştiriyorsa makine modeli eksik kalır
+          const fn = p.getFunctionParent();
+          if (!b.constantViolations.every((v) => v.getFunctionParent() === fn)) { ok = false; return; }
+          vars.add(n.name);
+          return;
+        }
+        for (const k of t.VISITOR_KEYS[n.type] ?? []) {
+          const v = n[k];
+          if (Array.isArray(v)) v.forEach((c) => collect(c, n, k)); else collect(v, n, k);
+        }
+      };
+      collect(mach.disc, null, null);
+      vars.delete(mach.preName);
+      if (!ok || (!vars.size && !arrays.size)) return;
+      cands.push({ p, mach, vars: [...vars], arrays });
+    },
+  });
+  if (!cands.length) return 0;
+
+  // döngüden hemen önce __peelEntry(k, [P, Q], [scope.X.Y]) ile giriş durumunu kaydet
+  const inserted = [];
+  cands.forEach((c, k) => {
+    const stmt = t.expressionStatement(t.callExpression(t.identifier('__peelEntry'), [
+      t.numericLiteral(k),
+      t.arrayExpression(c.vars.map((v) => t.identifier(v))),
+      t.arrayExpression([...c.arrays.values()].map((n) => t.cloneNode(n, true))),
+    ]));
+    c.p.container.splice(c.p.container.indexOf(c.p.node), 0, stmt);
+    inserted.push([c.p.container, stmt]);
+  });
+  const code = gen(ast);
+  for (const [container, stmt] of inserted) container.splice(container.indexOf(stmt), 1);
+
+  const prelude = `var __peelEntries = {};
+function __peelEntry(k, v, a) {
+  var ok = v.every(function (x) { return typeof x === "number"; }) &&
+    a.every(function (x) { return Array.isArray(x) && x.every(function (y) { return typeof y === "number"; }); });
+  var s = ok ? JSON.stringify([v, a]) : null;
+  if (!(k in __peelEntries)) __peelEntries[k] = s; else if (__peelEntries[k] !== s) __peelEntries[k] = null;
+}`;
+  const r = await sandbox.run(`${prelude}\ntry {\n${code}\n} catch (e) {}\n__res.push(__peelEntries);`, { timeoutMs: 8000 });
+  const entries = r.res?.[0] ?? {};
+
+  let n = 0;
+  cands.forEach((c, k) => {
+    const json = entries[k];
+    if (!c.p.node) return;
+    if (typeof json !== 'string') {
+      onLog(`unflatten: makine açılamadı (${k in entries ? 'birden çok farklı başlangıç durumu' : 'çalıştırmada makineye girilmedi'})`, 'warn');
+      return;
+    }
+    const [v, a] = JSON.parse(json);
+    const paths = [...c.arrays.keys()];
+    const m = {
+      ...c.mach, vars: new Set(c.vars), arrays: new Set(paths), sumFns, syncOnExit: true,
+      pathNodes: new Map(paths.map((path) => [path, c.arrays.get(path)])),
+    };
+    const S0 = new State(new Map(c.vars.map((name, i) => [name, v[i]])), new Map(paths.map((path, i) => [path, a[i]])));
+    try {
+      const out = tidyList(unflatten(m, S0));
+      if (out.length) c.p.replaceWithMultiple(out); else c.p.remove();
+      n++;
+      onLog(`unflatten: ${[...c.vars, ...paths].join(', ')} makinesi düz koda çevrildi (başlangıç durumu çalışma anında gözlendi)`, 'info');
+    } catch (e) {
+      if (!(e instanceof Unsupported)) throw e;
+      onLog(`unflatten: makine açılamadı (${e.message})`, 'warn');
+    }
+  });
+  return n;
+}
+
 export async function run(ast, { onLog, bump, sandbox }) {
   const sumFns = collectSumFns(ast);
   let n = 0;
@@ -467,5 +725,6 @@ export async function run(ast, { onLog, bump, sandbox }) {
     },
   });
   n += await arrayMachines(ast, sumFns, { sandbox, onLog });
+  n += await observedMachines(ast, sumFns, { sandbox, onLog });
   bump('unflatten', n);
 }

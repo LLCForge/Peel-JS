@@ -15,7 +15,7 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 - [ ] 7. Obje tabanlı proxy'leri satır içi yazma
 - [ ] 8. Operatör proxy'leri (`o.KJs(a, b)` → `a + b`)
 - [ ] 9. js-confuser dispatcher fonksiyonları
-- [~] 10. js-confuser global gizleme tabloları — `V("…")` switch proxy'leri çözülüyor
+- [x] 10. js-confuser global gizleme tabloları (switch proxy + çalışma anında global nesne çözümü)
 - [ ] 11. Integrity/hash kontrollerini etkisizleştirip raporlama
 - [x] 12. Tekrarlanan literalleri geri birleştirme (js-confuser sabit literal dizisi)
 - [x] 13. Sayısal artıkları katlama
@@ -36,7 +36,7 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 
 - [ ] 26. Geçiş tablosuna koşulları ekleme
 - [ ] 27. Concolic çoklu yol keşfi
-- [~] 28. Durum makinesini düz koda çevirme — döngüsüz makineler if/else ile açılıyor; döngü içerenler bırakılıyor
+- [~] 28. Durum makinesini düz koda çevirme — if/else, while, do-while geri kuruluyor; desteklenmeyen biçimler bırakılıyor
 - [~] 29. Sayaç aritmetiği — `switch (P+Q+R)` tek durum değişkenine indiriliyor
 - [ ] 30. z3.wasm ile opaque koşul kanıtı
 - [ ] 31. jsvmp bytecode VM'ler için disassembler
@@ -262,7 +262,7 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [ ] E41. Obje proxy satır içi yazma
 - [ ] E42. Operatör proxy
 - [ ] E43. js-confuser dispatcher
-- [~] E44. Global gizleme tablosu — çağrılar çözülüyor, tablo silinmiyor
+- [x] E44. Global gizleme tablosu — çağrılar global adlara çözülüyor
 - [x] E45. Bölünmüş string birleştirme
 - [x] E46. Tekrarlanan literal toplama (sabit indeksli okumalar yerine yazılıyor)
 - [x] E47. Sayısal artefakt katlama
@@ -383,7 +383,7 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 
 - [x] E151. String-order dispatcher
 - [ ] E152. Sayı-order dispatcher
-- [~] E153. İç içe dispatcher — içten dışa
+- [x] E153. İç içe dispatcher — dış makine açılınca iç makineler sonraki turda açılıyor
 - [~] E154. Trace ile sıra kurtarma — gözleniyor, kod değiştirilmiyor
 - [x] E155. Dallanan dispatcher → if/else (somut durum yürütme, iki yol ayrı ayrı)
 - [ ] E156. Çoklu yol keşfi
@@ -395,7 +395,7 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [ ] E162. Koşullu `return` düzleştirme
 - [ ] E163. `switch` → if zinciri
 - [ ] E164. `switch` → tablo
-- [ ] E165. Dispatcher döngüsünü while/for'a çevirme
+- [x] E165. Dispatcher döngüsünü while/do-while.a çevirme
 - [ ] E166. `break/continue` normalizasyonu
 - [x] E167. Sabit koşulda ölü dal budama
 - [ ] E168. İç içe aynı koşullu if birleştirme
@@ -429,7 +429,7 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [ ] E193. Bytecode'u ayrı dosyaya çıkarma
 - [ ] E194. Assembler/disassembler
 - [ ] E195. Çoklu çalıştırma sentezi
-- [ ] E196. Tekrar eden durumları döngüye çevirme
+- [x] E196. Tekrar eden durumları döngüye çevirme
 - [ ] E197. `__peelS` sonrası ölü aritmetik temizliği
 - [ ] E198. jsvmp özel modu
 - [ ] E199. VM raporu
