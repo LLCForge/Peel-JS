@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildSbom } from '../scripts/sbom.js';
+import { passHashes } from '../scripts/regress-select.js';
 
 const lock = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
 const bom = buildSbom(lock, { prodOnly: true, timestamp: '2026-01-01T00:00:00Z' });
@@ -16,4 +17,6 @@ assert.ok(bom.dependencies[0].dependsOn.length >= 8);
 assert.deepEqual(buildSbom(lock, { timestamp: 'x' }), buildSbom(lock, { timestamp: 'x' }), 'deterministik');
 const wf = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 for (const s of ['id-token: write', 'attest-build-provenance', 'attest-sbom', 'scripts/sbom.js', 'SHA256SUMS', 'npm ci']) assert.ok(wf.includes(s), s);
+// E714: pass kaynak özetleri regresyon seçimine girer
+assert.ok(Object.values(passHashes()).every((h) => /^[0-9a-f]+$/.test(h)));
 console.log('sbom: ok');
