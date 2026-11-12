@@ -14,8 +14,8 @@ function machine() {
 }
 machine();
 // LEVEL: 3
-// EXPECT: __peelS = P + Q;
-// EXPECT: switch (__peelS)
-// EXPECT: PEEL VM
-// EXPECT: 0 -> 2
-// EXPECT: 9 -> 10
+// EXPECT: console.log("a");
+// EXPECT: console.log("d");
+// GONE: switch
+// GONE: P +=
+// GONE: __peelS

@@ -36,7 +36,7 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 
 - [ ] 26. Geçiş tablosuna koşulları ekleme
 - [ ] 27. Concolic çoklu yol keşfi
-- [ ] 28. Tüm yollar biliniyorsa if/while'a geri kurma
+- [~] 28. Durum makinesini düz koda çevirme — döngüsüz makineler if/else ile açılıyor; döngü içerenler bırakılıyor
 - [~] 29. Sayaç aritmetiği — `switch (P+Q+R)` tek durum değişkenine indiriliyor
 - [ ] 30. z3.wasm ile opaque koşul kanıtı
 - [ ] 31. jsvmp bytecode VM'ler için disassembler
@@ -385,7 +385,7 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [ ] E152. Sayı-order dispatcher
 - [~] E153. İç içe dispatcher — içten dışa
 - [~] E154. Trace ile sıra kurtarma — gözleniyor, kod değiştirilmiyor
-- [ ] E155. Dallanan dispatcher → if/else
+- [x] E155. Dallanan dispatcher → if/else (somut durum yürütme, iki yol ayrı ayrı)
 - [ ] E156. Çoklu yol keşfi
 - [ ] E157. Koşul fonksiyonu kurtarma
 - [ ] E158. `do/while` dispatcher
@@ -423,7 +423,7 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [ ] E187. `default` dalı
 - [x] E188. Geçiş tablosu
 - [ ] E189. Opcode isimlendirme
-- [ ] E190. Opcode kaldırma
+- [~] E190. Opcode kaldırma — döngüsüz durum makineleri tamamen kaldırılıyor
 - [ ] E191. Dallanma şablonları
 - [ ] E192. Sembolik yorumlayıcı
 - [ ] E193. Bytecode'u ayrı dosyaya çıkarma
@@ -679,8 +679,8 @@ Numbering follows the proposal; overlaps with items 1–200 are kept. Ranges E24
 - [ ] E599. Sembolik tip modeli
 - [ ] E600. Yol budama
 - [ ] E601. Sabit yayılımıyla budama
-- [ ] E602. Kısmi değerlendirme
-- [ ] E603. Fonksiyon özelleştirme
+- [~] E602. Kısmi değerlendirme — durum makinesi somut başlangıç durumuyla özelleştiriliyor
+- [~] E603. Fonksiyon özelleştirme — js-confuser main fonksiyonu başlangıç durumu başına kopyalanıyor
 - [ ] E604. Döngü kısmi açma
 - [ ] E605. Durum birleştirme
 - [ ] E606. Özet yorumlama

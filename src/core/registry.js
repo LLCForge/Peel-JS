@@ -11,6 +11,7 @@ import * as opaque from '../passes/60-opaque.js';
 import * as controlFlow from '../passes/70-control-flow.js';
 import * as stateVar from '../passes/74-state-var.js';
 import * as vm from '../passes/75-vm.js';
+import * as unflatten from '../passes/76-unflatten.js';
 import * as deadCode from '../passes/80-dead-code.js';
 import * as unused from '../passes/90-unused.js';
 import * as rename from '../passes/95-rename.js';
@@ -31,6 +32,7 @@ export const PASSES = [
   { id: 'dead-code',    level: 2, kind: 'ast',  needs: null,      mod: deadCode },
   { id: 'opaque',       level: 2, kind: 'ast',  needs: null,      mod: opaque },
   { id: 'state-var',    level: 3, kind: 'ast',  needs: null,      mod: stateVar },
+  { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
   { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },

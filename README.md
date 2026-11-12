@@ -99,7 +99,8 @@ cat input.js | peel - > output.js
 | `dead-code` | `debugger`, self-defending and debug-protection IIFEs, constant `if`/`?:`, `"k" in emptyFn` traps, no-op and `length`-spoofing wrappers |
 | `opaque` | Moves literal constants into the tests that use them |
 | `state-var` | `switch (P + Q + R)` → one state variable |
-| `vm` | Detects state machines and annotates the transitions observed in a run |
+| `unflatten` | Turns loop-free state machines back into plain code by executing them with concrete state; state-independent conditions become real `if/else` (js-confuser 2.x included) |
+| `vm` | Detects remaining state machines and annotates the transitions observed in a run |
 | `control-flow` | Flattens `"2|0|1".split("|")` dispatchers in their static order |
 | `unused` | Removes unused functions and variables |
 | `rename` | `_0x1a2b` → `fn1`, `arg1`, `v1` (deterministic) |

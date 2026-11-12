@@ -101,7 +101,8 @@ cat girdi.js | peel - > çıktı.js
 | `dead-code` | `debugger`, self-defending ve debug koruması IIFE'leri, sabit `if`/`?:`, `"k" in boşFn` tuzakları, boş ve `length` sarmalayıcıları |
 | `opaque` | Literal sabitleri onları kullanan testlerin içine taşır |
 | `state-var` | `switch (P + Q + R)` → tek durum değişkeni |
-| `vm` | Durum makinelerini tespit edip bir çalıştırmada gözlenen geçişleri yorum olarak yazar |
+| `unflatten` | Döngüsüz durum makinelerini somut durumla yürüterek düz koda çevirir; durumdan bağımsız koşullar gerçek `if/else` olur (js-confuser 2.x dahil) |
+| `vm` | Kalan durum makinelerini tespit edip bir çalıştırmada gözlenen geçişleri yorum olarak yazar |
 | `control-flow` | `"2|0|1".split("|")` dispatcher'larını statik sırayla düzleştirir |
 | `unused` | Kullanılmayan fonksiyon ve değişkenleri kaldırır |
 | `rename` | `_0x1a2b` → `fn1`, `arg1`, `v1` (deterministik) |
