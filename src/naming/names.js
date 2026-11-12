@@ -12,6 +12,7 @@ import { suggestName } from './suggest.js';
 export const GENERATED = /^_0x[0-9a-f]+$/i;
 const PREFIX = { hoisted: 'fn', local: 'fn', param: 'arg', var: 'v', let: 'v', const: 'c' };
 const MAX_ENTRIES = 5000;
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /**
  * @param {object} ast
@@ -155,7 +156,8 @@ export function parseNameMap(text) {
   const rejected = [];
   for (const [k, v] of Object.entries(src)) {
     if (++count > MAX_ENTRIES) return { ok: false, error: `en fazla ${MAX_ENTRIES} kayıt` };
-    if (isValidName(k) && isValidName(v)) names[k] = v;
+    // nesne anahtarı olarak özel anlamı olan adlar haritaya girmez (prototip kirliliğine karşı)
+    if (isValidName(k) && isValidName(v) && !UNSAFE_KEYS.has(k) && !UNSAFE_KEYS.has(v)) names[k] = v;
     else rejected.push(k.slice(0, 64));
   }
   return { ok: true, names: { ...names }, rejected, source: typeof data.source === 'string' ? data.source.slice(0, 64) : null };

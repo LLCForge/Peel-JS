@@ -11,6 +11,7 @@ import { createTimeline } from './ui/timeline.js';
 import { t, applyI18n, toggleLang } from './i18n.js';
 import { SAMPLE } from './sample.js';
 import { maskSecrets } from './core/threat.js';
+import { namingOptions, recordSnapshot, resetSnapshots, formatProfile } from './ui/naming/index.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -114,6 +115,7 @@ function resetResults() {
   lastReport = null;
   renderReport(views.report, null);
   timeline.reset();
+  resetSnapshots();
   diffDirty = true;
 }
 
@@ -141,7 +143,9 @@ async function run() {
       signal: controller.signal,
       onLog: log,
       onPass: markPass,
-      onSnapshot: (s) => timeline.push(s),
+      onSnapshot: (s) => { timeline.push(s); recordSnapshot(s); },
+      naming: namingOptions(src),
+      format: formatProfile(),
     });
     setOutput(res.code);
     timeline.finish();

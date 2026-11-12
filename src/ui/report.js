@@ -1,4 +1,5 @@
 import { t, td } from '../i18n.js';
+import { render as renderNaming } from './naming/index.js';
 
 const MAX_ROWS = 60;
 
@@ -137,6 +138,7 @@ export function renderReport(root, report, onExport, actions = {}) {
     section('report.rollbacks', report.rollbacks.length
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])
       : muted('report.rollbacks.none')),
+    report.naming ? section('report.naming', renderNaming(el('div'), report.naming)) : null,
     exportBtn,
   ));
 }

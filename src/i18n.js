@@ -118,6 +118,10 @@ const DICT = {
     'stat.proxy': 'proxy', 'stat.constFold': 'katlama', 'stat.deadCode': 'ölü kod', 'stat.opaque': 'sabit test',
     'stat.stateVar': 'durum değişkeni', 'stat.vm': 'VM', 'stat.controlFlow': 'akış', 'stat.unused': 'kullanılmayan',
     'stat.rename': 'isim',
+    'report.naming': 'Anlamlandırma',
+    'stat.babel': 'Babel kalıntısı', 'stat.classes': 'sınıf', 'stat.letConst': 'let/const', 'stat.mergeVars': 'birleşen değişken',
+    'stat.moveDecls': 'taşınan tanım', 'stat.modernSyntax': 'modern sözdizimi', 'stat.destructure': 'ayrıştırma', 'stat.dedupe': 'kopya fonksiyon',
+    'stat.extract': 'çıkarılan fonksiyon', 'stat.magic': 'sihirli sayı', 'stat.annotate': 'açıklama', 'stat.comments': 'geri gelen yorum',
   },
   en: {
     'brand.sub': 'JS DEOBFUSCATOR',
@@ -237,6 +241,10 @@ const DICT = {
     'stat.proxy': 'proxies', 'stat.constFold': 'folds', 'stat.deadCode': 'dead code', 'stat.opaque': 'opaque tests',
     'stat.stateVar': 'state vars', 'stat.vm': 'VMs', 'stat.controlFlow': 'flows', 'stat.unused': 'unused',
     'stat.rename': 'renames',
+    'report.naming': 'Understanding the code',
+    'stat.babel': 'Babel leftovers', 'stat.classes': 'classes', 'stat.letConst': 'let/const', 'stat.mergeVars': 'merged variables',
+    'stat.moveDecls': 'moved declarations', 'stat.modernSyntax': 'modern syntax', 'stat.destructure': 'destructurings', 'stat.dedupe': 'duplicate functions',
+    'stat.extract': 'extracted functions', 'stat.magic': 'magic numbers', 'stat.annotate': 'annotations', 'stat.comments': 'restored comments',
   },
 };
 

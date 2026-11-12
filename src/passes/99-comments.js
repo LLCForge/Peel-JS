@@ -83,17 +83,20 @@ export async function run(ast, { onLog, bump, source, naming = {} }) {
   let n = 0;
   const top = ast.program.body[0];
   const restored = new Set();
+  const topGroup = [];
   for (const { anchor, comment } of missing) {
     const key = norm(comment);
     if (restored.has(key)) continue;
     const node = anchor === 'top' ? top : (dup.has(anchor) ? null : targets.get(anchor));
     if (!node) continue;
     const c = { type: comment.type, value: comment.value };
-    // dosya başı yorumları en öne, diğerleri düğümün kendi yorumlarının önüne
-    node.leadingComments = anchor === 'top' ? [c, ...(node.leadingComments ?? [])] : [...(node.leadingComments ?? []), c];
+    // dosya başı yorumları özgün sırasıyla en öne, diğerleri düğümün kendi yorumlarının ardına
+    if (anchor === 'top') topGroup.push(c);
+    else node.leadingComments = [...(node.leadingComments ?? []), c];
     restored.add(key);
     n++;
   }
+  if (topGroup.length && top) top.leadingComments = [...topGroup, ...(top.leadingComments ?? [])];
   if (n) onLog(`comments: ${n} kaybolan yorum geri yüklendi`, 'info');
   bump('comments', n);
 }
