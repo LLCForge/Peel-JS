@@ -1,3 +1,6 @@
+// API: new Exec(fileOrProgramAst, { maxStates, maxSteps, maxDepth, unroll, merge, prune, solverCalls, timeMs, summaries, guide })
+//        .runProgram() / .runFunction(fnNode, argTerms) → { paths: State[] (pc, value, status, trace, out, effects, approx), stats }
+//      new SummaryTable(ast).summarize(fnNode) → { valid, cases:[{pc, ret}], text }; .instantiate(fnNode, args) → terim|null
 import * as t from '@babel/types';
 import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';

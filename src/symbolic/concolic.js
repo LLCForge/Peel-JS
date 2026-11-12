@@ -1,3 +1,5 @@
+// API: concolic(sandbox, code, { target?: {name, params}, maxRuns, timeMs, minimize }) → { ok, inputs, runs, coverage, correlations, regexes }
+//      instrument(src) → { code, recorded, syms, branches }, minimizeWitness(constraints, inputs), proveCorrelation(a, b, rel)
 import * as t from '@babel/types';
 import { parse } from '../core/parse.js';
 import { traverse, generate } from '../util/ast.js';

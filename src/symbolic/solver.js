@@ -1,3 +1,7 @@
+// API: solve(constraints[], { mode: 'find'|'prove', strCap, timeMs, maxConflicts })
+//        → { status:'sat', model: Map } | { status:'unsat', proof } | { status:'unknown', reason }
+//      implies(pc[], cond, opts) → { holds, proof|model }, intervalTruth(term) → true|false|null, stats (sayaçlar).
+// Kanıt biçimleri: simplify | interval | exhaustive | sat-drup {checked} | type-split {cases}.
 import { Sat, checkDrup } from './sat.js';
 import { C, V, mk, types, onlyType, evaluate, vars, substitute, show, truthOf } from './ir.js';
 import { parseRegex, toNfa } from './regex.js';

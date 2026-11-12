@@ -1,3 +1,5 @@
+// API: C(v), V(name, ty, {lo,hi,cap}), fresh(prefix, ty), mk(op, ...args) [sadeleştirir], evaluate(term, Map) [kesin JS anlamı],
+// types(term) → Set, truthOf, same, isNegation, vars(term) → Map, substitute(term, Map), show(term), toAst(term).
 import * as t from '@babel/types';
 
 // Sembolik ifade IR'ı (E581). Terimler düz nesneler:

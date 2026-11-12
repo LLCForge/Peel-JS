@@ -1,3 +1,4 @@
+// API: new ConstraintStore(opts): push(), pop(), assert(c) → 'added'|'redundant'|'conflict', check(extra) → {status, model}, implies(c), feasible()
 import { mk, show, same, isNegation, vars } from './ir.js';
 import { solve } from './solver.js';
 

@@ -1,3 +1,5 @@
+// API: symbolicReport({ text, output, sandbox, timeMs }) → { static, opaque, symbolic, concolic, dynamic, solver, ms }
+//      (analyze.js bunu lazySymbolic ile tembel çağırır)
 import * as t from '@babel/types';
 import { parse } from '../core/parse.js';
 import { traverse } from '../util/ast.js';
