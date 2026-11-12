@@ -238,10 +238,10 @@ function namesView(ctx) {
       applyNames(d, ctx);
     })));
 
-  wrap.append(llmBox,
+  wrap.append(...[llmBox,
     items.length ? h('div', {}, table([L.name, L.kind, L.type, L.line, L.refs, L.suggestion, L.reason, ''], rows, ['mono', '', 'mono', 'num', 'num', '', 'rep-muted', '']),
       h('div', { class: 'rep-actions' }, applyAll)) : null,
-    mapBox, dictBox);
+    mapBox, dictBox].filter(Boolean));
   return wrap;
 }
 
