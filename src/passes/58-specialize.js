@@ -2,6 +2,7 @@ import * as t from '@babel/types';
 import { traverse } from '../util/ast.js';
 import { specialize } from '../opt/pe.js';
 import { hasDynamicScope, nodeSize } from '../opt/util.js';
+import { collectHelpers } from './96-babel.js';
 
 // E603: fonksiyon özelleştirme. Sabit argümanlarla çağrılan fonksiyonun, o sabitlerle kısmi değerlendirilmiş
 // (E602) kopyası üretilir ve yalnızca o çağrı yerleri kopyaya yönlendirilir. Kopya, özgünle aynı kapsamda bildirilir
@@ -22,8 +23,11 @@ export async function run(ast, { onLog, bump }) {
   let n = 0;
   const fns = [];
   traverse(ast, { FunctionDeclaration(p) { fns.push(p); } });
+  // Babel yardımcıları özelleştirilmez: kopyalar (_createClass_s) okunabilirlik aşamasında yardımcı olarak tanınmaz
+  const { helperNodes } = collectHelpers(ast);
   for (const p of fns) {
     const node = p.node;
+    if (helperNodes.has(node)) continue;
     if (!node?.id || node.async || node.generator || !node.params.length || !node.params.every((x) => t.isIdentifier(x))) continue;
     const scope = p.parentPath.scope;
     const b = scope.getBinding(node.id.name);
@@ -40,7 +44,8 @@ export async function run(ast, { onLog, bump }) {
         if (i >= args.length) stat.set(i, undefined);
         else { const c = constArg(args[i]); if (c) stat.set(i, c.v); }
       });
-      if (!stat.size) continue;
+      // tüm argümanlar sabitse kopya programın sonucunu hesaplar: kullanıcı fonksiyonu kaybolur, okunurluk düşer
+      if (!stat.size || node.params.every((_, i) => stat.has(i))) continue;
       const key = JSON.stringify([...stat].map(([i, v]) => [i, v === undefined ? '__u' : typeof v === 'number' && !Number.isFinite(v) ? String(v) : v, typeof v]));
       if (!groups.has(key)) groups.set(key, { stat, calls: [] });
       groups.get(key).calls.push(call);

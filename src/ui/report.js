@@ -1,6 +1,7 @@
 import { t, td } from '../i18n.js';
 import { mountRuntime } from './runtime/mount.js';
 import { renderVmReport } from './vm/index.js';
+import { render as renderNaming } from './naming/index.js';
 import { render as renderSemantics } from './analysis/semantics.js';
 import { render as renderSecurity } from './security/index.js';
 
@@ -114,7 +115,7 @@ function symbolic(sym) {
   const sub = (key, node) => { if (node) parts.push(el('h4', {}, t(key)), node); };
   const rows = (list) => Array.isArray(list) && list.length ? list : null;
   const st = sym.static ?? {};
-  if (rows(sym.opaque)) sub('report.sym.opaque', table(['#', 'koşul', '≡', 'kanıt'], sym.opaque.map((o) => [`${o.where}:${o.line}`, o.cond, String(o.value), o.proof]), ['num', 'mono', 'mono', 'rep-muted']));
+  if (rows(sym.opaque)) sub('report.sym.opaque', table(['#', 'koşul', '≡', 'arka uç', 'kanıt'], sym.opaque.map((o) => [`${o.where}:${o.line}`, o.cond, String(o.value), `${o.backend ?? 'yerleşik'}${o.folds === false ? ' (katlanmadı)' : ''}`, o.proof]), ['num', 'mono', 'mono', '', 'rep-muted']));
   if (rows(st.unreachable)) sub('report.sym.unreachable', table(['fn', '#', 'koşul', 'kanıt'], st.unreachable.map((u) => [u.fn, u.line, u.cond, u.proof]), ['mono', 'num', 'mono', 'rep-muted']));
   const conc = Array.isArray(sym.concolic) ? sym.concolic : [];
   const runs = conc.flatMap((c) => c.runs.filter((r) => r.newCoverage).map((r) => [c.target ?? 'program', JSON.stringify(r.minimized ?? r.inputs), (r.out ?? []).join(' | ').slice(0, 120), `${Math.round(c.coverage.ratio * 100)}%`]));
@@ -260,6 +261,7 @@ export function renderReport(root, report, onExport, actions = {}) {
     section('report.rollbacks', report.rollbacks.length
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])
       : muted('report.rollbacks.none')),
+    report.naming ? section('report.naming', renderNaming(el('div'), { ...report.naming, bundle: report.engine?.bundle ?? null })) : null,
     report.engine ? section('report.engine', engine(report.engine, report.stats)) : null,
     report.semantics ? section('report.semantics', semanticsBody(report.semantics)) : null,
     'symbolic' in report ? section('report.sym', lazySymbolic(report)) : null,

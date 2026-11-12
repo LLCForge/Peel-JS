@@ -20,6 +20,8 @@ let total = 0;
 for (const f of readdirSync(dir).filter((x) => x.endsWith('.js')).sort()) {
   if (only && !f.includes(only)) continue;
   total++;
+  if (process.env.PEEL_TRACE_FIXTURE) process.stderr.write(`>> ${f}
+`);
   const raw = readFileSync(new URL(f, dir), 'utf8');
   const directives = [...raw.matchAll(DIRECTIVE)].map((m) => [m[1], m[2].trim()]);
   // Beklenti satırları girdinin parçası değil: çıktıda yorum olarak kalıp GONE kontrolünü yanıltmasınlar

@@ -336,6 +336,7 @@ export class PartialEvaluator {
     const testNode = s.test ?? t.booleanLiteral(true);
     const update = t.isForStatement(s) ? s.update : null;
     let first = true;
+    let iters = 0; // açılan tur sayısı (out başlatıcıyı da içerebilir)
     for (let iter = 0; iter < MAX_UNROLL; iter++) {
       if (!(t.isDoWhileStatement(s) && first)) {
         const test = this.fold(testNode, env);
@@ -352,6 +353,7 @@ export class PartialEvaluator {
         return this.residualLoop(s, env0, [], true);
       }
       out.push(t.blockStatement(r.out));
+      iters++;
       env = r.env;
       if (update) {
         const u = this.fold(update, env);
@@ -359,9 +361,9 @@ export class PartialEvaluator {
         out.push(t.expressionStatement(u));
       }
     }
-    return this.residualLoop(s, env, out, false);
+    return this.residualLoop(s, env, out, false, iters);
   }
-  residualLoop(s, env, prefix, restart) {
+  residualLoop(s, env, prefix, restart, iters = 0) {
     const assigned = assignedIn(s, this.locals);
     const inner = cloneEnv(env);
     for (const n of assigned) inner.set(n, DYN);
@@ -371,8 +373,8 @@ export class PartialEvaluator {
     if (t.isForStatement(s)) loopNode = t.forStatement(restart && s.init ? this.foldStatement(s.init, env) : null, test, s.update ? this.fold(s.update, inner) : null, body);
     else if (t.isWhileStatement(s)) loopNode = t.whileStatement(test, body);
     // do-while'ın en az bir turu açıldıysa kalan kısım önce koşulu sınar
-    else loopNode = prefix.length ? t.whileStatement(test, body) : t.doWhileStatement(body, test);
-    if (prefix.length) this.stats.unrolled++;
+    else loopNode = iters ? t.whileStatement(test, body) : t.doWhileStatement(body, test);
+    if (iters) this.stats.unrolled++;
     this.stats.generic++;
     return { out: [...prefix, loopNode], env: inner, done: 'mixed' };
   }

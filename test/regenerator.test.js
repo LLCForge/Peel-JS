@@ -279,9 +279,11 @@ const r = await deobfuscate(SRC, { only: ['regenerator'], sandbox: null });
 assert.ok(!r.error, r.error);
 assert.ok(!r.code.includes('_context'), r.code);
 assert.match(r.code, /function\* range\(n\)/);
-assert.match(r.code, /while \(true\)/);
-assert.match(r.code, /async function _callee\(id\)/);
-assert.match(r.code, /res = await fetchLike\(id\)/);
+// döngü koşulu makineden kurtarılır (while (true) + break yerine)
+assert.match(r.code, /while \(i < n\)/);
+// load dışarı veriliyor (out.load): sarmalayıcı ile async fonksiyon length/new ile ayırt edilebilir, generator kalır
+assert.match(r.code, /var load = _asyncToGenerator\(function\* _callee\(id\)/);
+assert.match(r.code, /res = yield fetchLike\(id\)/);
 assert.match(r.code, /try \{/);
 assert.match(r.code, /catch \(_err0\)/);
 assert.match(r.code, /total = yield\* safe\(4\)/);
@@ -293,6 +295,6 @@ const fr = await deobfuscate(FINALLY, { only: ['regenerator'], sandbox: null });
 assert.ok(!fr.code.includes('_c.') && !fr.code.includes('_d.'), fr.code);
 assert.match(fr.code, /function\* fin\(log\)/);
 assert.match(fr.code, /finally \{/);
-assert.match(fr.code, /catch \(_err2\)/);
+assert.match(fr.code, /catch \(_err0\)/);
 assert.deepEqual(await exerciseFinally(fr.code), fb);
 console.log('regenerator: ok');

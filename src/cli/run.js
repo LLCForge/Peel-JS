@@ -27,6 +27,10 @@ import { detectTools, autoProfile, PROFILES } from '../core/detect.js';
 import { searchPassOrder, cascade } from '../core/search.js';
 import { incidentReport } from '../security/incident.js';
 import { generateSourceMap } from '../core/sourcemap.js';
+import { parseNameMap } from '../naming/names.js';
+import { toDts } from '../naming/types.js';
+import { parse } from '../core/parse.js';
+import { FORMAT_PROFILES } from '../core/emit.js';
 import { EXIT, getSandbox, makeLogger, readInput, readJson } from './common.js';
 
 export const RUN_SPEC = {
@@ -63,6 +67,9 @@ export const RUN_SPEC = {
   'out-map': { type: 'string' },
   'vm-out': { type: 'string' },
   jsvmp: { type: 'bool' },
+  names: { alias: 'n', type: 'string' },
+  format: { alias: 'f', type: 'string' },
+  dts: { type: 'string' },
   help: { alias: 'h', type: 'bool' },
 };
 
@@ -231,6 +238,9 @@ async function processOne(item, o, ctx) {
     only: o.jsvmp ? JSVMP_PASSES : null,
     plugins: ctx.plugins,
     onSnapshot: o.git ? (s) => snapshots.push(s) : undefined,
+    // ad haritası (88) önce sözlük gibi uygulanır; proje dosyasının adları (renames) ayrıca aşağıda
+    naming: { names: ctx.names ?? {} },
+    format: o.format ?? 'default',
   });
   // E32 / E33: daha iyi doğrulanmış sonuç bulunursa çıktı onunla değişir (rapor ilk çalıştırmanın metin katmanını kullanır)
   if (!r.error && o.orderSearch) {
@@ -298,6 +308,8 @@ async function processOne(item, o, ctx) {
     process.stdout.write(code);
   }
   const sideFile = (opt, ext) => (ctx.batch ? `${target ?? item.rel}${ext}` : opt);
+  // 76: kullanımdan çıkarılan TypeScript bildirimleri
+  if (o.dts) await writeFile(sideFile(o.dts, '.d.ts'), toDts(parse(code)));
   if (o.report) await writeFile(sideFile(o.report, '.report.json'), JSON.stringify(report, null, 2));
   // E114: olay müdahale raporu (Markdown + yanında JSON)
   if (o.incident) {
@@ -366,6 +378,9 @@ Seçenekler / Options:
       --sarif <dosya>        SARIF 2.1.0 (GitHub code scanning)
       --html <dosya>         önce/sonra raporu (bağımsız HTML)
       --git <dizin>          her pass bir commit olacak şekilde git deposu
+  -n, --names <dosya>        paylaşılan ad haritası (JSON: {"eski": "yeni"} ya da PEEL ad haritası)
+  -f, --format <profil>      biçim profili: default, compact, wide, standard, airbnb, tabs
+      --dts <dosya>          kullanımdan çıkarılan TypeScript bildirimleri (.d.ts)
   -m, --source-map <dosya>   kaynak haritasından isim kurtar (kısmi harita da olur)
   -s, --split <dizin>        webpack/esbuild/browserify/Parcel/haritalı paket modüllerini dizine yaz
       --out-map <dosya>      çıktıdan girdiye kaynak haritası (Source Map v3) yaz
@@ -431,7 +446,11 @@ export async function runCommand(argv) {
     vmOut: opts['vm-out'],
     jsvmp: opts.jsvmp,
     lang: opts.lang ?? cfg.lang,
+    names: opts.names,
+    format: opts.format,
+    dts: opts.dts,
   };
+  if (o.format && !Object.hasOwn(FORMAT_PROFILES, o.format)) throw new UsageError(`--format: ${Object.keys(FORMAT_PROFILES).join('|')}`);
   if (o.level !== undefined && ![1, 2, 3, 4].includes(o.level)) throw new UsageError('--level 1-4 olmalı');
   if (o.failOn && !RISK_ORDER.slice(1).includes(o.failOn)) throw new UsageError('--fail-on low|medium|high olmalı');
   if (o.profile && o.profile !== 'auto' && !Object.hasOwn(PROFILES, o.profile)) throw new UsageError(`--profile: ${Object.keys(PROFILES).join(', ')}, auto`);
@@ -457,7 +476,14 @@ export async function runCommand(argv) {
 
   const plugins = await loadPlugins({ plugins: o.plugins, trust: o.trust, rules: o.rules }, log);
   if (project?.rules && !o.rules) plugins.push(rulesPlugin(project.rules, { id: 'project-rules' }));
+  let names = {};
+  if (o.names) {
+    const r = parseNameMap(await readFile(o.names, 'utf8'));
+    if (!r.ok) throw new UsageError(`--names: ${r.error}`);
+    names = r.names;
+  }
   const ctx = {
+    names,
     log,
     plugins,
     batch,

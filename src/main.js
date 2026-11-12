@@ -33,6 +33,7 @@ import { mountIntegrations } from './ui/integrations/index.js';
 import { createTrace } from './analysis/trace.js';
 import { detectTools, autoProfile } from './core/detect.js';
 import { deobfuscateRegion } from './core/search.js';
+import { configureNaming, namingOptions, recordSnapshot, resetSnapshots } from './ui/naming/index.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -235,6 +236,7 @@ function resetResultsView() {
   passbar.textContent = '';
   renderReport(views.report, null);
   timeline.reset();
+  resetSnapshots();
   diffDirty = true;
   $('eta').textContent = '';
 }
@@ -321,11 +323,12 @@ async function run({ mode = 'normal' } = {}) {
       signal: controller.signal,
       onLog: log,
       onPass: (id, state) => { if (mode !== 'dry') markPass(id, state); if (state !== 'run') sample(id, lastLen); },
-      onSnapshot: (s) => { snapshots.push(s); lastLen = s.code.length; if (mode !== 'dry') timeline.push(s); tools.snapshot(s); },
+      onSnapshot: (s) => { snapshots.push(s); lastLen = s.code.length; if (mode !== 'dry') timeline.push(s); tools.snapshot(s); if (mode !== 'dry') recordSnapshot(s); },
       onLayer: (l) => { layers.push(l); lastLen = l.code.length; },
       onProgress: (pct) => updateEta(pct, t0),
       onApprove,
       plugins: tools.plugins(),
+      naming: namingOptions(src),
     });
     $('eta').textContent = '';
     if (res.error) {
@@ -1207,4 +1210,11 @@ const tools = mountIntegrations({
   deobfuscate,
   log,
   notify: (msg, kind) => rawStatus(msg, kind === 'ok' ? 'ok' : 'err'),
+});
+
+// Anlamlandırma paneli (rapor sekmesi): editörlere aynı API ile erişir
+configureNaming({
+  getInput: () => edIn.text,
+  getOutput: () => edOut.text,
+  setOutput: (text) => edOut.setText(text),
 });

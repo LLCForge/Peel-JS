@@ -24,7 +24,7 @@ console.log(api.hidden(3));
 api.hidden = null;
 // EXPECT: let sig = "atla";
 // EXPECT: } catch {}
-// EXPECT: var safe = 2;
+// EXPECT: safe = 2;
 // GONE: throw "atla"
 // GONE: asla
 // GONE: boş try

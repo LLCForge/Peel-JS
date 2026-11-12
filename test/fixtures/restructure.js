@@ -29,7 +29,7 @@ print(flags, isGlobal, srcLen, asText, host, port, key, val, u === undefined, pi
 // EXPECT: = "evil.example"
 // EXPECT: = console.log
 // EXPECT: if (n > 10)
-// EXPECT: "https://" + host + ".example"
+// EXPECT: `https://${host}.example`
 // GONE: with (
 // GONE: M.length
 // GONE: void 0

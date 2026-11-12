@@ -38,6 +38,10 @@ export function obfuscatorSettings(text, output) {
   const numericLeaves = (n) => (t.isNumericLiteral(n) ? 1 : t.isUnaryExpression(n, { operator: '-' }) ? numericLeaves(n.argument)
     : t.isBinaryExpression(n) && ['+', '-', '*'].includes(n.operator) ? (numericLeaves(n.left) && numericLeaves(n.right) ? numericLeaves(n.left) + numericLeaves(n.right) : 0) : 0);
   const decoder = sa?.decoder.name;
+  // dizi/decoder/rotasyon düzeneğinin kendi string'leri ve çağrıları eşik oranına girmez (rotasyon ifadesindeki
+  // decoder çağrısı sayısı rastgele: oran her obfuscate çalıştırmasında oynuyordu)
+  const machinery = (p) => Boolean(sa) && Boolean(p.findParent((x) => (sa.rotator && x.node === sa.rotator.stmt) ||
+    (x.isFunctionDeclaration() && x.node.id && [sa.decoder.name, sa.holder.name].includes(x.node.id.name))));
   traverse(ast, {
     Identifier(p) {
       if (!p.isBindingIdentifier()) return;
@@ -70,7 +74,7 @@ export function obfuscatorSettings(text, output) {
     },
     CallExpression(p) {
       const c = p.node.callee;
-      if (decoder && t.isIdentifier(c)) {
+      if (decoder && t.isIdentifier(c) && !machinery(p)) {
         const b = p.scope.getBinding(c.name);
         if (c.name === decoder || (b?.path.isVariableDeclarator() && t.isIdentifier(b.path.node.init, { name: decoder }))) decoderCalls++;
       }
@@ -78,6 +82,7 @@ export function obfuscatorSettings(text, output) {
     StringLiteral(p) {
       if (p.parentPath.isObjectProperty({ key: p.node }) || p.parentPath.isArrayExpression() || p.parentPath.isMemberExpression({ property: p.node })) return;
       if (p.parentPath.isCallExpression() && decoder) return;
+      if (machinery(p)) return;
       plainStrings++;
     },
     VariableDeclarator(p) {

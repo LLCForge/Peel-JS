@@ -8,6 +8,6 @@ function build() {
   return [String(early), later, read(), conf.name].join(",");
 }
 console.log(build());
-// EXPECT: var early = conf.version;
-// EXPECT: var later = 14;
+// EXPECT: early = conf.version;
+// EXPECT: [String(early), 14, read(), conf.name]
 // EXPECT: return 8;

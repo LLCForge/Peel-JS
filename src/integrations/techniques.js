@@ -90,7 +90,7 @@ console.log(s, n);`,
     why: { tr: 'Kodun niyetini anlatan isimleri yok eder; geri alınamaz, yalnızca okunur adlar verilebilir.', en: 'Destroys names that reveal intent; it cannot be reversed, only readable names can be assigned.' },
     example: `function _0xabc1(_0xd1, _0xd2) { var _0xe1 = _0xd1 + _0xd2; return _0xe1; }
 console.log(_0xabc1(1, 2));`,
-    expect: 'fn1',
+    expect: 'function compute(num, num2)',
     passes: ['rename'],
     detect: [/\b_0x[0-9a-f]{4,6}\b/],
   },

@@ -11,7 +11,7 @@ function f() {
 }
 console.log(f());
 // LEVEL: 3
-// EXPECT: var x_v = 5;
+// EXPECT: out.push(5);
 // EXPECT: while (true)
 // GONE: switch (
 // GONE: M:

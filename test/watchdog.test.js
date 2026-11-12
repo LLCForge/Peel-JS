@@ -37,7 +37,7 @@ const vite = readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8')
 for (const s of ["'Cross-Origin-Opener-Policy': 'same-origin'", "'Cross-Origin-Embedder-Policy': 'require-corp'", 'server: { headers: ISOLATION }', 'preview: { headers: ISOLATION }']) assert.ok(vite.includes(s), s);
 const headers = readFileSync(new URL('../public/_headers', import.meta.url), 'utf8');
 assert.match(headers, /\/\*\r?\n\s+Cross-Origin-Opener-Policy: same-origin\r?\n\s+Cross-Origin-Embedder-Policy: require-corp/);
-const z3 = readFileSync(new URL('../src/verify/solver/z3.js', import.meta.url), 'utf8');
+const z3 = readFileSync(new URL('../src/symbolic/z3/z3.js', import.meta.url), 'utf8');
 assert.ok(z3.includes('crossOriginIsolated') && z3.includes("new URL('./z3.worker.js', import.meta.url)"));
 
 // E716 ve I182 arayüz metinleri her iki dilde

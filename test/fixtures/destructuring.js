@@ -12,8 +12,8 @@ function run(seed) {
 var api = { run: run };
 console.log(api.run(4));
 api.run = null;
-// EXPECT: var alpha = seed + 1,
-// EXPECT: gamma = 3,
+// EXPECT: alpha = seed + 1
+// EXPECT: [alpha, "beta", 3, "delta", first
 // EXPECT: first = alpha * 2;
 // EXPECT: [p, q] = [q, p];
 // GONE: [alpha, beta]

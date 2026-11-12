@@ -1,4 +1,6 @@
-// Z3 wasm arka ucu (E724).
+// API: z3Solve(prep, timeoutMs) → { status, backend: 'z3', ms, model?, reason? }, z3Available(), z3Status(), shutdownZ3().
+// prep solver.js'nin solveAsync'i tarafından hazırlanır (tipli IR terimleri + genişlik); doğrudan çağırmayın.
+// Z3 wasm arka ucu (E724): yerleşik çözücünün isteğe bağlı hızlandırıcısı.
 // - Node/CLI: paket isteğe bağlı; modül adı değişkende tutulur (@vite-ignore), pthread'ler boşta kapatılır.
 // - Tarayıcı: Z3'ün pthread derlemesi SharedArrayBuffer ister → sayfa cross-origin isolated olmalı
 //   (COOP same-origin + COEP require-corp; vite.config.js ve public/_headers). Öyleyse Z3 tembel yüklenen ayrı bir
@@ -11,6 +13,7 @@ const BROWSER_IDLE_MS = 60000;
 let pending = null;
 let idleTimer = null;
 let unavailable = null;
+let inflight = 0; // süren z3Solve çağrıları: boşta kapatma bunlar bitmeden çalışmamalı
 
 const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node) && typeof window === 'undefined';
 
@@ -34,13 +37,13 @@ async function load() {
       const mod = await import(/* @vite-ignore */ MODULE);
       const api = await mod.init();
       const ctx = api.Context('peel');
-      return { check: (goal, ms) => checkWith(ctx, goal, ms), stop: () => api.em.PThread.terminateAllThreads() };
+      return { check: (prep, ms) => checkWith(ctx, prep, ms), stop: () => api.em.PThread.terminateAllThreads() };
     }
     const b = browserBackend();
     if (b.error) throw new Error(b.error);
     const ready = await b.call({ type: 'init' });
     if (!ready?.ok) { b.terminate(); throw new Error(ready?.error ?? 'z3 worker başlatılamadı'); }
-    return { check: (goal, ms) => b.call({ type: 'check', goal, timeoutMs: ms }), stop: () => b.terminate() };
+    return { check: (prep, ms) => b.call({ type: 'check', prep, timeoutMs: ms }), stop: () => b.terminate() };
   })().catch((e) => { unavailable = e.message?.startsWith('tarayıcı') ? e.message : `z3 yüklenemedi: ${e?.message ?? e}`; pending = null; return null; });
   return pending;
 }
@@ -66,12 +69,15 @@ export async function z3Available() {
 export const z3Status = () => (unavailable ? { available: false, reason: unavailable } : { available: pending ? true : null });
 
 /** @returns {Promise<{ status, backend: 'z3', ms, model?, reason? }>} */
-export async function z3Check(goal, { timeoutMs = 5000 } = {}) {
-  const z = await load();
-  if (!z) return { status: 'unknown', backend: 'z3', ms: 0, reason: unavailable };
+export async function z3Solve(prep, timeoutMs = 5000) {
+  // boşta zamanlayıcısı süren bir denetimi bitirirse (pthread'ler kapatılır) denetimin promise'i hiç yerleşmez
+  clearTimeout(idleTimer);
+  inflight++;
   try {
-    return await z.check(goal, timeoutMs);
+    const z = await load();
+    if (!z) return { status: 'unknown', backend: 'z3', ms: 0, reason: unavailable };
+    return { ...(await z.check(prep, timeoutMs)), backend: 'z3' };
   } finally {
-    scheduleShutdown();
+    if (--inflight === 0) scheduleShutdown();
   }
 }

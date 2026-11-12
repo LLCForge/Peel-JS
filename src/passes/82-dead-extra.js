@@ -48,6 +48,14 @@ function directCalls(p) {
 
 // ── E210 ────────────────────────────────────────────────
 
+const dynamicScope = (fn) => {
+  let found = false;
+  t.traverseFast(fn.body, (n) => {
+    if (t.isWithStatement(n) || (t.isCallExpression(n) && t.isIdentifier(n.callee, { name: 'eval' }))) found = true;
+  });
+  return found;
+};
+
 function unusedParams(ast, level) {
   let n = 0;
   traverse(ast, {
@@ -57,6 +65,8 @@ function unusedParams(ast, level) {
       const params = p.node.params;
       if (!params.length || !params.every((x) => t.isIdentifier(x))) return;
       if (!p.isArrowFunctionExpression() && usesArguments(p.node)) return;
+      // doğrudan eval ve with parametreyi adıyla okuyabilir: "referenced" kanıtı geçersiz
+      if (dynamicScope(p.node)) return;
       const calls = directCalls(p);
       if (!calls || p.isClassMethod() || p.isObjectMethod()) return;
       const dead = [];

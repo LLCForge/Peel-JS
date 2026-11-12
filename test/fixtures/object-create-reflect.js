@@ -15,7 +15,7 @@ function main() {
 console.log(main());
 // EXPECT: __proto__: null,
 // EXPECT: name: "peel",
-// EXPECT: var plain = {};
+// EXPECT: const plain = {};
 // EXPECT: cfg.level = 4;
 // EXPECT: "mode" in cfg
 // EXPECT: sum(cfg.level, 5)

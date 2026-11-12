@@ -1,9 +1,9 @@
 {
   "26": ["x", "Statik keşifte dal koşullu kenarlar; makine yorumunda ve raporda koşullu geçiş tablosu"],
-  "27": ["x", "Somut çalıştırma + sembolik keşif; case içi dallar ilk sonucun tersine zorlanarak ek sandbox çalıştırmaları"],
+  "27": ["x", "Somut çalıştırma + concolic çoklu yol keşfi: ctx.solver (src/symbolic/vm-solver.js) dal günlüğünden yol koşullarını çıkarıp alınmayan dalı çözer; bulunan girdiyle çalıştırma doğrulanır (feasible), kesin önekli UNSAT kanıtlı olanaksız, çözülemeyen dal zorlanır ve doğrulanmamış işaretlenir"],
   "28": ["x", "for/do-while/etiketli makine döngüleri, case içi let/const, makineye etiketli break/continue eklendi; kanıtlanamayan biçimler kural gereği bırakılır"],
   "29": ["x", "Toplam dışında -, *, ^, |, &, kaydırma ve nesne alanı sayaçları tek durum değişkenine"],
-  "30": [" ", "z3.wasm (z3-solver) iş parçacıkları için SharedArrayBuffer ve çapraz köken yalıtımı (COOP/COEP) ister, ~30 MB; statik barındırılan uygulamada ve QuickJS sandbox'ında çalışmıyor, yeni bağımlılık eklenmedi"],
+  "30": ["x", "opaque-smt z3-solver ile (Node'da her zaman, tarayıcıda cross-origin isolated ise worker); katlama yalnızca yerleşik CDCL çözücünün bağımsız, DRUP denetimli kanıtıyla; raporda kanıtlayan arka uç gösterilir"],
   "31": ["x", "Genel dağıtım döngüsü tespiti + kısmi değerlendirmeyle disassembly (rapor, CLI --vm-out)"],
   "32": ["x", "vm-lift pass'i: sembolik yığınla pc makinesine, unflatten ile yapısal JS'e; çağrı dönüşleriyle doğrulanır"],
   "33": ["x", "Durum başına yığın derinliği keşifte hesaplanır; disassembly'de d=, raporda en büyük derinlik"],

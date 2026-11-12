@@ -22,6 +22,11 @@ const nat = (name) => ({ k: 'nat', name });
 let heapSeq = 0;
 let frameSeq = 0;
 
+/** Katı kipte (strict) modellenemeyen yapı: yaklaşık sonuç yerine bu atılır (doğrulama API'si) */
+export class Unsupported extends Error {}
+// Çalışan katı yürütücü (yürütme eşzamanlı: tek etkin örnek yeterli)
+let STRICT = null;
+
 export class State {
   constructor() {
     this.vars = new Map();
@@ -31,9 +36,16 @@ export class State {
     this.status = 'normal';
     this.label = null;
     this.value = UNDEF;
-    this.approx = false;
+    this._approx = false;
     this.out = [];
     this.effects = [];
+    this.depth = 0;
+  }
+  get approx() { return this._approx; }
+  // katı kipte yaklaşıklama (bilinmeyen değer, havoc, desteklenmeyen deyim) sonucu geçersiz kılar
+  set approx(v) {
+    if (v && STRICT) throw new Unsupported(STRICT.why ?? 'desteklenmeyen yapı');
+    this._approx = v;
   }
   clone() {
     const s = new State();
@@ -44,7 +56,9 @@ export class State {
     s.status = this.status;
     s.label = this.label;
     s.value = this.value;
-    s.approx = this.approx;
+    s._approx = this._approx;
+    s.depth = this.depth;
+    s.concretized = this.concretized;
     s.out = this.out.slice();
     s.effects = this.effects.slice();
     return s;
@@ -109,6 +123,8 @@ export class Exec {
     this.diverged = null;
     this.cursor = 0;
     this.branchLog = []; // concolic için: { id, cond, taken, pcLen }
+    this.limited = null; // yol/derinlik sınırına takılma nedeni (E737)
+    this.storeStats = { queries: 0, cacheHits: 0, solverCalls: 0 };
   }
 
   // ── bütçe (E609) ──────────────────────────────────────
@@ -138,6 +154,14 @@ export class Exec {
     if (name === 'undefined') return UNDEF;
     if (name === 'NaN') return C(NaN);
     if (name === 'Infinity') return C(Infinity);
+    // doğrulama API'si: serbest adlar somut değer ya da sembolik int32 girdi olarak verilebilir
+    const g = this.o.globals?.[name];
+    if (g === 'symbolic') {
+      this.globalInputs ??= [];
+      if (!this.globalInputs.includes(`g_${name}`)) this.globalInputs.push(`g_${name}`);
+      return V(`g_${name}`, 'int32');
+    }
+    if (g !== undefined) return C(g);
     if (NATIVE_GLOBALS.has(name)) return nat(name);
     return null; // modellenmeyen global
   }
@@ -165,8 +189,11 @@ export class Exec {
     if (this.solverCalls >= this.o.solverCalls) return true;
     this.solverCalls++;
     const store = new ConstraintStore({ timeMs: 300, eager: false });
-    for (const c of pc) if (store.assert(c) === 'conflict') return false;
-    return store.feasible();
+    let ok = true;
+    for (const c of pc) if (store.assert(c) === 'conflict') { ok = false; break; }
+    if (ok) ok = store.feasible();
+    for (const k of Object.keys(this.storeStats)) this.storeStats[k] += store.stats[k] ?? 0;
+    return ok;
   }
 
   /** Koşula göre [durum, sonuç] çiftleri (E583 çatallanma, E600/E601 budama) */
@@ -181,7 +208,8 @@ export class Exec {
         let concrete;
         try { concrete = Boolean(evaluate(c, this.o.guide.model)); } catch { concrete = taken; }
         if (concrete !== taken) { this.diverged = `dal ${id}: model ${concrete}, gerçek ${taken}`; s.status = 'diverge'; return [[s, taken]]; }
-        this.branchLog.push({ id, line: node.loc?.start.line ?? 0, cond: c, taken, pcLen: s.pc.length });
+        // exact: bu noktaya kadar girdi dışı modellenmeyen değer somutlaştırılmadı (UNSAT yol öneki için geçerli kanıt)
+        this.branchLog.push({ id, line: node.loc?.start.line ?? 0, cond: c, taken, pcLen: s.pc.length, exact: !s.concretized });
         s.pc.push(taken ? c : mk('!', c));
       }
       this.traceAdd(s, node, 'dal', { taken });
@@ -201,6 +229,13 @@ export class Exec {
     const okT = this.feasible(pcT);
     const okF = this.feasible(pcF);
     if (!okT || !okF) this.pruned++;
+    // E737: yol/çatallanma derinliği sınırı — aşan yol 'limit' olarak kapanır (bırakmak sağlam olmazdı)
+    if (okT && okF) {
+      const reason = this.o.maxPaths && 2 + this.forks - this.merges > this.o.maxPaths ? `yol sınırı (${this.o.maxPaths})`
+        : this.o.forkDepth && s.depth + 1 > this.o.forkDepth ? `derinlik sınırı (${this.o.forkDepth})` : null;
+      if (reason) { this.limited ??= reason; s.status = 'limit'; return [[s, false]]; }
+      s.depth++;
+    }
     if (okT && okF) this.forks++;
     if (okT) { const st = okF ? s.clone() : s; st.pc = pcT; this.traceAdd(st, node, 'dal', { taken: true }); out.push([st, true]); }
     if (okF) { const sf = s; sf.pc = pcF; this.traceAdd(sf, node, 'dal', { taken: false }); out.push([sf, false]); }
@@ -211,6 +246,8 @@ export class Exec {
   /** İki durumu tek duruma birleştirir (E584 yol birleştirme, E605 durum birleştirme); olmazsa null */
   mergeTwo(a, b) {
     if (a.status !== b.status || a.label !== b.label || a.status === 'abort' || a.status === 'diverge') return null;
+    // katı kipte bitmiş yollar (dönüş/throw/sınır) ayrı kalır: yol koşulu ve tanık raporlanabilsin
+    if (this.o.strict && a.status !== 'normal') return null;
     let k = 0;
     while (k < a.pc.length && k < b.pc.length && same(a.pc[k], b.pc[k])) k++;
     const ga = a.pc.slice(k).reduce((p, x) => mk('&&', p, x), TRUE);
@@ -302,19 +339,23 @@ export class Exec {
     this.cursor++;
     return ev;
   }
-  recorded(s, ctx, node) {
+  // used=false: kayıt yalnızca eşzamanlama için tüketilir, modellenen değer kullanılır (somutlaştırma sayılmaz)
+  recorded(s, ctx, node, used = true) {
     const ev = this.consume(ctx, 'v', node.start);
     if (!ev) { s.status = 'diverge'; return UNDEF; }
     if (ev.sym) {
       const ty = typeof ev.v === 'number' ? (Number.isInteger(ev.v) && (ev.v | 0) === ev.v ? 'int32' : 'num') : typeof ev.v === 'string' ? 'str' : typeof ev.v === 'boolean' ? 'bool' : ev.v === null ? 'null' : 'undef';
       return V(ev.sym, this.o.guide.types?.[ev.sym] ?? ty, ty === 'str' ? { cap: Math.min(64, Math.max(12, String(ev.v).length + 4)) } : {});
     }
+    // girdi olmayan kayıtlı değer: somutlaştırma (yol koşulu bundan sonra alt yaklaşıklık)
+    if (used) s.concretized = true;
     if (ev.o) return ext(`dış#${node.start}`);
     return C(ev.v);
   }
 
   // ── çalıştırma girişleri ──────────────────────────────
-  runProgram() {
+  runProgram() { return this.strictly(() => this.runProgramRaw()); }
+  runProgramRaw() {
     const s = new State();
     const prog = this.root.program;
     const ctx = { chain: [0], depth: 0, callId: 0, fn: prog, loops: 0 };
@@ -323,7 +364,8 @@ export class Exec {
   }
 
   /** Fonksiyonu sembolik parametrelerle yürütür (E606 özet çıkarımı da bunu kullanır) */
-  runFunction(fnNode, args) {
+  runFunction(fnNode, args) { return this.strictly(() => this.runFunctionRaw(fnNode, args)); }
+  runFunctionRaw(fnNode, args) {
     const s = new State();
     const prog = this.root.program;
     this.hoist(s, prog, 0, [0]);
@@ -332,12 +374,21 @@ export class Exec {
     return this.finish(pairs.map(([st, v]) => { if (st.status === 'normal') { st.status = 'return'; st.value = v; } return st; }));
   }
 
+  // katı kip: yaklaşıklama Unsupported atar (bkz. State.approx)
+  strictly(run) {
+    if (!this.o.strict) return run();
+    const prev = STRICT;
+    STRICT = this;
+    try { return run(); } finally { STRICT = prev; }
+  }
+
   finish(states) {
     return {
       paths: states.filter((s) => s.status !== 'infeasible'),
       stats: {
         steps: this.steps, forks: this.forks, merges: this.merges, pruned: this.pruned, decided: this.decided,
         solverCalls: this.solverCalls, exhausted: this.exhausted, diverged: this.diverged,
+        limited: this.limited, store: this.storeStats, globals: this.globalInputs ?? [],
       },
     };
   }
@@ -488,6 +539,20 @@ export class Exec {
     for (let iter = 0; active.length; iter++) {
       if (this.exhausted) { for (const st of active) st.status = 'abort'; exits.push(...active); break; }
       if (iter >= this.o.unroll && !this.o.guide) {
+        if (this.o.strict) {
+          // BMC: koşulu yine sınanır; çıkan yollar devam eder, sürenler 'bound' (eksik) olarak kapanır
+          for (const st of active) {
+            if (!test || (doFirst && iter === 0)) { st.status = 'bound'; exits.push(st); continue; }
+            for (const [s2, c] of this.ev(st, test, ctx)) {
+              if (s2.status !== 'normal') { exits.push(s2); continue; }
+              for (const [s3, go] of this.branch(s2, c, test, ctx)) {
+                if (s3.status === 'normal' && go) s3.status = 'bound';
+                exits.push(s3);
+              }
+            }
+          }
+          break;
+        }
         exits.push(...active.flatMap((st) => this.havocLoop(st, ctx, { test, body, update, node })));
         break;
       }
@@ -712,6 +777,7 @@ export class Exec {
   }
 
   unknown(s, node, ctx, why) {
+    if (STRICT) STRICT.why = `desteklenmeyen: ${why} (satır ${node?.loc?.start.line ?? '?'})`;
     // concolic: enstrümante edilen düğümün somut değeri kayıttan gelir (somutlaştırma)
     if (this.isRecorded(node)) return this.recorded(s, ctx, node);
     s.approx = true;
@@ -967,7 +1033,7 @@ export class Exec {
     const recorded = this.isRecorded(node);
     const take = (v) => {
       if (recorded) {
-        const r = this.recorded(s, ctx, node);
+        const r = this.recorded(s, ctx, node, v == null);
         // modellenen değer öncelikli; modellenmeyen kısımlar kayıttan gelir
         return [[s, v ?? r]];
       }
@@ -1127,7 +1193,7 @@ export class Exec {
     const recorded = this.isRecorded(n);
     const result = (st, v) => {
       if (recorded) {
-        const r = this.recorded(st, ctx, n);
+        const r = this.recorded(st, ctx, n, v == null);
         return [[st, v ?? r]];
       }
       return [[st, v ?? this.unknown(st, n, ctx, 'çağrı')]];
@@ -1137,7 +1203,7 @@ export class Exec {
       if (recorded) {
         // concolic: program fonksiyonu yeniden oynatılır, ardından çağrının kendi kaydı tüketilir
         const pairs = this.call(s, fn, args, recv, ctx, n);
-        return this.ev1(pairs, (st, v) => { this.recorded(st, ctx, n); return [[st, v]]; });
+        return this.ev1(pairs, (st, v) => { this.recorded(st, ctx, n, false); return [[st, v]]; });
       }
       return this.call(s, fn, args, recv, ctx, n);
     }
@@ -1229,6 +1295,7 @@ export class Exec {
         if (a.length !== 2 || !a.every((x) => int(x) || (x.k === 'c' && Number.isInteger(x.v)))) return null;
         return mk('ite', mk(name === 'Math.min' ? '<' : '>', a[0], a[1]), a[0], a[1]);
       }
+      case 'Math.imul': return a.length === 2 && a.every((v) => onlyType(v, 'number')) ? mk('imul', a[0], a[1]) : null;
       case 'Math.floor': case 'Math.ceil': case 'Math.round': case 'Math.trunc': return a[0] && int(a[0]) ? a[0] : null;
       default: return null;
     }
@@ -1293,7 +1360,8 @@ export class Exec {
       else if (st.status === 'normal') out.push([st, UNDEF]);
       else out.push([st, UNDEF]);
     }
-    return this.mergePairs(out);
+    // katı kipte en dış çağrının dönüş yolları ayrı kalır (yol koşulları raporlanır)
+    return this.o.strict && ctx.depth === 0 ? out : this.mergePairs(out);
   }
 
   usesArguments(f) {

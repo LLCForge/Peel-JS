@@ -772,3 +772,57 @@ body.focus-mode .pane-in, body.focus-mode .pane-out { grid-area: only; }
 .sec-check { font-size: 13px; color: var(--muted); }
 .sec-pre { font: 12px var(--mono); white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
 .sec-status:empty { display: none; }
+/* Anlamlandırma paneli (src/ui/naming): yalnızca .nm altı, mevcut tasarım belirteçleriyle */
+.nm-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.nm-tabs [aria-selected="true"] { color: var(--accent); background: var(--accent-soft); }
+.nm-status { min-height: 18px; font-size: 12px; color: var(--muted); }
+.nm-panel { overflow-x: auto; }
+.nm-stack { display: flex; flex-direction: column; gap: 12px; }
+.nm-box { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.nm-box h4, .nm-stack h4 { margin-bottom: 6px; }
+.nm-input, .nm-select, .nm-textarea { font: 12px var(--mono); color: var(--text); background: var(--raised); border: 1px solid var(--line-strong); border-radius: 6px; padding: 4px 8px; }
+.nm-input { width: 100%; min-width: 120px; }
+.nm-textarea { width: 100%; resize: vertical; }
+.nm-summary { line-height: 1.6; }
+.nm-explain { border-collapse: collapse; width: 100%; font-size: 12px; }
+.nm-explain td { padding: 1px 10px 1px 0; vertical-align: top; border-bottom: 1px solid var(--line); }
+.nm-explain td.num { color: var(--faint); text-align: right; font: 12px var(--mono); user-select: none; }
+.nm-code { white-space: pre; font-family: var(--mono); }
+.nm-note { color: var(--muted); min-width: 240px; }
+.nm-graph { overflow: auto; max-height: 70vh; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.nm-svg { display: block; font: 11px var(--mono); }
+.nm-svg text { fill: var(--text); }
+.nm-node rect { fill: var(--raised); stroke: var(--line-strong); }
+.nm-node.cond rect, .nm-node.loop rect, .nm-node.switch rect { stroke: var(--accent); }
+.nm-node.return rect, .nm-node.exit rect { stroke: var(--ok); }
+.nm-node.throw rect, .nm-node.catch rect { stroke: var(--err); }
+.nm-edge { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+.nm-edge.back { stroke: var(--warn); stroke-dasharray: 4 3; }
+.nm-arrowhead { fill: var(--muted); }
+.nm-edge-label, .nm-note-label, .nm-frame-label { fill: var(--faint); font-size: 10px; }
+.nm-lifeline { stroke: var(--line-strong); stroke-dasharray: 3 3; }
+.nm-actor { fill: var(--raised); stroke: var(--line-strong); }
+.nm-msg { stroke: var(--text); stroke-width: 1.2; }
+.nm-msg.async { stroke-dasharray: 5 3; }
+.nm-msg.return { stroke: var(--faint); stroke-dasharray: 2 3; }
+.nm-msg-label { fill: var(--muted); font-size: 10px; }
+.nm-frame { fill: none; stroke: var(--line-strong); }
+.nm-score { display: flex; align-items: baseline; gap: 10px; }
+.nm-score b { font: 600 20px var(--mono); color: var(--accent); }
+.nm-score small { color: var(--muted); font-family: var(--mono); }
+.nm-heat { font-size: 12px; max-height: 60vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.nm-heat-row { display: flex; white-space: pre; background: rgba(255, 107, 91, calc(var(--heat, 0) * .35)); }
+.nm-heat-row .num { width: 48px; flex-shrink: 0; text-align: right; padding-right: 10px; color: var(--faint); user-select: none; }
+.nm-folded pre { margin: 0; white-space: pre; font-size: 12px; }
+.nm-dead summary { cursor: pointer; color: var(--warn); font: 12px var(--sans); padding: 2px 0; }
+.nm-dead pre { opacity: .6; padding-left: 8px; }
+.nm-step summary { cursor: pointer; padding: 4px 0; }
+.nm-hunks { font-size: 12px; }
+.nm-hunk { border: 1px solid var(--line); border-radius: 6px; margin: 6px 0; overflow-x: auto; }
+.nm-hunk .row { display: flex; white-space: pre; }
+.nm-hunk .row .n { width: 48px; flex-shrink: 0; text-align: right; padding-right: 10px; color: var(--faint); }
+.nm-hunk .add { background: rgba(74, 222, 128, .1); }
+.nm-hunk .del { background: rgba(255, 107, 91, .1); }
+.nm-pre { white-space: pre; font-size: 12px; overflow: auto; max-height: 60vh; padding: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.nm-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; }
+.nm-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }

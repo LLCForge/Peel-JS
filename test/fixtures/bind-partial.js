@@ -13,8 +13,8 @@ function main(v) {
 var api = { main: main };
 console.log(api.main(1));
 api.main = null;
-// EXPECT: var r1 = join3(v, 2, 3);
-// EXPECT: var r2 = obj.say("!");
+// EXPECT: r1 = join3(v, 2, 3);
+// EXPECT: r2 = obj.say("!");
 // EXPECT: join3.call(null, "pre", "mid", "end")
 // GONE: bind
 // GONE: withPrefix

@@ -39,10 +39,25 @@ export async function run(ast, { onLog, bump }) {
   for (const [k, v] of Object.entries(st)) bump(`loop.${k}`, v);
 }
 
+// durum makinesi döngüsü (gövdede switch (s), s döngüde atanıyor): unflatten/VM pass'lerinin işi. Tur soyma ya da
+// taşıma makineye ikinci bir giriş durumu ekler ve onu açılamaz kılar; döngü olduğu gibi kalır.
+function dispatcher(node) {
+  const stmts = t.isBlockStatement(node.body) ? node.body.body : [node.body];
+  const sw = stmts.find((s) => t.isSwitchStatement(s) && t.isIdentifier(s.discriminant));
+  if (!sw) return false;
+  const name = sw.discriminant.name;
+  let assigned = false;
+  t.traverseFast(node, (n) => {
+    if ((t.isAssignmentExpression(n) && t.isIdentifier(n.left, { name })) || (t.isUpdateExpression(n) && t.isIdentifier(n.argument, { name }))) assigned = true;
+  });
+  return assigned;
+}
+
 // ── doğal döngü ve indüksiyon değişkenleri ────────────
 function naturalLoop(fx, l) {
   const H = l.header;
   if (!H || H.dead) return null;
+  if (l.path?.node && dispatcher(l.path.node)) return null;
   const latches = H.pred.filter((p) => !p.dead && fx.dominates(H, p));
   const outside = H.pred.filter((p) => !p.dead && !fx.dominates(H, p));
   if (!latches.length || outside.length !== 1) return null;

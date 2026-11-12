@@ -3,6 +3,7 @@ import { traverse } from '../util/ast.js';
 import { ssaFor, versionAt, insertOnEdge, walkEval, destruct } from '../opt/ssa.js';
 import { sccp, absint, ALL } from '../opt/lattice.js';
 import { isPureTyped, literalFor, functionPaths, hasDynamicScope, exprType, nodeSize, stmtOf } from '../opt/util.js';
+import { GENERATED } from '../naming/metrics.js';
 
 // SSA tabanlı skaler optimizasyonlar (fonksiyon başına, içten dışa):
 //   E664 fazla yükleme eleme (kaçmayan nesnelerin skaler değiştirilmesi), E680 SCCP + E661 koşullara sabit yayılımı,
@@ -10,6 +11,8 @@ import { isPureTyped, literalFor, functionPaths, hasDynamicScope, exprType, node
 // Her dönüşüm yalnızca kanıtlanan durumda uygulanır: tipler (valueOf/getter/BigInt) ve SSA sürüm eşitliği denetlenir.
 
 const PROTO = new Set(Object.getOwnPropertyNames(Object.prototype));
+// anlamlı ad (kullanıcının seçtiği): adlandırılmış nesne yapay skalerlere bölünmez
+const meaningful = (name) => name.length >= 3 && !GENERATED.test(name);
 
 export async function run(ast, { onLog, bump }) {
   if (hasDynamicScope(ast, traverse)) return;
@@ -66,6 +69,8 @@ function sroa(fn) {
     if (!['var', 'let', 'const'].includes(b.kind) || b.constantViolations.length) continue;
     const decl = b.path;
     if (!decl.isVariableDeclarator() || !t.isObjectExpression(decl.node.init) || !t.isIdentifier(decl.node.id)) continue;
+    // { min, max } = config gibi adlandırılmış nesne yapay skalerlere (_config_min) bölünmez
+    if (meaningful(b.identifier.name)) continue;
     const props = new Map();
     let ok = true;
     for (const p of decl.node.init.properties) {
@@ -75,6 +80,8 @@ function sroa(fn) {
       props.set(name, p.value);
     }
     if (!ok || !b.referencePaths.length) continue;
+    // durum makinesi deyimi (döngüde switch (o.p)): VM/unflatten pass'lerinin işi, nesne yerinde kalır (E184 Proxy izleme)
+    if (b.referencePaths.some((r) => r.parentPath.parentPath?.isSwitchStatement() && r.parentPath.key === 'discriminant' && r.findParent((x) => x.isLoop()))) continue;
     const declStmt = decl.parentPath;
     if (!Array.isArray(declStmt.container) || declStmt.parentPath.isForStatement()) continue;
     const list = declStmt.container;

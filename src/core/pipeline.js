@@ -3,6 +3,7 @@ import { verify } from './verify.js';
 import { raw, pretty } from './emit.js';
 import { fnv1a } from '../util/hash.js';
 import { PASSES } from './registry.js';
+import { createVmSolver } from '../symbolic/vm-solver.js';
 import { snapshot, same } from './behavior.js';
 import { rationale } from '../verify/rationale.js';
 import { getSettings } from '../sandbox/settings.js';
@@ -30,6 +31,7 @@ export async function deobfuscate(input, {
   order = null, onLayer = () => {}, onApprove = null,
   plugins = [],
   trace = null, resume = null, passOrder = null,
+  naming = {}, format = 'default',
 } = {}) {
   // izleyici log satırlarını pass gerekçesi olarak toplar (E558)
   if (trace) { const base = onLog; onLog = (m, lv) => { trace.log(m, lv); base(m, lv); }; }
@@ -62,7 +64,9 @@ export async function deobfuscate(input, {
 
   // findings: pass'lerin rapora aktardığı analiz verileri (VM, durum makinesi, string tablosu)
   const findings = { vm: [], sm: [], strings: [] };
-  const ctx = { onLog, bump, level, sandbox, ctx: null, findings };
+  // madde 27: VM pass'inin concolic çoklu yol keşfi için çözücü bağdaştırıcısı (çalıştırma başına bir kez)
+  // naming: ad haritası/sözlük ve okunabilirlik seçenekleri; source: metin katmanları açılmış girdi (yorum geri yükleme)
+  const ctx = { onLog, bump, level, sandbox, ctx: null, findings, naming, source: null, solver: sandbox ? createVmSolver(sandbox) : null };
   // E720: doğrulama seviyesi — parse her zaman; behaviour = console; effects ve üstü = console + gözlenebilir etkiler
   const vLevel = verifyLevel ?? (deep ? getSettings().verifyLevel : 'parse');
   const behaviourCheck = deep && !['none', 'parse'].includes(vLevel);
@@ -101,6 +105,7 @@ export async function deobfuscate(input, {
     tick();
   }
 
+  ctx.source = text;
   let code;
   try {
     code = resumed ? resumed.code : raw(parse(text));
@@ -142,9 +147,13 @@ export async function deobfuscate(input, {
 
     // 3) AST pass'leri: değişiklik durana kadar tur
     const seen = new Set([fnv1a(code)]);
+    // finish: true olan okunabilirlik pass'leri, çözme pass'leri sabitlendikten sonra devreye girer
+    // (ör. kısa metot sözdizimi proxy tanımayı engellemesin)
+    let finishing = !astPasses.some((p) => !p.finish);
     for (round = resumed ? resumed.round + 1 : 1; round <= MAX_ROUNDS; round++) {
       let changed = false;
       for (const p of astPasses) {
+        if (p.finish && !finishing) continue;
         checkAbort();
         pass(p.id, 'run');
         // her pass taze ağaçla başlar: Babel'in scope önbelleği önceki pass'in mutasyonlarından etkilenmez
@@ -213,6 +222,8 @@ export async function deobfuscate(input, {
       }
       trace?.checkpoint({ round, code, text, stats });
       const h = fnv1a(code);
+      // salınım (aynı kod yeniden) de sabitlenme sayılır: okunabilirlik aşaması yine de çalışır
+      if ((!changed || seen.has(h)) && !finishing && astPasses.some((p) => p.finish)) { finishing = true; seen.add(h); continue; }
       if (!changed || seen.has(h)) break;
       seen.add(h);
     }
@@ -221,7 +232,7 @@ export async function deobfuscate(input, {
     if (ctx.ctx && !signal?.aborted) await sandbox.close(ctx.ctx);
   }
 
-  const out = await pretty(code);
+  const out = await pretty(code, format);
   onProgress(100);
   // text: metin katmanları açıldıktan sonraki program; rapor çalışma anı analizini bunun üzerinde yapar
   return { code: out, stats, events, text, verified: Boolean(baseline), verifyLevel: baseline ? (effectsCheck ? 'effects' : 'behaviour') : 'parse', findings };

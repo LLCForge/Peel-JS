@@ -45,9 +45,10 @@ export function createHost(QuickJS, options = {}) {
   function make(memoryMB, config = null, plugins = []) {
     const rt = QuickJS.newRuntime();
     rt.setMemoryLimit(memoryMB * 1024 * 1024);
-    // QuickJS sınırı host (Node/tarayıcı) yığınından önce dolmalı: 1 MB'ta derin özyineleme (debugProtection) host
-    // yığınını taşırıp çalıştırmayı yakalanamaz biçimde düşürüyordu; 320 KB'ta QuickJS kendi "stack overflow" hatasını atar.
-    rt.setMaxStackSize(320 * 1024);
+    // QuickJS sınırı host (V8) yığınından küçük olmalı: 1 MB'ta düz özyineleme misafirde "stack overflow" yerine host
+    // yığınını taşırıyordu (try/catch'li debug koruması döngüsü). Host taşması WASM yığın işaretçisini geri almaz,
+    // sonuç çağrı derinliğine göre değişir (kararsız); 256 KB'ta taşma misafirde yakalanabilir InternalError olur.
+    rt.setMaxStackSize(256 * 1024);
     let deadline = Date.now() + 5000;
     rt.setInterruptHandler(() => Date.now() > deadline);
     const vm = rt.newContext();
@@ -56,8 +57,11 @@ export function createHost(QuickJS, options = {}) {
     // böyle bir runtime'ı serbest bırakmak assert ile tüm WASM modülünü düşürür.
     // shortcut: kirlenen runtime serbest bırakılmaz (en fazla memoryMB sızar); sızıntı büyürse worker'ı yeniden başlat.
     let tainted = false;
+    let broken = null;
     let interrupted = false;
     const evalRaw = (src, ms) => {
+      // host hatası yarıda kesilmiş bir QuickJS durumu bırakır: sonraki sonuçlar güvenilmez, bağlam kullanılmaz
+      if (broken) return { ok: false, error: broken };
       deadline = Date.now() + ms;
       let r;
       try {
@@ -65,7 +69,8 @@ export function createHost(QuickJS, options = {}) {
       } catch (e) {
         // QuickJS regex motoru (ör. self-defending'in (((.+)+)+)+$ kalıbı) host yığınını taşırabilir
         tainted = true;
-        return { ok: false, error: `host: ${e?.message ?? e}` };
+        broken = `host: ${e?.message ?? e}`;
+        return { ok: false, error: broken };
       }
       if (r.error) {
         const e = vm.dump(r.error);
