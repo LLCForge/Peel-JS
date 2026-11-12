@@ -19,10 +19,23 @@ import * as deadCode from '../passes/80-dead-code.js';
 import * as simplify from '../passes/85-simplify.js';
 import * as unused from '../passes/90-unused.js';
 import * as rename from '../passes/95-rename.js';
+import * as babelHelpers from '../passes/96-babel.js';
+import * as classes from '../passes/96-classes.js';
+import * as letConst from '../passes/97-let-const.js';
+import * as mergeVars from '../passes/97-merge-vars.js';
+import * as moveDecls from '../passes/97-move-decls.js';
+import * as modernSyntax from '../passes/97-modern-syntax.js';
+import * as destructure from '../passes/97-destructure.js';
+import * as dedupe from '../passes/98-dedupe.js';
+import * as extract from '../passes/98-extract.js';
+import * as magic from '../passes/98-magic.js';
+import * as annotate from '../passes/99-annotate.js';
+import * as comments from '../passes/99-comments.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
 // needs: 'sandbox' ise sandbox yokken pass atlanır (diğerleri bağlam varsa onu kullanır, yoksa da çalışır)
+// finish: çözme pass'leri sabitlendikten sonra çalışan okunabilirlik pass'i
 export const PASSES = [
   { id: 'normalize',    level: 1, kind: 'text', needs: null,      mod: normalize },
   { id: 'unpack',       level: 1, kind: 'text', needs: null,      mod: unpack },
@@ -45,6 +58,19 @@ export const PASSES = [
   { id: 'simplify',     level: 2, kind: 'ast',  needs: null,      mod: simplify },
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
   { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },
+  // okunabilirlik: Babel kalıntıları, modern sözdizimi, birleştirme/çıkarma, adlandırma ve yorumlar
+  { id: 'babel',        level: 4, kind: 'ast',  needs: null,      mod: babelHelpers, finish: true },
+  { id: 'classes',      level: 4, kind: 'ast',  needs: null,      mod: classes, finish: true },
+  { id: 'let-const',    level: 4, kind: 'ast',  needs: null,      mod: letConst, finish: true },
+  { id: 'merge-vars',   level: 4, kind: 'ast',  needs: null,      mod: mergeVars, finish: true },
+  { id: 'move-decls',   level: 4, kind: 'ast',  needs: null,      mod: moveDecls, finish: true },
+  { id: 'modern-syntax', level: 4, kind: 'ast', needs: null,      mod: modernSyntax, finish: true },
+  { id: 'destructure',  level: 4, kind: 'ast',  needs: null,      mod: destructure, finish: true },
+  { id: 'dedupe',       level: 4, kind: 'ast',  needs: null,      mod: dedupe, finish: true },
+  { id: 'extract',      level: 4, kind: 'ast',  needs: null,      mod: extract, finish: true },
+  { id: 'magic',        level: 4, kind: 'ast',  needs: null,      mod: magic, finish: true },
+  { id: 'annotate',     level: 4, kind: 'ast',  needs: null,      mod: annotate, finish: true },
+  { id: 'comments',     level: 4, kind: 'ast',  needs: null,      mod: comments, finish: true },
 ];
 
 export const byId = (id) => PASSES.find((p) => p.id === id);
