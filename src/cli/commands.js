@@ -20,6 +20,8 @@ import { anonymize, buildFixture, issueUrl } from '../integrations/anonymize.js'
 import { formatChangelog } from '../integrations/changelog.js';
 import { startServer } from '../server/http.js';
 import { startBotServer, registerDiscordCommand } from '../server/bots.js';
+import { vmReport, isaFromFinding, encoderFor } from '../core/vm/report.js';
+import { assemble, compareSignatures } from '../core/vm/semantics.js';
 import { parseArgs, UsageError } from './args.js';
 import { EXIT, getSandbox, makeLogger, readInput, fetchScript, isUrl } from './common.js';
 
@@ -433,7 +435,34 @@ async function anonymizeCmd(argv) {
   return EXIT.OK;
 }
 
+// E194/E658: assembly → bytecode; ISA, --vm-out ile yazılan vmN.json'dan
+async function asmCmd(argv) {
+  const { opts, positional } = parseArgs(argv, { isa: { type: 'string' }, out: { alias: 'o', type: 'string' }, help: { alias: 'h', type: 'bool' } });
+  if (opts.help || positional.length !== 1 || !opts.isa) return help('peel asm <program.asm> --isa <vmN.json> [-o bytecode.json]\n  vmN.json: peel <girdi> --vm-out <dizin> çıktısı');
+  const vm = JSON.parse(await readFile(opts.isa, 'utf8'));
+  const r = assemble(await readInput(positional[0]), isaFromFinding(vm), encoderFor(vm));
+  if (r.errors.length) { console.error(r.errors.join('\n')); return EXIT.ERROR; }
+  const text = JSON.stringify({ kind: typeof r.code === 'string' ? 'string' : 'array', bytecode: r.code });
+  if (opts.out) await writeFile(opts.out, text); else console.log(text);
+  return EXIT.OK;
+}
+
+// Madde 37 / E656: iki dosyadaki bytecode VM'lerin imza karşılaştırması (aynı motor, karışık opcode, sürüm farkı)
+async function vmCompareCmd(argv) {
+  const { opts, positional } = parseArgs(argv, { quiet: { alias: 'q', type: 'bool' }, help: { alias: 'h', type: 'bool' } });
+  if (opts.help || positional.length !== 2) return help('peel vm-compare <a.js> <b.js>');
+  const log = makeLogger(opts.quiet ?? true);
+  const reps = [];
+  for (const f of positional) reps.push(vmReport((await deob(await readInput(f), log)).findings));
+  if (!reps[0]?.bytecode.length || !reps[1]?.bytecode.length) { console.error('Bytecode VM bulunamadı'); return EXIT.ERROR; }
+  const out = [];
+  for (const [i, x] of reps[0].bytecode.entries()) for (const [j, y] of reps[1].bytecode.entries()) out.push({ a: i, b: j, ...compareSignatures(x.signature, y.signature) });
+  console.log(JSON.stringify(out, null, 2));
+  return EXIT.OK;
+}
+
 const COMMANDS = {
+  asm: asmCmd, 'vm-compare': vmCompareCmd,
   diff: diffCmd, track: trackCmd, history: historyCmd, serve: serveCmd, bot: botCmd, asar: asarCmd, symbols: symbolsCmd,
   share: shareCmd, unshare: unshareCmd, plugin: pluginCmd, explain: explainCmd, techniques: techniquesCmd, learn: learnCmd,
   ctf: ctfCmd, obfuscate: obfuscateCmd, anonymize: anonymizeCmd,

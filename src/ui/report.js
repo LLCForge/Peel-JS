@@ -1,5 +1,6 @@
 import { t, td } from '../i18n.js';
 import { mountRuntime } from './runtime/mount.js';
+import { renderVmReport } from './vm/index.js';
 import { render as renderSemantics } from './analysis/semantics.js';
 import { render as renderSecurity } from './security/index.js';
 
@@ -142,6 +143,12 @@ function symbolic(sym) {
   return parts.length ? el('div', {}, ...parts) : muted('report.sym.none');
 }
 
+function vmSection(data) {
+  const box = el('div');
+  renderVmReport(box, data);
+  return box;
+}
+
 // Çözme motoru analizi: obfuscator ayarları, akış, bütünlük, ölü kod türleri, paket modülleri
 function engine(e, stats) {
   const parts = [];
@@ -248,6 +255,7 @@ export function renderReport(root, report, onExport, actions = {}) {
       ? table([t('report.enc.value'), t('report.enc.kind'), t('report.enc.decoded')],
         report.encodings.map((e) => [e.value, e.best.key ? `${e.best.encoding} (${e.best.key})` : e.best.encoding, e.best.text]), ['mono', 'mono', 'mono'])
       : muted('report.encodings.none')),
+    report.vm ? section('report.vm', vmSection(report.vm)) : null,
     section('report.passes', passTimes(report.passTimes)),
     section('report.rollbacks', report.rollbacks.length
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])

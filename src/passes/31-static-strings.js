@@ -1,11 +1,15 @@
 import * as t from '@babel/types';
 import { traverse } from '../util/ast.js';
 import { analyzeStringArray, evaluate, isThrown, Unsupported } from '../core/obfio.js';
+import { analyzeStringTables } from '../core/vm/strtable.js';
 
 // A-3 / A-5: obfuscator.io string dizisini sandbox olmadan çözer. Decoder ofseti (i = i - 0xd6) afin biçimden
 // sembolik olarak çıkarılır, base64/RC4 kodlaması yeniden yazılmış algoritmalarla çözülür ve rotasyon
 // checksum'ı statik olarak yürütülür. Checksum hedefi tutmadıkça hiçbir çağrı değiştirilmez: tutması,
 // model (ofset + kodlama + rotasyon sayısı) doğru demektir.
+// Yedek yol (E632, yalnızca sandbox yokken): obfio modelinin tanımadığı biçimler — program düzeyinde
+// var T = [...] tablosu, sayaçlı rotasyon döngüsü (while (--n) push(shift())), indeks/base64/rc4 decoder —
+// vm/strtable.js ile çözülür; sandbox varken bunları string-array/runtime-decoders pass'leri çözer.
 
 const MAX_CALLS = 50_000;
 
@@ -18,9 +22,12 @@ function argsOf(call, env) {
   }
 }
 
-export async function run(ast, { onLog, bump }) {
+export async function run(ast, { onLog, bump, sandbox }) {
   const sa = analyzeStringArray(ast);
-  if (!sa) return;
+  if (!sa) {
+    if (!sandbox) await fallback(ast, { onLog, bump });
+    return;
+  }
   const { decoder, holder } = sa;
 
   // decoder'a giden adlar: kendisi ve sabit takma adları (var w = D)
@@ -108,4 +115,56 @@ export async function run(ast, { onLog, bump }) {
   const holderPath = holderBinding?.path.isVariableDeclarator() ? holderBinding.path : holderBinding?.path;
   if (holderBinding && onlyInternal(holderBinding, holderPath)) holderPath.remove();
   onLog(`static-strings: decoder, rotasyon ve dizi kaldırıldı`, 'info');
+}
+
+function countRefs(root, name, skip) {
+  let n = 0;
+  const visit = (node) => {
+    if (!node || typeof node !== 'object' || node === skip) return;
+    if (t.isIdentifier(node, { name })) n++;
+    for (const k of t.VISITOR_KEYS[node.type] ?? []) {
+      const v = node[k];
+      if (Array.isArray(v)) v.forEach(visit); else visit(v);
+    }
+  };
+  visit(root);
+  return n;
+}
+
+async function fallback(ast, { onLog, bump }) {
+  const report = analyzeStringTables(ast);
+  let total = 0;
+  for (const r of report) {
+    if (r.rotation.rotation === null) continue;
+    let n = 0;
+    for (const c of r.calls_) {
+      const v = r.values.get(JSON.stringify(c.args));
+      if (c.inRotator || !v || typeof v.value !== 'string' || !c.path.node) continue;
+      c.path.replaceWith(t.stringLiteral(v.value));
+      n++;
+    }
+    if (!n) continue;
+    total += n;
+    onLog(`static-strings (yedek): ${r.table} tablosundan ${n} çağrı statik olarak çözüldü (rotasyon ${r.rotation.rotation})`, 'info');
+    // artık çağrılmayan decoder'lar (rotasyon deyimindeki checksum çağrıları sayılmaz), rotasyon deyimi ve tablo
+    const body = ast.program.body;
+    const decNames = r.decoder.split(', ');
+    const isRot = (s) => t.isExpressionStatement(s) && countRefs(s, r.table) > 0 && /push/.test(JSON.stringify(s)) && /shift/.test(JSON.stringify(s));
+    const rot = body.find(isRot) ?? null;
+    const live = decNames.filter((name) => {
+      const fn = body.find((s) => t.isFunctionDeclaration(s) && s.id?.name === name);
+      const outside = countRefs(ast.program, name, fn) - (rot ? countRefs(rot, name) : 0);
+      return outside > 0;
+    });
+    if (live.length) continue;
+    for (const name of decNames) {
+      const fn = body.find((s) => t.isFunctionDeclaration(s) && s.id?.name === name);
+      if (fn) body.splice(body.indexOf(fn), 1);
+    }
+    if (rot) body.splice(body.indexOf(rot), 1);
+    const tableStmt = body.find((s) => (t.isFunctionDeclaration(s) && s.id?.name === r.table) ||
+      (t.isVariableDeclaration(s) && s.declarations.some((d) => t.isIdentifier(d.id, { name: r.table }))));
+    if (tableStmt && countRefs(ast.program, r.table, tableStmt) === 0) body.splice(body.indexOf(tableStmt), 1);
+  }
+  bump('staticStrings', total);
 }

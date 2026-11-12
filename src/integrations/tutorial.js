@@ -73,6 +73,14 @@ export const PASS_DOCS = {
     tr: 'Döngü içindeki durum makinelerini tespit eder ve gözlenen geçişleri koda yorum olarak yazar; kodu değiştirmez.',
     en: 'Detects state machines in loops and writes observed transitions as comments; does not change code.',
   },
+  'vm-lift': {
+    tr: 'Bytecode yorumlayıcılarını (jsvmp tarzı VM) bulur, bytecode dizisini yakalar, komutları adlandırır ve yorumlayıcıyı doğrulanmış düz koda çevirir.',
+    en: 'Finds bytecode interpreters (jsvmp-style VMs), captures the bytecode, names the opcodes and lifts the VM to verified plain code.',
+  },
+  'anti-timing': {
+    tr: 'Date.now / performance.now farkıyla hata ayıklayıcıyı yakalayan anti-debug kontrollerini kaldırır (normal yol korunur).',
+    en: 'Removes anti-debug checks that detect a debugger via Date.now / performance.now differences (the normal path is kept).',
+  },
   'control-flow': {
     tr: '"2|0|1".split("|") ile sıralanan switch döngülerini gerçek sıraya dizer.',
     en: 'Reorders switch loops driven by "2|0|1".split("|") into their real order.',

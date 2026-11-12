@@ -15,6 +15,8 @@ import * as controlFlow from '../passes/70-control-flow.js';
 import * as stateVar from '../passes/74-state-var.js';
 import * as vm from '../passes/75-vm.js';
 import * as unflatten from '../passes/76-unflatten.js';
+import * as vmLift from '../passes/77-vm-lift.js';
+import * as antiTiming from '../passes/79-anti-timing.js';
 import * as deadCode from '../passes/80-dead-code.js';
 import * as simplify from '../passes/85-simplify.js';
 import * as unused from '../passes/90-unused.js';
@@ -64,8 +66,10 @@ export const PASSES = [
   { id: 'loop-opt',     level: 3, kind: 'ast',  needs: null,      mod: loopOpt },
   { id: 'specialize',   level: 4, kind: 'ast',  needs: null,      mod: specializeFns },
   { id: 'state-var',    level: 3, kind: 'ast',  needs: null,      mod: stateVar },
+  { id: 'vm-lift',      level: 3, kind: 'ast',  needs: null,      mod: vmLift },
   { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
   { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
+  { id: 'anti-timing',  level: 3, kind: 'ast',  needs: null,      mod: antiTiming },
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
   { id: 'flow',         level: 2, kind: 'ast',  needs: null,      mod: flow },
   { id: 'regenerator',  level: 2, kind: 'ast',  needs: null,      mod: regenerator },

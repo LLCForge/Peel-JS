@@ -60,7 +60,9 @@ export async function deobfuscate(input, {
   let step = 0;
   const tick = () => onProgress(Math.min(99, Math.round((++step / totalSteps) * 100)));
 
-  const ctx = { onLog, bump, level, sandbox, ctx: null };
+  // findings: pass'lerin rapora aktardığı analiz verileri (VM, durum makinesi, string tablosu)
+  const findings = { vm: [], sm: [], strings: [] };
+  const ctx = { onLog, bump, level, sandbox, ctx: null, findings };
   // E720: doğrulama seviyesi — parse her zaman; behaviour = console; effects ve üstü = console + gözlenebilir etkiler
   const vLevel = verifyLevel ?? (deep ? getSettings().verifyLevel : 'parse');
   const behaviourCheck = deep && !['none', 'parse'].includes(vLevel);
@@ -103,7 +105,7 @@ export async function deobfuscate(input, {
   try {
     code = resumed ? resumed.code : raw(parse(text));
   } catch (e) {
-    return { code: text, stats, events, text, error: e.message };
+    return { code: text, stats, events, text, error: e.message, findings };
   }
   onSnapshot({ id: 'girdi', round: 0, code });
   trace?.start(code, astPasses);
@@ -222,5 +224,5 @@ export async function deobfuscate(input, {
   const out = await pretty(code);
   onProgress(100);
   // text: metin katmanları açıldıktan sonraki program; rapor çalışma anı analizini bunun üzerinde yapar
-  return { code: out, stats, events, text, verified: Boolean(baseline), verifyLevel: baseline ? (effectsCheck ? 'effects' : 'behaviour') : 'parse' };
+  return { code: out, stats, events, text, verified: Boolean(baseline), verifyLevel: baseline ? (effectsCheck ? 'effects' : 'behaviour') : 'parse', findings };
 }

@@ -21,6 +21,7 @@ import { explainWhy } from '../integrations/why.js';
 import { fastImportStream } from '../integrations/gitexport.js';
 import { createHistory } from '../integrations/history.js';
 import { fileStore } from '../integrations/history-node.js';
+import { vmReport } from '../core/vm/report.js';
 import { parseArgs, UsageError } from './args.js';
 import { detectTools, autoProfile, PROFILES } from '../core/detect.js';
 import { searchPassOrder, cascade } from '../core/search.js';
@@ -60,8 +61,39 @@ export const RUN_SPEC = {
   cascade: { type: 'bool' },
   incident: { type: 'string' },
   'out-map': { type: 'string' },
+  'vm-out': { type: 'string' },
+  jsvmp: { type: 'bool' },
   help: { alias: 'h', type: 'bool' },
 };
+
+// jsvmp modu (E198): yalnızca VM'e yönelik pass'ler; çıktı ve stderr'e VM özeti
+export const JSVMP_PASSES = ['normalize', 'unpack', 'literals', 'const-arrays', 'const-objects', 'const-fold', 'state-var', 'vm-lift',
+  'unflatten', 'vm', 'anti-timing', 'dead-code', 'simplify', 'unused'];
+
+// Bytecode VM'leri ayrı dosyalara çıkar (E193): bytecode/ISA (json), assembly, IR, çevrilmiş, ham ve okunur yorumlayıcı
+export async function writeVmFiles(dir, vm) {
+  await mkdir(dir, { recursive: true });
+  for (const [i, f] of vm.bytecode.entries()) {
+    const base = join(dir, `vm${i}`);
+    await writeFile(`${base}.json`, JSON.stringify({
+      kind: f.codeKind, bytecode: f.bytecode, consts: f.constPool?.map((c) => c.value) ?? [], isa: f.isa, opcodeMap: f.opcodeMap,
+      disasm: f.disasm?.map((x) => ({ op: x.op, operands: x.operands })), signature: f.signature,
+    }, null, 1));
+    if (f.assembly) await writeFile(`${base}.asm`, f.assembly);
+    if (f.ir) await writeFile(`${base}-ir.txt`, f.ir.map((x) => `${x.pc} ${x.mnemonic}\n${x.lines.map((l) => `  ${l}`).join('\n')}`).join('\n'));
+    if (f.liftedCode) await writeFile(`${base}-lifted.js`, f.liftedCode);
+    if (f.rawSource) await writeFile(`${base}-raw.js`, f.rawSource);
+    if (f.readable) await writeFile(`${base}-readable.js`, f.readable);
+  }
+}
+
+export function printVmSummary(vm) {
+  for (const [i, f] of vm.bytecode.entries()) {
+    console.error(`\n== VM #${i} (${f.style}, ${f.disasm?.length ?? '?'} komut, ${f.lifted ? 'çevrildi' : `çevrilemedi: ${f.reason}`})`);
+    for (const h of f.handlers) console.error(`  ${String(h.key).padStart(4)}  ${(h.staticName ?? '?').padEnd(12)} ${h.semantics}`);
+    if (f.listing) console.error(f.listing);
+  }
+}
 
 const CONFIG_NAMES = ['peel.config.json', '.peelrc.json', '.peelrc'];
 const CONFIG_KEYS = {
@@ -196,6 +228,7 @@ async function processOne(item, o, ctx) {
     sandbox,
     deep: o.deep ?? Boolean(sandbox),
     onLog: log,
+    only: o.jsvmp ? JSVMP_PASSES : null,
     plugins: ctx.plugins,
     onSnapshot: o.git ? (s) => snapshots.push(s) : undefined,
   });
@@ -231,7 +264,7 @@ async function processOne(item, o, ctx) {
   const needReport = o.report || o.sarif || o.html || o.failOn || o.json || o.semgrep || o.incident;
   let report = null;
   if (needReport) {
-    report = await analyze({ input, text: r.text, output: code, events: r.events, sandbox, trace, stats: r.stats, verified: r.verified });
+    report = await analyze({ input, text: r.text, output: code, events: r.events, sandbox, trace, stats: r.stats, verified: r.verified, findings: r.findings });
     report.stats = r.stats;
     // sembolik rapor pahalı: yalnızca JSON rapor istendiğinde hesaplanır
     report.symbolic = o.report || o.json ? await report.symbolic() : undefined;
@@ -247,6 +280,15 @@ async function processOne(item, o, ctx) {
     log(`semgrep: ${semgrep.length} bulgu`, semgrep.length ? 'warn' : 'ok');
   }
 
+  if (o.vmOut || o.jsvmp) {
+    const vm = vmReport(r.findings);
+    if (vm && o.vmOut) {
+      const dir = ctx.batch ? join(o.vmOut, item.rel.replace(/[\\/]/g, '_')) : o.vmOut;
+      await writeVmFiles(dir, vm);
+      log(`${vm.bytecode.length} VM ${dir} klasörüne yazıldı`, 'ok');
+    }
+    if (vm && o.jsvmp) printVmSummary(vm);
+  }
   const target = ctx.outFor(item);
   if (target) {
     await mkdir(dirname(target), { recursive: true });
@@ -332,6 +374,8 @@ Seçenekler / Options:
       --cascade              seviye 1→4 kademeli çöz (her aşama öncekinin doğrulanmış çıktısı üzerinde)
       --incident <dosya>     olay müdahale raporu (Markdown; yanında JSON)
       --json                 sonuçları JSON olarak stdout'a yaz
+      --vm-out <dizin>       bytecode VM'lerin bytecode/ISA, assembly, IR ve çevrilmiş kodunu yaz
+      --jsvmp                jsvmp modu: yalnızca VM pass'leri, stderr'e handler ve disassembly özeti
   -l, --level <1-4>          pass seviyesi (varsayılan 4)
       --no-sandbox           sandbox kullanma (yalnızca statik pass'ler)
       --no-deep              pass başına davranış doğrulamasını kapat
@@ -351,7 +395,7 @@ Seçenekler / Options:
 
 Alt komutlar / Subcommands:
   diff, track, history, serve, bot, asar, symbols, share, unshare, plugin,
-  explain, techniques, learn, ctf, obfuscate, anonymize, changelog, passes
+  explain, techniques, learn, ctf, obfuscate, anonymize, changelog, passes, asm, vm-compare
   (peel <komut> --help)
 
 Çıkış kodları / Exit codes: 0 tamam, 1 hata, 2 kullanım, 3 değişiklik (track --once), 4 risk eşiği`;
@@ -384,6 +428,8 @@ export async function runCommand(argv) {
     semgrep: opts.semgrep ?? cfg.semgrep,
     semgrepConfig: opts['semgrep-config'] ?? cfg.semgrepConfig,
     outDir: opts['out-dir'] ?? cfg.outDir,
+    vmOut: opts['vm-out'],
+    jsvmp: opts.jsvmp,
     lang: opts.lang ?? cfg.lang,
   };
   if (o.level !== undefined && ![1, 2, 3, 4].includes(o.level)) throw new UsageError('--level 1-4 olmalı');

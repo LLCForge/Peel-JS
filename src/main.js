@@ -361,7 +361,7 @@ async function run({ mode = 'normal' } = {}) {
     }
     announce(status.textContent);
     doc.text = res.text;
-    const report = await analyze({ input: src, text: res.text, output, events: res.events, sandbox: sandboxOk ? sandbox : null, trace, verified: res.verified });
+    const report = await analyze({ input: src, text: res.text, output, events: res.events, sandbox: sandboxOk ? sandbox : null, trace, verified: res.verified, findings: res.findings });
     report.stats = res.stats;
     doc.report = report;
     doc.runs = [...(doc.runs ?? []), {
