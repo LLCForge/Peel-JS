@@ -34,6 +34,61 @@ function isFactoryIife(n) {
 
 const isExported = (p) => p.findParent((x) => x.isExportDeclaration());
 
+// Örtük çağrılan adlar: olay işleyicileri (on*), dönüşüm/protokol kancaları. Okunmasa da dışarıdan çağrılabilir.
+const IMPLICIT = new Set(['toString', 'valueOf', 'toJSON', 'toLocaleString', 'then', 'catch', 'finally', 'handleEvent',
+  'constructor', 'next', 'return', 'throw', 'get', 'set', 'apply', 'call', 'bind', 'default', 'exports']);
+
+const isDynamicName = (k) => t.isCallExpression(k) || t.isTemplateLiteral(k) || t.isConditionalExpression(k) ||
+  t.isLogicalExpression(k) || (t.isBinaryExpression(k, { operator: '+' }) && !(t.isNumericLiteral(k.left) || t.isNumericLiteral(k.right)));
+
+function rootOf(n) {
+  while (t.isMemberExpression(n)) n = n.object;
+  return n;
+}
+
+// js-confuser kapsam nesneleri: scope.X.f = function () {…}; f hiçbir yerde okunmuyorsa (kopyaları açılmış
+// makinelerin ölü sarmalayıcıları) atama kaldırılır. Kök yerel bir değişken olmalı; ad hiçbir yerde
+// özellik okuması, nesne anahtarı ya da string olarak geçmemeli.
+function deadPropertyStores(ast) {
+  const stores = [];
+  const used = new Set();
+  let dynamicNames = false;
+  traverse(ast, {
+    ForInStatement(p) { dynamicNames = true; p.stop(); },
+    MemberExpression(p) {
+      const { node } = p;
+      if (node.computed) {
+        if (t.isStringLiteral(node.property)) used.add(node.property.value);
+        // scope.X[decode(5)], o["a" + b]: ad çalışma anında üretiliyor, hangi özelliğin okunduğu bilinemez
+        else if (isDynamicName(node.property)) { dynamicNames = true; p.stop(); }
+        return;
+      }
+      const par = p.parentPath;
+      if (par.isAssignmentExpression({ left: node, operator: '=' }) && par.parentPath.isExpressionStatement() && t.isFunction(par.node.right)) {
+        stores.push(par);
+        return;
+      }
+      used.add(node.property.name);
+    },
+    'ObjectProperty|ObjectMethod|ClassProperty|ClassMethod'(p) {
+      if (t.isIdentifier(p.node.key)) used.add(p.node.key.name);
+    },
+    StringLiteral(p) { used.add(p.node.value); },
+    TemplateElement(p) { used.add(p.node.value.cooked); },
+  });
+  if (dynamicNames) return 0;
+  let n = 0;
+  for (const s of stores) {
+    const name = s.node.left.property.name;
+    if (used.has(name) || IMPLICIT.has(name) || /^on/.test(name)) continue;
+    const root = rootOf(s.node.left);
+    if (!t.isIdentifier(root) || !s.scope.getBinding(root.name)) continue;
+    s.parentPath.remove();
+    n++;
+  }
+  return n;
+}
+
 // Program kapsamındaki bildirimler global'dir: başka script'ler kullanıyor olabilir, bu yüzden sadece maksimum profilde
 export async function run(ast, { onLog, bump, level }) {
   if (hasDynamicScope(ast)) {
@@ -41,7 +96,8 @@ export async function run(ast, { onLog, bump, level }) {
     return;
   }
   const allowGlobal = level >= 4;
-  let n = 0;
+  // ölü özellik atamaları yalnızca maksimum seviyede; kalan fonksiyon bildirimleri sonraki turda temizlenir
+  let n = allowGlobal ? deadPropertyStores(ast) : 0;
 
   traverse(ast, {
     FunctionDeclaration(p) {

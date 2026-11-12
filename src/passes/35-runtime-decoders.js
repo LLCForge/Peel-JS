@@ -62,6 +62,15 @@ function __peelEval(id, args) {
 }
 `;
 
+// İç içe çağrılarda dıştaki çağrı önce değiştirildiyse içteki yol artık ağaçta değildir
+function attached(p) {
+  for (let q = p; q.parentPath; q = q.parentPath) {
+    const owner = q.listKey ? q.parentPath.node?.[q.listKey] : q.parentPath.node;
+    if (!q.node || q.container !== owner || q.container[q.key] !== q.node) return false;
+  }
+  return Boolean(p.node);
+}
+
 const argsKey = (call) => JSON.stringify(call.node.arguments.map((a) => literalValue(a).value));
 
 // obfuscator.io rotasyon döngüsü: decoder'ı checksum için çağırıp diziyi push(shift()) ile döndürür.
@@ -288,7 +297,7 @@ async function resolveCalls(ast, ctx) {
       let n = 0;
       for (const c of g.calls) {
         const v = values.get(argsKey(c));
-        if (v === undefined || !c.node) continue;
+        if (v === undefined || !attached(c)) continue;
         const global = v.startsWith('\u0000global:') ? v.slice(8) : null;
         if (global) {
           // çağrı yerinde aynı ad başka bir şeye bağlıysa global'e işaret etmez
@@ -309,7 +318,7 @@ async function resolveCalls(ast, ctx) {
       let n = 0;
       sites.forEach(({ group, call }, k) => {
         const v = seen[k];
-        if (typeof v !== 'string' || !decoders.has(group) || !call.node) return;
+        if (typeof v !== 'string' || !decoders.has(group) || !attached(call)) return;
         call.replaceWith(t.stringLiteral(v));
         n++;
       });
