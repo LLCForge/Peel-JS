@@ -1,5 +1,6 @@
 import * as t from '@babel/types';
 import { gen } from '../util/ast.js';
+import { keyPath, follow, placeAt } from '../util/keypath.js';
 import { fnv1a } from '../util/hash.js';
 import { findVms } from '../core/vm/detect.js';
 import { HOLE } from '../core/vm/interp.js';
@@ -17,6 +18,8 @@ import { analyzeVm, stateVarsFor } from '../core/vm/analysis.js';
 // Çevrilemeyen VM'e okunur yorumlayıcı açıklamaları (case başına komut adı ve anlamı) eklenir (E652).
 
 const LIFT = ' PEEL VM-LIFT';
+// açıklamalarda dağıtım biçiminin Türkçe adı (kod sözcükleriyle karışmasın)
+const STYLE = { switch: 'case dağıtımı', 'if-chain': 'if zinciri', table: 'handler tablosu' };
 const NOTE = ' PEEL VM |';
 const hasNote = (node) => (node.leadingComments ?? []).some((c) => c.value.startsWith(NOTE) || c.value.startsWith(LIFT));
 
@@ -85,32 +88,6 @@ function mergeValues(stat, cap, roles) {
   return { arrays, state, stackInit: stackInit ?? 0, captured, stackKnown: stackInit !== null };
 }
 
-// Yol: fonksiyon düğümünden döngü deyimine anahtar zinciri (kopyada aynı yeri bulmak için)
-function keyPath(root, target) {
-  const path = [];
-  const find = (n) => {
-    if (n === target) return true;
-    for (const k of t.VISITOR_KEYS[n.type] ?? []) {
-      const v = n[k];
-      if (Array.isArray(v)) {
-        for (let i = 0; i < v.length; i++) {
-          if (v[i] && typeof v[i] === 'object') { path.push([k, i]); if (find(v[i])) return true; path.pop(); }
-        }
-      } else if (v && typeof v === 'object') { path.push([k, null]); if (find(v)) return true; path.pop(); }
-    }
-    return false;
-  };
-  return find(root) ? path : null;
-}
-
-function placeAt(root, path, stmts) {
-  let parent = root;
-  for (let i = 0; i < path.length - 1; i++) { const [k, idx] = path[i]; parent = idx === null ? parent[k] : parent[k][idx]; }
-  const [k, idx] = path[path.length - 1];
-  if (idx !== null && Array.isArray(parent[k])) parent[k].splice(idx, 1, ...stmts);
-  else parent[k] = t.blockStatement(stmts);
-}
-
 // Register dizisini (R = [] ve yalnızca R[sabit] kullanımı) ayrı değişkenlere böl: R[2] → _r2
 function scalarizeRegisters(fnNode, name, used) {
   const body = t.isProgram(fnNode) ? fnNode.body : fnNode.body?.body;
@@ -173,6 +150,13 @@ function scalarizeRegisters(fnNode, name, used) {
 
 // Tablo dağıtımlı VM çevrildikten sonra handler tablosu (yalnızca yorumlayıcı kullanıyordu) kaldırılır
 function dropUnusedTable(fnNode, name) {
+  const inert = (x) => t.isFunctionExpression(x) || (t.isArrayExpression(x) && x.elements.every((e) => !e || t.isFunctionExpression(e))) ||
+    (t.isObjectExpression(x) && x.properties.every((p) => t.isObjectProperty(p) && !p.computed && t.isFunctionExpression(p.value)));
+  dropUnusedDecl(fnNode, name, inert);
+}
+
+// Hiç okunmayan bildirimi, başlangıç değeri inert() ise kaldır (kaldırmak gözlenebilir bir şeyi değiştirmez)
+function dropUnusedDecl(fnNode, name, inert) {
   const body = t.isProgram(fnNode) ? fnNode.body : fnNode.body?.body;
   if (!Array.isArray(body)) return;
   let refs = 0;
@@ -183,10 +167,7 @@ function dropUnusedTable(fnNode, name) {
   });
   if (!found || refs !== 1) return;
   const { decl, d } = found;
-  // başlangıç değeri yalnızca fonksiyon ifadeleri içeren dizi/nesne olmalı: kaldırmak gözlenebilir bir şeyi değiştirmez
-  const inert = (x) => t.isFunctionExpression(x) || (t.isArrayExpression(x) && x.elements.every((e) => !e || t.isFunctionExpression(e))) ||
-    (t.isObjectExpression(x) && x.properties.every((p) => t.isObjectProperty(p) && !p.computed && t.isFunctionExpression(p.value)));
-  if (!inert(d.init)) return;
+  if (!d.init || !inert(d.init)) return;
   decl.declarations.splice(decl.declarations.indexOf(d), 1);
   if (!decl.declarations.length) {
     const visitList = (list) => { const i = list.indexOf(decl); if (i >= 0) list.splice(i, 1); };
@@ -197,7 +178,7 @@ function dropUnusedTable(fnNode, name) {
 // Çevrilemeyen VM: döngüye neden ve case'lere komut adı/anlam açıklaması
 function annotate(vm, a) {
   const loopNode = vm.stmtPath.node;
-  t.addComment(loopNode, 'leading', `${NOTE} bytecode VM #${vm.id} | ${vm.style} | ${vm.handlers.length} handler | düz koda çevrilemedi: ${a.reason ?? 'bilinmiyor'}`, false);
+  t.addComment(loopNode, 'leading', `${NOTE} bytecode VM #${vm.id} | ${STYLE[vm.style]} | ${vm.handlers.length} handler | düz koda çevrilemedi: ${a.reason ?? 'bilinmiyor'}`, false);
   const byKey = new Map(a.handlers.map((h) => [String(h.key), h]));
   vm.handlers.forEach((h) => {
     const info = byKey.get(String(h.key));
@@ -288,7 +269,7 @@ export async function run(ast, ctx) {
       const finding = serializable(a, { lifted: false, verified: null, raw: rawHash(vm), rawSource: gen(vm.fnPath.isProgram() ? vm.stmtPath.node : vm.fnPath.node).slice(0, 20000) });
       found.push(finding);
       if (!a.ok) continue;
-      t.addComment(a.lifted[0], 'leading', `${LIFT} | VM #${vm.id} | ${vm.style} | ${a.disasm.length} komut → ${a.blocksOut} blok | bytecode: ${origin.bytecode} | ham gövde: ${rawHash(vm)} | derinlik=${depth}`, false);
+      t.addComment(a.lifted[0], 'leading', `${LIFT} | VM #${vm.id} | ${STYLE[vm.style]} | ${a.disasm.length} komut → ${a.blocksOut} blok | bytecode: ${origin.bytecode} | ham gövde: ${rawHash(vm)} | derinlik=${depth}`, false);
       edits.push({ a, sites: g.sites, origin, finding });
     }
     if (!edits.length) {
@@ -316,24 +297,16 @@ export async function run(ast, ctx) {
     applyPlan(program, plan);
     lifted += edits.length;
     for (const e of edits) {
-      onLog(`vm-lift: VM #${vm.id} (${vm.style}, ${e.a.disasm.length} komut, bytecode ${e.origin.bytecode}) düz koda çevrildi${verdict.verified ? ', çağrı dönüşleri doğrulandı' : ''}`, 'info');
+      onLog(`vm-lift: VM #${vm.id} (${STYLE[vm.style]}, ${e.a.disasm.length} komut, bytecode ${e.origin.bytecode}) düz koda çevrildi${verdict.verified ? ', çağrı dönüşleri doğrulandı' : ''}`, 'info');
     }
   }
   if (lifted) bump('vmLift', lifted);
 }
 
-// ── düzenleme planı: düğüm kimliğiyle bulunan anahtar yolları ──
-
-function follow(root, kp) {
-  let n = root;
-  for (const [k, i] of kp) n = i === null ? n[k] : n[k][i];
-  return n;
-}
-
 function makePlan(program, vm, edits, used, siteMode) {
   const fnNode = vm.fnPath.isProgram() ? null : vm.fnPath.node;
   const fnKp = fnNode ? keyPath(program, fnNode) : null;
-  const plan = { siteMode, regs: vm.roles.regs, table: vm.table, fnKp, fnName: fnNode?.id?.name ?? null, used };
+  const plan = { siteMode, regs: vm.roles.regs, table: vm.table, code: vm.roles.code, fnKp, fnName: fnNode?.id?.name ?? null, used };
   if (!siteMode) {
     plan.kp = keyPath(program, vm.stmtPath.node);
     plan.stmts = edits[0].a.lifted;
@@ -362,7 +335,13 @@ function applyPlan(root, plan) {
   };
   if (!plan.siteMode) {
     placeAt(root, plan.kp, plan.stmts.map((x) => t.cloneNode(x, true)));
-    cleanup(plan.fnKp ? follow(root, plan.fnKp) : root);
+    const fn = plan.fnKp ? follow(root, plan.fnKp) : root;
+    cleanup(fn);
+    // yerel bytecode bildirimi artık okunmuyorsa ve başlangıcı yan etkisizse kaldırılır
+    dropUnusedDecl(fn, plan.code, (x) => t.isStringLiteral(x) || (t.isArrayExpression(x) && x.elements.every((e) => !e || t.isLiteral(e) ||
+      (t.isUnaryExpression(e, { operator: '-' }) && t.isNumericLiteral(e.argument)))) ||
+      (t.isCallExpression(x) && t.isMemberExpression(x.callee) && t.isStringLiteral(x.callee.object) &&
+        t.isIdentifier(x.callee.property, { name: 'split' }) && !x.callee.computed && x.arguments.length === 1 && t.isStringLiteral(x.arguments[0])));
     return;
   }
   for (const c of plan.clones) for (const kp of c.siteKps) follow(root, kp).callee = t.identifier(c.name);
