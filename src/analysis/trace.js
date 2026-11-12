@@ -94,10 +94,11 @@ export function createTrace({ keepComments = false, lightAbove = 250_000 } = {})
       light = code.length > lightAbove;
       if (light) return;
       prevAst = parse(code);
+      session.update(prevAst);
+      try { session.analyzeAll(prevAst); } catch { /* analiz edilemeyen birim: rapor yine üretilir */ }
       forEachNode(prevAst.program, (n) => { if (n.loc) origin.set(n, { line: n.loc.start.line, col: n.loc.start.column }); });
       initialIds = stableIds(prevAst).size;
       store.add(prevAst, { id: 'girdi', round: 0 });
-      session.update(prevAst);
     },
 
     log(message, level) { logs.push({ message, level }); },
@@ -172,7 +173,11 @@ export function createTrace({ keepComments = false, lightAbove = 250_000 } = {})
           notes = nextNotes;
           store.add(nextAst, { id, round });
           const d = session.update(nextAst);
-          dirtyLog.push({ id, round, changed: d.changed.length, added: d.added.length, removed: d.removed.length, clean: d.clean.length });
+          // E549: yalnızca hash'i değişen birimler yeniden analiz edilir, diğerleri önbellekten
+          const hitsBefore = session.stats.hits;
+          let analyzed = 0;
+          try { analyzed = session.analyzeAll(nextAst).analyzed; } catch { analyzed = -1; }
+          dirtyLog.push({ id, round, changed: d.changed.length, added: d.added.length, removed: d.removed.length, clean: d.clean.length, analyzed, reused: session.stats.hits - hitsBefore });
           prevAst = nextAst;
         }
       }

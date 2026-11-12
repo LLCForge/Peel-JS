@@ -115,7 +115,8 @@ function infra(d) {
     row('E547', tr.checkpoints.map((c) => `tur ${c.round}`).join(', ') || '–');
     row('E548', `${tr.store.snapshots} görüntü · ${tr.store.logicalNodes} düğüm → ${tr.store.storedNodes} saklandı (%${Math.round(tr.store.sharing * 100)} paylaşım)`);
     const inc = tr.incremental.perPass;
-    row('E549/E550/E553', `${inc.length} pass sonrası güncelleme · ortalama ${inc.length ? Math.round(inc.reduce((a, x) => a + x.clean, 0) / inc.length) : 0} temiz birim · ${tr.incremental.session.invalidated} geçersizleştirme`);
+    const sum = (k) => inc.reduce((a, x) => a + Math.max(0, x[k] ?? 0), 0);
+    row('E549/E550/E553', `${inc.length} pass sonrası: ${sum('changed') + sum('added')} kirli birim · ${sum('analyzed')} yeniden analiz · ${sum('reused')} önbellekten · ${tr.incremental.session.invalidated} geçersizleştirme`);
     row('E559/E562', `${tr.patches.count} yama · ${tr.patches.ops} işlem · ters yama doğrulandı: ${tr.patches.undoVerified === null ? '–' : tx(tr.patches.undoVerified ? 'yes' : 'no')}`);
     row('E563', tr.matching.length ? `ortalama %${Math.round(100 * tr.matching.reduce((a, m) => a + (m.matched ?? 0) / Math.max(1, m.a ?? 1), 0) / tr.matching.length)} düğüm eşlendi` : '–');
     row('E565', tr.comments.enabled ? `${tr.comments.kept} korundu · ${tr.comments.dropped} düştü` : 'kapalı');

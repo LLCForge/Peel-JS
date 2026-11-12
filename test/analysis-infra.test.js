@@ -184,6 +184,7 @@ const code = (ast) => raw(ast);
   assert.ok(rep.rationale.some((x) => x.state === 'ok' && x.changes && x.changes.ops > 0));
   assert.deepEqual(rep.dag.violations, []);
   assert.ok(rep.store.snapshots >= 2);
+  assert.ok(rep.incremental.perPass.every((x) => x.analyzed >= 0 && x.analyzed <= x.changed + x.added), 'yalnızca kirli birimler yeniden analiz edilir');
   assert.ok(rep.checkpoints.length >= 1);
   assert.ok(rep.notes.length >= 1, 'değişen deyimlerde pass notu');
   assert.ok(rep.provenance.every((p) => p.origin === null || p.origin >= 1));
