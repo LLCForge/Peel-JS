@@ -98,11 +98,34 @@ export function render(root, ctx) {
       o.append(box, el('div', { class: 'rep-actions' }, button('snapshot', () => download('peel-snapshot.json', JSON.stringify(snap)))));
       renderReplay(box, { steps, record: s.record, replayResult: rep });
     }),
+    runner(out, tx('patch'), async (o) => {
+      // E716: önce => sonra çiftlerinden genelleştirilmiş yeniden yazma kuralı; doğrulanır, istenirse çıktıya uygulanır
+      const { synthesizeRule, validateRule, applyRule } = await import('../../verify/patch.js');
+      const area = el('textarea', { rows: '4', class: 'mono', style: 'width:100%', 'aria-label': tx('patchHelp'), placeholder: 'x ^ 5 ^ 5 => x\ny ^ 9 ^ 9 => y' });
+      const res = el('div', { 'aria-live': 'polite' });
+      const learn = async () => {
+        res.textContent = '';
+        const pairs = area.value.split('\n').map((l) => l.split('=>')).filter((p) => p.length === 2 && p[0].trim() && p[1].trim())
+          .slice(0, 50).map(([before, after]) => ({ before: before.trim(), after: after.trim() }));
+        const rule = synthesizeRule(pairs);
+        if (rule.error) { res.append(el('p', { class: 'rep-error' }, rule.error)); return; }
+        const v = await validateRule(rule, { evaluate: async (list) => (await sandbox.batch(list)).results });
+        res.append(table(['kalıp', 'yerine', 'doğrulama'], [[rule.pattern, rule.replacement, `${v.valid === true ? tx('passed') : v.valid === false ? tx('failed') : '–'} (${v.method}${v.reason ? `: ${v.reason}` : ''})`]], ['mono', 'mono', '']),
+          v.counterexample ? muted(`karşı örnek: ${JSON.stringify(v.counterexample)}`) : null);
+        if (v.valid !== true) return;
+        res.append(button(tx('apply'), () => {
+          const r = applyRule(output, rule);
+          res.append(muted(`${r.count} yer değişti`));
+          if (r.count) download('peeled.patched.js', r.code, 'text/javascript');
+        }));
+      };
+      o.append(section(tx('patch'), muted(tx('patchHelp')), area, el('div', { class: 'rep-actions' }, button(tx('patch'), learn)), res));
+    }),
     runner(out, tx('escape'), async (o) => {
       const { runEscapeSuite } = await import('../../verify/escape.js');
       const r = await runEscapeSuite(sandbox);
       o.append(section(`${tx('escape')}: ${r.passed}/${r.total}`, table(['', '', tx('ms')], r.results.map((x) => [x.title, x.pass ? tx('passed') : tx('failed'), x.ms]), ['', '', 'num']),
-        muted(r.knownLimits.map((k) => `${k.title}: ${k.mitigation}`).join(' · '))));
+        r.skipped ? muted(`${r.skipped} ${tx('skipped')}`) : null));
     }),
     runner(out, tx('issue'), async (o) => {
       const { issueTemplate } = await import('../../verify/template.js');
