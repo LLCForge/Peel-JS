@@ -1,52 +1,32 @@
 import { sandboxApi } from './core.js';
 import { applySettings, getSettings } from './settings.js';
+import { createWatchdog } from './watchdog.js';
 
-// Ana thread tarafı: sandbox worker'ına RPC. kill() çalışan her şeyi keser.
-let worker = null;
-let seq = 0;
-const pending = new Map();
-
-function failAll(error) {
-  for (const resolve of pending.values()) resolve({ ok: false, error, out: [], res: [], results: [] });
-  pending.clear();
-}
-
-function ensure() {
-  if (worker) return worker;
-  worker = new Worker(new URL('./sandbox.worker.js', import.meta.url), { type: 'module' });
-  worker.onmessage = (e) => {
-    const resolve = pending.get(e.data.id);
-    if (resolve) {
-      pending.delete(e.data.id);
-      resolve(e.data);
-    }
-  };
-  worker.onerror = (e) => {
-    worker?.terminate();
-    worker = null;
-    failAll(e.message || 'Sandbox worker hatası');
-  };
-  return worker;
-}
-
-function send(msg) {
-  return new Promise((resolve) => {
-    const id = ++seq;
-    pending.set(id, resolve);
-    // arayüz ayarları (profil, zaman, depolama, sınırlar) her isteğe aynı biçimde uygulanır
-    ensure().postMessage({ id, ...applySettings(msg, getSettings()) });
-  });
-}
+// Ana thread tarafı: sandbox worker'ına RPC. İstekler bekçiden geçer: motor kilitlenirse worker sonlandırılıp
+// yeniden başlatılır (I182). kill() çalışan her şeyi keser.
+const dog = createWatchdog({
+  spawn() {
+    const w = new Worker(new URL('./sandbox.worker.js', import.meta.url), { type: 'module' });
+    return {
+      post: (m) => w.postMessage(m),
+      onMessage: (cb) => { w.onmessage = (e) => cb(e.data); },
+      onError: (cb) => { w.onerror = (e) => cb(e.message); },
+      terminate: () => w.terminate(),
+    };
+  },
+  // arayüz ayarları (profil, zaman, depolama, sınırlar) her isteğe aynı biçimde uygulanır
+  prepare: (msg) => applySettings(msg, getSettings()),
+});
 
 export const sandbox = {
-  ...sandboxApi(send),
+  ...sandboxApi(dog.send),
+  watchdog: true,
+  watchdogStats: dog.stats,
   async health() {
-    const r = await send({ type: 'batch', list: ['1+1'] });
+    const r = await dog.send({ type: 'batch', list: ['1+1'] });
     return r.ok && r.results?.[0]?.value === 2;
   },
   kill() {
-    worker?.terminate();
-    worker = null;
-    failAll('Durduruldu');
+    dog.kill('Durduruldu');
   },
 };

@@ -23,11 +23,12 @@ export const ESCAPE_CASES = [
   { id: 'eval-scope', title: 'eval host kapsamına erişemez', code: 'console.log(eval("typeof process"), (0, eval)("typeof require"))', expect: (r) => r.out[0] === 'undefined undefined' },
 ];
 
-// Bilinen sınır: QuickJS regex motoru geri izleme sırasında kesme işleyicisini çağırmaz; felaket regex
-// (/^(a+)+$/ gibi) worker'ı kilitler. Arayüzde "Durdur" worker'ı sonlandırır; Node/CLI'da süreç zaman aşımı gerekir.
-// Bu yüzden paket bu durumu çalıştırmaz, raporda belirtir.
-export const KNOWN_LIMITS = [
-  { id: 'redos', title: 'Felaket regex geri izleme', mitigation: "tarayıcıda Durdur worker'ı sonlandırır; host sayfa etkilenmez" },
+// Bekçi gerektiren durumlar: QuickJS regex motoru geri izleme sırasında kesme işleyicisini çağırmaz. Bekçili
+// sandbox (tarayıcı istemcisi, Node createNodeSandbox) motoru sonlandırıp yeniden başlatır ve zaman aşımı döndürür;
+// ardından motor yeniden kullanılabilir olmalı. Bekçisiz süreç içi host'ta bu durum çalıştırılmaz (thread kilitlenir).
+export const WATCHDOG_CASES = [
+  { id: 'redos', title: 'Felaket regex bekçiyle kesilir, motor yeniden başlar', code: '/^(a+)+$/.test("a".repeat(40) + "b")', timeoutMs: 500,
+    deadline: 3000, expect: (r, after) => !r.ok && r.watchdog === true && after.ok && after.out[0] === 'tekrar' },
 ];
 
 export async function runEscapeSuite(sandbox) {
@@ -45,5 +46,16 @@ export async function runEscapeSuite(sandbox) {
     try { pass = Boolean(c.expect({ ...r, out: r.out ?? [] })); } catch { pass = false; }
     results.push({ id: c.id, title: c.title, pass, ms: r.ms, error: r.error ?? null, out: (r.out ?? []).slice(0, 3) });
   }
-  return { passed: results.filter((x) => x.pass).length, total: results.length, results, knownLimits: KNOWN_LIMITS };
+  for (const c of WATCHDOG_CASES) {
+    if (!sandbox.watchdog) { results.push({ id: c.id, title: c.title, pass: null, skipped: 'bekçisiz host (süreç içi)', ms: 0, error: null, out: [] }); continue; }
+    const t0 = Date.now();
+    const r = await sandbox.run(c.code, { timeoutMs: c.timeoutMs });
+    const ms = Date.now() - t0;
+    const after = await sandbox.run('console.log("tekrar")', { timeoutMs: 1000 });
+    let pass;
+    try { pass = Boolean(c.expect(r, { ...after, out: after.out ?? [] })); } catch { pass = false; }
+    results.push({ id: c.id, title: c.title, pass, ms, error: r.error ?? null, out: [] });
+  }
+  const ran = results.filter((x) => x.pass !== null);
+  return { passed: ran.filter((x) => x.pass).length, total: ran.length, skipped: results.length - ran.length, results };
 }

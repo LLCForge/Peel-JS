@@ -1,18 +1,15 @@
 import { readFile, stat } from 'node:fs/promises';
-import { getQuickJS } from 'quickjs-emscripten';
-import { createHost, sandboxApi } from '../sandbox/core.js';
+import { createNodeSandbox } from '../sandbox/node-host.js';
 import { UsageError } from './args.js';
 
 export const EXIT = { OK: 0, ERROR: 1, USAGE: 2, CHANGED: 3, RISK: 4 };
 export const MAX_INPUT = 50 * 1024 * 1024;
 const MAX_URL_BYTES = 20 * 1024 * 1024;
 
+// I182: QuickJS worker_thread'de, bekçili: kilitlenen motor (felaket regex) sonlandırılıp yeniden başlatılır
 let sandboxPromise = null;
 export function getSandbox() {
-  sandboxPromise ??= getQuickJS().then((q) => {
-    const host = createHost(q);
-    return sandboxApi(async (msg) => host.handle(msg));
-  });
+  sandboxPromise ??= Promise.resolve(createNodeSandbox());
   return sandboxPromise;
 }
 

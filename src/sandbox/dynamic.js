@@ -2,6 +2,7 @@ import { POST_SCRIPT } from '../core/threat.js';
 import { fnv1a } from '../util/hash.js';
 import { instrument, captureEval, antiDebugScan, COVERAGE_PLUGIN } from './instrument.js';
 import { findEmbeddedWasm } from './wasm.js';
+import { findRedos } from '../verify/redos.js';
 import { getSettings, toConfig } from './settings.js';
 
 // Rapor için dinamik analiz: yakalama çalıştırması (etki, taint, WASM, worker, üretilen kod, parmak izi, kancalar),
@@ -165,13 +166,15 @@ export function summarizeCoverage(map, c, r = {}) {
 
 export async function dynamicReport({ sandbox, text, output, config = null }) {
   const cfg = config ?? analysisConfig();
+  // I182: felaket regex kalıpları çalıştırmadan önce bildirilir (motor bekçisi kilitlenmeyi ayrıca keser)
+  const redos = [...findRedos(text).map((x) => ({ ...x, source: 'girdi' })), ...findRedos(output).map((x) => ({ ...x, source: 'çıktı' }))];
   const [capture, coverage] = sandbox
     ? [await captureRun(sandbox, text, cfg).catch((e) => ({ ok: false, error: e.message })),
       await coverageRun(sandbox, output, cfg).catch((e) => ({ ok: false, error: e.message }))]
     : [{ ok: false, error: 'sandbox yok' }, { ok: false, error: 'sandbox yok' }];
-  const traps = [...antiDebugScan(text).map((x) => ({ ...x, source: 'girdi' })), ...antiDebugScan(output).map((x) => ({ ...x, source: 'çıktı' }))];
+  const traps = [...redos.map((r) => ({ kind: 'redos', line: r.line, snippet: `/${r.pattern}/${r.flags} — ${r.reasons[0]}`, source: r.source })), ...antiDebugScan(text).map((x) => ({ ...x, source: 'girdi' })), ...antiDebugScan(output).map((x) => ({ ...x, source: 'çıktı' }))];
   const telemetry = sandbox?.telemetry ? (await sandbox.telemetry()).telemetry ?? null : null;
-  const report = { capture, coverage, traps, staticWasm: findEmbeddedWasm(text), telemetry };
+  const report = { capture, coverage, traps, redos, staticWasm: findEmbeddedWasm(text), telemetry };
   // isteğe bağlı araçlar (profil karşılaştırma, gerçek DOM, fuzz…) için kaynak; JSON dışa aktarımına girmez
   Object.defineProperty(report, 'code', { value: { text, output }, enumerable: false });
   return report;
