@@ -12,6 +12,7 @@ import * as runtimeFunctions from '../passes/36-runtime-functions.js';
 import * as evalInline from '../passes/38-eval-inline.js';
 import * as rgf from '../passes/39-rgf.js';
 import * as flatFns from '../passes/47-flat-fns.js';
+import * as cffScope from '../passes/46-cff-scope.js';
 import * as proxy from '../passes/40-proxy.js';
 import * as constFold from '../passes/50-const-fold.js';
 import * as opaque from '../passes/60-opaque.js';
@@ -77,6 +78,7 @@ export const PASSES = [
   { id: 'state-var',    level: 3, kind: 'ast',  needs: null,      mod: stateVar },
   { id: 'vm-lift',      level: 3, kind: 'ast',  needs: null,      mod: vmLift },
   { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
+  { id: 'cff-scope',    level: 3, kind: 'ast',  needs: null,      mod: cffScope },
   { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
   { id: 'anti-timing',  level: 3, kind: 'ast',  needs: null,      mod: antiTiming },
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },

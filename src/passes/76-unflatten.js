@@ -297,16 +297,18 @@ function substitute(node, S, m, E) {
 // Makineyi hedefleyen (etiketsiz, kendi döngü/switch'i içinde olmayan) break/continue var mı?
 function hasMachineJump(node) {
   let found = false;
-  const walk = (n, nested) => {
+  // deyimin kendi içinde tanımlanan etiketler (outer: for (…) { … break outer; }) makineye atlamaz
+  const walk = (n, nested, labels) => {
     if (!n || typeof n !== 'object' || found || t.isFunction(n)) return;
-    if ((t.isBreakStatement(n) || t.isContinueStatement(n)) && (n.label || !nested)) { found = true; return; }
+    if ((t.isBreakStatement(n) || t.isContinueStatement(n)) && (n.label ? !labels.has(n.label.name) : !nested)) { found = true; return; }
     const inner = nested || t.isLoop(n) || t.isSwitchStatement(n);
+    const own = t.isLabeledStatement(n) ? new Set([...labels, n.label.name]) : labels;
     for (const k of t.VISITOR_KEYS[n.type] ?? []) {
       const v = n[k];
-      if (Array.isArray(v)) v.forEach((c) => walk(c, inner)); else walk(v, inner);
+      if (Array.isArray(v)) v.forEach((c) => walk(c, inner, own)); else walk(v, inner, own);
     }
   };
-  walk(node, false);
+  walk(node, false, new Set());
   return found;
 }
 

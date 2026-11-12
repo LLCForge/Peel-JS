@@ -173,6 +173,10 @@ export const PASS_DOCS = {
     tr: 'Kullanılmayan parametre, import, yinelenen tanım ve erişilemeyen kod gibi fazlalıkları siler.',
     en: 'Deletes leftovers such as unused parameters and imports, duplicate definitions and unreachable code.',
   },
+  'cff-scope': {
+    tr: 'js-confuser kontrol akışı düzleştirmesinin makine kopyalarını kabuklarına taşır, kapsam nesnesi özelliklerini yerel değişkenlere böler.',
+    en: 'Moves js-confuser flattening machine copies back into their shells and splits scope-object properties into locals.',
+  },
   webpack: {
     tr: 'webpack paketinde modül tablosunu ve require fonksiyonunu tanır, webpack adlarını geri verir, modülleri işaretler.',
     en: 'Recognises the webpack module table and require function, restores webpack names and marks modules.',

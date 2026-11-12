@@ -179,7 +179,7 @@ function collectGroups(ast) {
   traverse(ast, {
     CallExpression(p) {
       const { callee, arguments: args } = p.node;
-      if (!args.length || args.length > MAX_ARGS) return;
+      if (args.length > MAX_ARGS) return;
       if (args.some((a) => t.isSpreadElement(a))) return;
       if (inRotation(p)) return;
       // sonucu kullanılmayan çağrı decoder değildir, yan etki için yapılıyordur
@@ -187,6 +187,7 @@ function collectGroups(ast) {
       // js-confuser: decoder kapsam nesnesinde, this'siz çağrılır: (1, scope.X.decode)(1956, 9)
       if (t.isSequenceExpression(callee) && callee.expressions.length === 2 && literalValue(callee.expressions[0]).ok &&
           t.isMemberExpression(callee.expressions[1])) {
+        if (!args.length) return;
         const path = pathOf(callee.expressions[1]);
         const root = path && p.scope.getBinding(path.split('.')[0]);
         if (!root) return;
@@ -200,6 +201,8 @@ function collectGroups(ast) {
       if (!t.isIdentifier(callee)) return;
       let b = p.scope.getBinding(callee.name);
       if (!b) return;
+      // argümansız çağrı yalnızca parametresiz, gövdesi string çözen program fonksiyonuna (specialize sonrası decoder kopyası)
+      if (!args.length && !(b.path.isFunctionDeclaration() && !b.path.node.params.length && b.scope.path.isProgram() && looksLikeDecoder(b))) return;
       // var v22 = v1; v22(154) → kök decoder'ın grubuna say (fonksiyon içi alias'lar tek tek eşiğe takılmasın)
       for (let hops = 0; hops < 8 && b.constant && b.path.isVariableDeclarator() && t.isIdentifier(b.path.node.init); hops++) {
         const next = b.path.scope.getBinding(b.path.node.init.name);

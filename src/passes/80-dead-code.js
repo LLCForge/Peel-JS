@@ -130,7 +130,7 @@ function isLengthSpoofer(fnPath) {
 // kullanımları satır içine yazıldıktan sonra kalan kabuklar):
 //   ({ a: "x", f: function (b, c) { return b + c; } });      — yalnızca literal/fonksiyon değerli, sabit anahtarlı nesne
 //   (function () { var x = true; return function () { … }; })();   — yalnızca fonksiyon üreten IIFE
-const inertObject = (e) => t.isObjectExpression(e) && e.properties.every((x) => t.isObjectProperty(x) && !x.computed &&
+const inertObject = (e) => t.isObjectExpression(e) && e.properties.every((x) => t.isObjectProperty(x) && (!x.computed || t.isStringLiteral(x.key)) &&
   (literalValue(x.value).ok || t.isFunctionExpression(x.value) || t.isArrowFunctionExpression(x.value) || inertObject(x.value)));
 function factoryIife(e) {
   if (!t.isCallExpression(e) || e.arguments.length || !t.isFunctionExpression(e.callee) || e.callee.async || e.callee.generator) return false;
