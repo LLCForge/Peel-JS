@@ -1,13 +1,13 @@
-import { els, setOutput } from '../panels.js';
 import { parse } from '../../core/parse.js';
-import { pretty, FORMAT_PROFILES } from '../../core/emit.js';
+import { pretty, FORMAT_PROFILES, profileOptions } from '../../core/emit.js';
 import { traverse } from '../../util/ast.js';
 import { applyNameMap, listSuggestions, serializeNameMap, parseNameMap } from '../../naming/names.js';
 import { summarizeFunction } from '../../naming/summary.js';
 import { createInferer, toDts } from '../../naming/types.js';
 import { explain } from '../../naming/explain.js';
-import { buildCfg, layout, cyclomatic } from '../../naming/cfg.js';
-import { defUse } from '../../naming/defuse.js';
+import { functionUnits } from '../../analysis/index.js';
+import { analyzeFunction } from '../../analysis/defs.js';
+import { settings, update as updateSettings } from '../settings.js';
 import { sequence } from '../../naming/sequence.js';
 import { complexity } from '../../naming/metrics.js';
 import { deadRegions } from '../../naming/deadcode.js';
@@ -18,14 +18,20 @@ import { fnv1a } from '../../util/hash.js';
 import { getLang } from '../../i18n.js';
 import { s } from './strings.js';
 import {
-  getOptions, setOption, getDict, setDict, getMap, setMap, getFormat, setFormat, getSnapshots, parseDictText, dictToText,
+  getOptions, setOption, getDict, setDict, getMap, setMap, getSnapshots, parseDictText, dictToText,
 } from './state.js';
 
-export { namingOptions, recordSnapshot, resetSnapshots, getFormat as formatProfile } from './state.js';
+export { namingOptions, recordSnapshot, resetSnapshots } from './state.js';
+
+// Editör erişimi main.js'ten verilir (CodeMirror editörleri): { getInput, getOutput, setOutput }
+const io = { getInput: () => '', getOutput: () => '', setOutput: () => {} };
+export function configureNaming(api) { Object.assign(io, api); }
+const setOutput = (text) => io.setOutput(text);
 
 // Anlamlandırma paneli: rapor sekmesine bağlanır. Ağır görünümler sekme açılınca güncel çıktıdan hesaplanır.
 
-const VIEWS = ['names', 'summary', 'explain', 'cfg', 'defuse', 'sequence', 'readability', 'unresolved', 'dead', 'modules', 'diff', 'types', 'options'];
+// CFG görseli araç panelindeki grafik görünümündedir (ui/graph-model + graph-view): burada tekrarlanmaz
+const VIEWS = ['names', 'summary', 'explain', 'defuse', 'sequence', 'readability', 'unresolved', 'dead', 'modules', 'diff', 'types', 'options'];
 const SVG = 'http://www.w3.org/2000/svg';
 const MAX_ROWS = 400;
 
@@ -60,8 +66,8 @@ function download(name, data, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-const output = () => els.output.value;
-const input = () => els.input.value;
+const output = () => io.getOutput();
+const input = () => io.getInput();
 function parsed() {
   const code = output();
   if (!code.trim()) return { error: s().empty };
@@ -118,7 +124,6 @@ const VIEW_FNS = {
   names: namesView,
   summary: summaryView,
   explain: explainView,
-  cfg: cfgView,
   defuse: defUseView,
   sequence: sequenceView,
   readability: readabilityView,
@@ -285,112 +290,38 @@ function explainView() {
     }))));
 }
 
-// Fonksiyon seçici: program + adlandırılmış fonksiyonlar
-function functionChoices(ast) {
-  const list = [{ label: s().program, body: ast.program, line: 1 }];
-  traverse(ast, {
-    Function(f) {
-      if (list.length > 300) return f.stop();
-      if (f.node.body?.type !== 'BlockStatement') return;
-      const name = f.node.id?.name ?? (f.parentPath.isVariableDeclarator() ? f.parent.id.name : null) ?? f.node.key?.name ?? '(anonim)';
-      list.push({ label: `${name} · ${f.node.loc?.start.line ?? ''}`, body: f.node.body, line: f.node.loc?.start.line ?? 0 });
-    },
-  });
-  return list;
-}
-
-function cfgView() {
-  const L = s();
-  const p = parsed();
-  if (p.error) return muted(p.error);
-  const choices = functionChoices(p.ast);
-  const select = h('select', { class: 'nm-select', 'aria-label': L.fn }, choices.map((c, i) => h('option', { value: String(i) }, c.label)));
-  if (choices.length > 1) select.value = '1';
-  const info = h('p', { class: 'rep-muted' });
-  const holder = h('div', { class: 'nm-graph' });
-  const draw = () => {
-    holder.textContent = '';
-    let cfg;
-    try { cfg = buildCfg(choices[Number(select.value)].body); } catch { info.textContent = L.tooBig; return; }
-    info.textContent = L.nodes(cfg.nodes.length, cfg.edges.length, cyclomatic(cfg));
-    holder.append(drawGraph(cfg));
-  };
-  select.addEventListener('change', draw);
-  draw();
-  return h('div', {}, select, info, holder);
-}
-
-function drawGraph(cfg) {
-  const pos = layout(cfg);
-  const W = 220;
-  const H = 74;
-  const GX = 40;
-  const GY = 46;
-  let maxRow = 1;
-  let maxY = 0;
-  for (const p of pos.values()) { maxRow = Math.max(maxRow, p.row); maxY = Math.max(maxY, p.y); }
-  const width = maxRow * (W + GX) + GX;
-  const height = (maxY + 1) * (H + GY) + GY;
-  const at = (id) => {
-    const p = pos.get(id);
-    const offset = (width - p.row * (W + GX) + GX) / 2;
-    return { x: offset + p.x * (W + GX), y: GY / 2 + p.y * (H + GY) };
-  };
-  const svg = sv('svg', { viewBox: `0 0 ${width} ${height}`, width, height, role: 'img', 'aria-label': 'CFG', class: 'nm-svg' });
-  svg.append(sv('defs', {}, sv('marker', { id: 'nm-arrow', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' },
-    sv('path', { d: 'M0,0 L10,5 L0,10 z', class: 'nm-arrowhead' }))));
-  for (const e of cfg.edges) {
-    const a = at(e.from);
-    const b = at(e.to);
-    const back = pos.get(e.to).y <= pos.get(e.from).y;
-    const x1 = a.x + W / 2;
-    const y1 = a.y + H;
-    const x2 = b.x + W / 2;
-    const y2 = b.y;
-    const d = back
-      ? `M${a.x + W},${a.y + H / 2} C${a.x + W + 60},${a.y + H / 2} ${b.x + W + 60},${b.y + H / 2} ${b.x + W},${b.y + H / 2}`
-      : `M${x1},${y1} C${x1},${y1 + GY / 2} ${x2},${y2 - GY / 2} ${x2},${y2}`;
-    svg.append(sv('path', { d, class: `nm-edge${back ? ' back' : ''}`, 'marker-end': 'url(#nm-arrow)' }));
-    if (e.label) {
-      const t = sv('text', { x: back ? a.x + W + 8 : (x1 + x2) / 2 + 4, y: back ? a.y + H / 2 - 4 : (y1 + y2) / 2, class: 'nm-edge-label' });
-      t.textContent = e.label;
-      svg.append(t);
-    }
-  }
-  for (const n of cfg.nodes) {
-    const { x, y } = at(n.id);
-    const g = sv('g', { class: `nm-node ${n.kind}` });
-    g.append(sv('rect', { x, y, width: W, height: H, rx: 6 }));
-    const lines = (n.label || n.kind).split('\n').slice(0, 4);
-    lines.forEach((line, i) => {
-      const t = sv('text', { x: x + 8, y: y + 16 + i * 15 });
-      t.textContent = line.length > 34 ? `${line.slice(0, 33)}…` : line;
-      g.append(t);
+// 90: tanım-kullanım zincirleri semantik analiz altyapısının ulaşan tanımlar çözümünden (analysis/defs.js) okunur
+function defUseRows(ast) {
+  const lineOf = (p) => p?.node?.loc?.start.line ?? null;
+  const rows = [];
+  for (const unit of functionUnits(ast)) {
+    let r;
+    try { r = analyzeFunction(unit); } catch { continue; }
+    r.bindings.forEach((b, i) => {
+      const defs = r.defs.filter((d) => d.b === i);
+      const uses = r.uses.filter((u) => u.e.b === i);
+      rows.push({
+        name: b.identifier.name,
+        kind: b.kind,
+        line: b.identifier.loc?.start.line ?? null,
+        defs: defs.map((d) => `${lineOf(d.path) ?? '–'} ${d.kind}`),
+        uses: uses.map((u) => `${lineOf(u.e.path) ?? '?'} ← ${[...new Set(u.defs.map((d) => lineOf(d.path) ?? d.kind))].join('/') || '–'}`),
+      });
     });
-    if (n.line) {
-      const tl = sv('title');
-      tl.textContent = `${n.kind} · ${n.line}`;
-      g.append(tl);
-    }
-    svg.append(g);
   }
-  return svg;
+  return rows.sort((x, y) => (x.line ?? 0) - (y.line ?? 0));
 }
 
 function defUseView() {
   const L = s();
   const p = parsed();
   if (p.error) return muted(p.error);
-  const all = defUse(p.ast).bindings;
+  const all = defUseRows(p.ast);
   const filter = h('input', { type: 'search', class: 'nm-input', placeholder: L.filter, 'aria-label': L.filter });
   const holder = h('div');
   const draw = () => {
     const q = filter.value.trim().toLowerCase();
-    const rows = all.filter((b) => !q || b.name.toLowerCase().includes(q)).map((b) => [
-      b.name, b.kind, b.line ?? '',
-      b.defs.map((d) => `${d.line ?? '?'} ${d.kind}`).join(', '),
-      b.uses.map((u) => `${u.line ?? '?'}${u.from.length ? ` ← ${u.from.join('/')}` : ''} (${u.kind})`).join(', '),
-    ]);
+    const rows = all.filter((b) => !q || b.name.toLowerCase().includes(q)).map((b) => [b.name, b.kind, b.line ?? '', b.defs.join(', '), b.uses.join(', ')]);
     holder.textContent = '';
     holder.append(table([L.name, L.kind, L.line, L.defs, `${L.uses} (${L.from})`], rows, ['mono', '', 'num', 'mono', 'mono']));
   };
@@ -512,17 +443,22 @@ function deadView() {
   return out;
 }
 
+// 86: modüller motorun paket ayırıcısından (core/bundle.js, report.engine.bundle) gelir; burada indirme eklenir
 function modulesView(ctx) {
   const L = s();
-  const m = ctx.data?.modules;
-  if (!m?.modules.length) return muted(L.noModules);
+  const m = ctx.data?.bundle;
+  if (!m?.modules?.length) return muted(L.noModules);
+  const fileName = (id) => {
+    const n = String(id).replace(/^[./\\]+/, '').replace(/[^\w.@/-]+/g, '_').slice(0, 120) || 'module';
+    return /\.[cm]?[jt]sx?$/.test(n) ? n : `${n}.js`;
+  };
   return h('div', { class: 'nm-stack' },
-    h('p', {}, `${L.format}: ${m.format} · ${m.modules.length}`),
-    h('div', { class: 'rep-actions' }, btn(L.downloadZip, () => download('peel-modules.zip', zip(m.modules.map((x) => ({ name: x.name, text: x.code }))), 'application/zip'))),
-    table([L.name, 'id', 'KB', L.deps, ''], m.modules.map((x) => [
-      x.name, x.id, (x.code.length / 1024).toFixed(1), Object.keys(x.deps).join(', '),
-      btn(L.download, async () => download(x.name.split('/').pop(), await pretty(x.code), 'text/javascript'), 'tiny'),
-    ]), ['mono', 'mono', 'num', 'mono', '']));
+    h('p', {}, `${L.format}: ${m.kind} · ${m.modules.length}`),
+    h('div', { class: 'rep-actions' }, btn(L.downloadZip, () => download('peel-modules.zip', zip(m.modules.map((x) => ({ name: fileName(x.id), text: x.code }))), 'application/zip'))),
+    table([L.name, 'B', L.deps, ''], m.modules.map((x) => [
+      x.id, x.size, x.deps.join(', '),
+      btn(L.download, async () => download(fileName(x.id).split('/').pop(), await pretty(x.code, profileOptions(settings().format)), 'text/javascript'), 'tiny'),
+    ]), ['mono', 'num', 'mono', '']));
 }
 
 function diffView() {
@@ -555,15 +491,20 @@ function optionsView(ctx) {
     cb.addEventListener('change', () => setOption(key, cb.checked));
     return h('label', { class: 'nm-check', for: `nm-opt-${key}` }, cb, label);
   });
+  // E239: profil, arayüzün tek biçim ayarına (settings.format) yazılır; çıktı o ayarla biçimlenir
+  const current = Object.keys(FORMAT_PROFILES).find((k) => sameFormat(FORMAT_PROFILES[k], settings().format)) ?? '';
   const profile = h('select', { class: 'nm-select', id: 'nm-format', 'aria-label': L.formatProfile },
-    Object.keys(FORMAT_PROFILES).map((k) => h('option', { value: k }, L.profiles[k] ?? k)));
-  profile.value = getFormat();
-  profile.addEventListener('change', () => setFormat(profile.value));
+    h('option', { value: '' }, '–'), Object.keys(FORMAT_PROFILES).map((k) => h('option', { value: k }, L.profiles[k] ?? k)));
+  profile.value = current;
   return h('div', { class: 'nm-stack' },
     h('h4', {}, L.options), muted(L.optionsHint), h('div', { class: 'nm-checks' }, boxes),
     h('h4', {}, L.formatProfile),
     h('div', { class: 'rep-actions' }, profile, btn(L.reformat, async () => {
-      setOutput(await pretty(output(), profile.value));
+      if (!profile.value) return;
+      updateSettings({ format: FORMAT_PROFILES[profile.value] });
+      setOutput(await pretty(output(), profileOptions(settings().format)));
       ctx.say(L.profiles[profile.value] ?? profile.value);
     })));
 }
+
+const sameFormat = (a, b) => Object.keys(a).every((k) => a[k] === b[k]);

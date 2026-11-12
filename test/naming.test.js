@@ -8,13 +8,11 @@ import { scan, renameBlocker } from '../src/naming/scope.js';
 import { createInferer, toDts } from '../src/naming/types.js';
 import { summarizeFunction, programSummary } from '../src/naming/summary.js';
 import { explain } from '../src/naming/explain.js';
-import { buildCfg, cyclomatic, layout } from '../src/naming/cfg.js';
-import { defUse } from '../src/naming/defuse.js';
 import { sequence } from '../src/naming/sequence.js';
 import { readability, complexity, compareReadability } from '../src/naming/metrics.js';
 import { unresolved } from '../src/naming/unresolved.js';
 import { deadRegions } from '../src/naming/deadcode.js';
-import { splitModules } from '../src/naming/modules.js';
+import { splitBundle } from '../src/core/bundle.js';
 import { zip, crc32 } from '../src/naming/zip.js';
 import { annotatedDiff, lineDiff } from '../src/naming/diffnotes.js';
 import { libraryVersions } from '../src/naming/libversion.js';
@@ -156,41 +154,14 @@ await test('85: kopya fonksiyonların yapısal eşitliği', () => {
   assert.notEqual(codes[0], codes[2]);
 });
 
-await test('86: modüllere bölme (webpack, browserify, esbuild) ve ZIP', () => {
-  const wp = '(function(modules){ function __webpack_require__(id){ return modules[id]; } return __webpack_require__(0); })({"./src/a.js": function(module, exports, __webpack_require__){ console.log("a"); }, "./src/b.js": function(module, exports){ exports.x = 1; }});';
-  const r = splitModules(wp);
-  assert.equal(r.format, 'webpack 4');
-  assert.deepEqual(r.modules.map((m) => m.name), ['src/a.js', 'src/b.js']);
-  assert.match(r.modules[0].code, /console\.log\("a"\)/);
-  const bf = '(function e(t,n,r){return 1})({1:[function(require,module,exports){ var u = require("./util"); },{"./util":2}],2:[function(require,module,exports){ exports.y = 2; },{}]},{},[1]);';
-  const b = splitModules(bf);
-  assert.equal(b.format, 'browserify');
-  assert.equal(b.modules[1].name, 'util.js');
-  const es = '// src/one.js\nvar one = 1;\n\n// src/two.js\nvar two = 2;\n';
-  const e = splitModules(es);
-  assert.equal(e.format, 'esbuild');
-  assert.equal(e.modules.length, 2);
+await test('86: modül indirme (ZIP) ve AMD paketleri motorun ayırıcısında', () => {
+  const amd = splitBundle('define("a", ["b"], function (b) { return b + 1; }); define("b", [], function () { return 1; });');
+  assert.equal(amd.kind, 'amd');
+  assert.deepEqual(amd.modules.map((m) => [m.id, m.deps]), [['a', ['b']], ['b', []]]);
   const z = zip([{ name: '../evil/a.js', text: 'x' }]);
   assert.equal(new DataView(z.buffer).getUint32(0, true), 0x04034b50);
   assert.ok(!new TextDecoder().decode(z).includes('../'));
   assert.equal(crc32(new TextEncoder().encode('123456789')), 0xcbf43926);
-});
-
-await test('89: kontrol akış grafiği', () => {
-  const ast = parse('function f(x) { if (x) { a(); } else { b(); } while (x--) { if (x === 3) break; c(); } return x; }');
-  const cfg = buildCfg(ast.program.body[0].body);
-  assert.ok(cfg.nodes.some((n) => n.kind === 'cond'));
-  assert.ok(cfg.nodes.some((n) => n.kind === 'loop'));
-  assert.ok(cfg.edges.some((e) => e.label === 'tekrar'));
-  assert.ok(cyclomatic(cfg) >= 3);
-  assert.equal(layout(cfg).size, cfg.nodes.length);
-});
-
-await test('90: tanım-kullanım zincirleri (ulaşan tanımlar)', () => {
-  const ast = parse('function f(c) {\n  var x = 1;\n  if (c) {\n    x = 2;\n  }\n  return x;\n}');
-  const x = defUse(ast).bindings.find((b) => b.name === 'x');
-  const use = x.uses.find((u) => u.line === 6);
-  assert.deepEqual(use.from.sort(), [2, 4]);
 });
 
 await test('91: sekans diyagramı', () => {
@@ -215,8 +186,8 @@ await test('92/93/E240: okunabilirlik skoru ve karmaşıklık', () => {
 });
 
 await test('94: çözülemeyenler', () => {
-  const ast = parse('var _0xabc = 1; var t = tbl[0x1f]; dec(0x12, "k"); eval(code); debugger;');
-  const u = unresolved(ast);
+  const code = 'var _0xabc = 1; var t = tbl[0x1f]; dec(0x12, 0x3); eval(code); debugger;';
+  const u = unresolved(parse(code), code);
   for (const k of ['identifier', 'table', 'decoder', 'dynamic-code', 'anti-debug']) assert.ok(u.counts[k] >= 1, k);
 });
 

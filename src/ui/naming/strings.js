@@ -3,7 +3,7 @@ import { getLang } from '../../i18n.js';
 // Anlamlandırma panelinin metinleri (paylaşılan i18n sözlüğünü şişirmemek için modül içinde)
 const S = {
   tr: {
-    tabs: { names: 'Adlar', summary: 'Özet', explain: 'Satır açıklaması', cfg: 'Akış grafiği', defuse: 'Tanım-kullanım', sequence: 'Sekans', readability: 'Okunabilirlik', unresolved: 'Çözülemeyenler', dead: 'Ölü kod', modules: 'Modüller', diff: 'Açıklamalı fark', types: 'Tipler', options: 'Seçenekler' },
+    tabs: { names: 'Adlar', summary: 'Özet', explain: 'Satır açıklaması', defuse: 'Tanım-kullanım', sequence: 'Sekans', readability: 'Okunabilirlik', unresolved: 'Çözülemeyenler', dead: 'Ölü kod', modules: 'Modüller', diff: 'Açıklamalı fark', types: 'Tipler', options: 'Seçenekler' },
     tablist: 'Anlamlandırma görünümleri',
     empty: 'Çıktı yok.',
     parseFail: 'Çıktı ayrıştırılamadı.',
@@ -28,7 +28,7 @@ const S = {
       meaningfulNames: 'Anlamlı isim oranı', avgIdentifierLength: 'Ort. isim uzunluğu', hexLiterals: 'Hex sayı', stringEscapes: 'Kaçışlı string',
       maxNesting: 'En derin iç içelik', functions: 'Fonksiyon', avgComplexity: 'Ort. karmaşıklık', maxComplexity: 'En yüksek karmaşıklık', commentDensity: 'Yorum yoğunluğu' },
     heat: 'Karmaşıklık ısı haritası', heatHint: 'Satır rengi, içinde bulunduğu fonksiyonun döngüsel karmaşıklığını gösterir.',
-    noneUnresolved: 'Çözülemeyen öğe kalmadı.', kinds: { decoder: 'decoder', 'dynamic-code': 'dinamik kod', identifier: 'üretilmiş isim', table: 'string tablosu', encoded: 'kodlanmış', escaped: 'kaçışlı', 'anti-debug': 'anti-debug', with: 'with', vm: 'VM' },
+    noneUnresolved: 'Çözülemeyen öğe kalmadı.', kinds: { decoder: 'decoder', 'dynamic-code': 'dinamik kod', identifier: 'üretilmiş isim', table: 'string tablosu', encoded: 'kodlanmış', escaped: 'kaçışlı', 'anti-debug': 'anti-debug', with: 'with', vm: 'VM', other: 'diğer' },
     noDead: 'Ölü kod bulunamadı.', deadLines: (n, r) => `${n} satır · ${r}`,
     noModules: 'Paket biçimi (webpack, browserify, esbuild, AMD) tanınmadı.', format: 'Biçim', download: 'İndir', downloadZip: 'Tümünü ZIP indir', deps: 'Bağımlılıklar',
     noSnaps: 'Adım kaydı yok: kodu çöz, ardından bu sekmeyi aç.', step: (i, n) => `Adım ${i}/${n}`, round: (r) => `tur ${r}`, changes: (a, d) => `+${a} −${d}`,
@@ -43,7 +43,7 @@ const S = {
     profiles: { default: 'Varsayılan', compact: 'Sıkı', wide: 'Geniş', standard: 'Standard (noktalı virgülsüz)', airbnb: 'Airbnb', tabs: 'Sekme girintili' },
   },
   en: {
-    tabs: { names: 'Names', summary: 'Summary', explain: 'Line explanations', cfg: 'Control flow', defuse: 'Def-use', sequence: 'Sequence', readability: 'Readability', unresolved: 'Unresolved', dead: 'Dead code', modules: 'Modules', diff: 'Annotated diff', types: 'Types', options: 'Options' },
+    tabs: { names: 'Names', summary: 'Summary', explain: 'Line explanations', defuse: 'Def-use', sequence: 'Sequence', readability: 'Readability', unresolved: 'Unresolved', dead: 'Dead code', modules: 'Modules', diff: 'Annotated diff', types: 'Types', options: 'Options' },
     tablist: 'Analysis views',
     empty: 'No output.',
     parseFail: 'The output could not be parsed.',
@@ -68,7 +68,7 @@ const S = {
       meaningfulNames: 'Meaningful name ratio', avgIdentifierLength: 'Avg. name length', hexLiterals: 'Hex numbers', stringEscapes: 'Escaped strings',
       maxNesting: 'Deepest nesting', functions: 'Functions', avgComplexity: 'Avg. complexity', maxComplexity: 'Max complexity', commentDensity: 'Comment density' },
     heat: 'Complexity heat map', heatHint: 'Line colour shows the cyclomatic complexity of the enclosing function.',
-    noneUnresolved: 'Nothing left unresolved.', kinds: { decoder: 'decoder', 'dynamic-code': 'dynamic code', identifier: 'generated name', table: 'string table', encoded: 'encoded', escaped: 'escaped', 'anti-debug': 'anti-debug', with: 'with', vm: 'VM' },
+    noneUnresolved: 'Nothing left unresolved.', kinds: { decoder: 'decoder', 'dynamic-code': 'dynamic code', identifier: 'generated name', table: 'string table', encoded: 'encoded', escaped: 'escaped', 'anti-debug': 'anti-debug', with: 'with', vm: 'VM', other: 'other' },
     noDead: 'No dead code found.', deadLines: (n, r) => `${n} lines · ${r}`,
     noModules: 'No bundle format (webpack, browserify, esbuild, AMD) recognised.', format: 'Format', download: 'Download', downloadZip: 'Download all as ZIP', deps: 'Dependencies',
     noSnaps: 'No step log: peel the code, then open this tab.', step: (i, n) => `Step ${i}/${n}`, round: (r) => `round ${r}`, changes: (a, d) => `+${a} −${d}`,

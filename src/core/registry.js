@@ -31,6 +31,13 @@ import * as extract from '../passes/98-extract.js';
 import * as magic from '../passes/98-magic.js';
 import * as annotate from '../passes/99-annotate.js';
 import * as comments from '../passes/99-comments.js';
+import * as staticStrings from '../passes/31-static-strings.js';
+import * as integrity from '../passes/24-integrity.js';
+import * as confuser from '../passes/37-confuser.js';
+import * as indirection from '../passes/42-indirection.js';
+import * as flow from '../passes/78-flow.js';
+import * as deadExtra from '../passes/82-dead-extra.js';
+import * as sourcemap from '../passes/05-sourcemap.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
@@ -38,16 +45,21 @@ import * as comments from '../passes/99-comments.js';
 // finish: çözme pass'leri sabitlendikten sonra çalışan okunabilirlik pass'i
 export const PASSES = [
   { id: 'normalize',    level: 1, kind: 'text', needs: null,      mod: normalize },
+  { id: 'sourcemap',    level: 1, kind: 'text', needs: null,      mod: sourcemap },
   { id: 'unpack',       level: 1, kind: 'text', needs: null,      mod: unpack },
   { id: 'predecoders',  level: 1, kind: 'text', needs: 'sandbox', mod: predecoders },
+  { id: 'integrity',    level: 1, kind: 'ast',  needs: 'sandbox', mod: integrity },
   { id: 'literals',     level: 1, kind: 'ast',  needs: null,      mod: literals },
   { id: 'const-arrays', level: 1, kind: 'ast',  needs: null,      mod: constArrays },
   { id: 'const-objects', level: 1, kind: 'ast',  needs: null,      mod: constObjects },
   { id: 'wrappers',     level: 2, kind: 'ast',  needs: null,      mod: wrappers },
+  { id: 'static-strings', level: 2, kind: 'ast', needs: null,     mod: staticStrings },
   { id: 'string-array', level: 2, kind: 'ast',  needs: 'sandbox', mod: stringArray },
   { id: 'runtime-decoders', level: 2, kind: 'ast', needs: 'sandbox', mod: runtimeDecoders },
   { id: 'runtime-functions', level: 3, kind: 'ast', needs: 'sandbox', mod: runtimeFunctions },
+  { id: 'confuser',     level: 2, kind: 'ast',  needs: null,      mod: confuser },
   { id: 'proxy',        level: 2, kind: 'ast',  needs: null,      mod: proxy },
+  { id: 'indirection',  level: 2, kind: 'ast',  needs: null,      mod: indirection },
   { id: 'const-fold',   level: 1, kind: 'ast',  needs: 'sandbox', mod: constFold },
   { id: 'dead-code',    level: 2, kind: 'ast',  needs: null,      mod: deadCode },
   { id: 'opaque',       level: 2, kind: 'ast',  needs: null,      mod: opaque },
@@ -55,7 +67,9 @@ export const PASSES = [
   { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
   { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
+  { id: 'flow',         level: 2, kind: 'ast',  needs: null,      mod: flow },
   { id: 'simplify',     level: 2, kind: 'ast',  needs: null,      mod: simplify },
+  { id: 'dead-extra',   level: 2, kind: 'ast',  needs: null,      mod: deadExtra },
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
   { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },
   // okunabilirlik: Babel kalıntıları, modern sözdizimi, birleştirme/çıkarma, adlandırma ve yorumlar
