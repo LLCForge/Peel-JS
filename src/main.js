@@ -10,6 +10,7 @@ import { renderReport } from './ui/report.js';
 import { createTimeline } from './ui/timeline.js';
 import { t, applyI18n, toggleLang } from './i18n.js';
 import { SAMPLE } from './sample.js';
+import { maskSecrets } from './core/threat.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -162,7 +163,7 @@ async function run() {
     }
     lastReport = await analyze({ input: src, text: res.text, output: res.code, events: res.events, sandbox: sandboxOk ? sandbox : null });
     lastReport.stats = res.stats;
-    renderReport(views.report, lastReport, exportReport);
+    renderReport(views.report, lastReport, exportReport, reportActions);
   } catch (e) {
     log(e.message, 'err');
     if (controller.signal.aborted) setStatus('status.stopped', {}, 'err');
@@ -193,6 +194,17 @@ function download(name, text, type) {
 function exportReport() {
   if (lastReport) download('peel-report.json', JSON.stringify(lastReport, null, 2), 'application/json');
 }
+
+// Rapor eylemleri: YARA / Suricata kuralları ve anahtarları maskelenmiş çıktı (paylaşmadan önce)
+const reportActions = {
+  yara: () => lastReport?.threat?.yara && download('peel.yar', lastReport.threat.yara, 'text/plain'),
+  ids: () => lastReport?.threat?.ids && download('peel.rules', lastReport.threat.ids, 'text/plain'),
+  masked: () => {
+    const { code, count } = maskSecrets(els.output.value);
+    download('peeled.masked.js', code, 'text/javascript');
+    setStatus('status.masked', { n: count }, 'ok');
+  },
+};
 
 function loadSample() {
   els.input.value = SAMPLE;
@@ -228,7 +240,7 @@ $('btn-lang').addEventListener('click', () => {
   toggleLang();
   setStatus(...lastStatus);
   setStats(lastStats);
-  renderReport(views.report, lastReport, exportReport);
+  renderReport(views.report, lastReport, exportReport, reportActions);
   timeline.render();
   diffDirty = true;
   if (activeTab === 'diff') selectTab('diff');

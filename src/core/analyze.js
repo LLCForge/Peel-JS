@@ -2,6 +2,7 @@ import * as t from '@babel/types';
 import { parse } from './parse.js';
 import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
+import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
 // fingerprint okumaları ve kalite metrikleri. Statik kısım AST'den, dinamik kısım sandbox'tan gelir.
@@ -148,10 +149,13 @@ function iocs(strings, code) {
   return out;
 }
 
-async function runtimeScan(sandbox, text) {
-  if (!sandbox) return { ok: false, network: [], reads: [], console: [] };
-  // program zaman aşımına uğrasa da kayıtlar sandbox'tan ayrıca okunur (core: net/reads)
-  const r = await sandbox.run(`try {\n${text}\n} catch (e) {}`, { timeoutMs: 8000 });
+async function runtimeScan(sandbox, text, config) {
+  if (!sandbox) return { ok: false, network: [], reads: [], console: [], crypto: [], thrown: [], post: null };
+  // program zaman aşımına uğrasa da kayıtlar sandbox'tan ayrıca okunur (core: net/reads).
+  // Analiz sonrası betik: zamanlayıcılar ve olay işleyicileri tetiklenir, eklenen global'ler listelenir.
+  const r = await sandbox.run(`try {\n${text}\n} catch (e) { __res.push({ __thrown: String(e) }); }`,
+    { timeoutMs: 8000, post: POST_SCRIPT, config });
+  const res = r.res ?? [];
   const network = r.net ?? [];
   const reads = r.reads ?? {};
   return {
@@ -160,18 +164,32 @@ async function runtimeScan(sandbox, text) {
     network,
     reads: Object.entries(reads).map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count),
     console: (r.out ?? []).slice(0, 100),
+    crypto: r.crypto ?? [],
+    thrown: res.filter((x) => x && x.__thrown).map((x) => x.__thrown),
+    post: res.find((x) => x && x.__post) ?? null,
   };
 }
 
-export async function analyze({ input, text, output, events = [], sandbox = null }) {
+export async function analyze({ input, text, output, events = [], sandbox = null, config = null }) {
   const before = staticScan(text ?? input);
   const after = staticScan(output);
-  const runtime = await runtimeScan(sandbox, text ?? input);
+  const runtime = await runtimeScan(sandbox, text ?? input, config);
   const passTimes = {};
   for (const e of events) passTimes[e.id] = (passTimes[e.id] ?? 0) + e.ms;
+  const found = iocs(after.strings, output);
+  const classes = classify({ code: output, runtime, iocs: found, apis: after.apis });
   return {
     fingerprint: fingerprint(input),
-    iocs: iocs(after.strings, output),
+    iocs: found,
+    threat: {
+      classes,
+      risk: riskScore(classes, runtime),
+      privacy: privacy({ runtime, iocs: found, apis: after.apis }),
+      libraries: libraries(output),
+      missingGlobals: missingGlobals(runtime),
+      yara: yaraRule({ strings: after.strings, iocs: found, hash: fnv1a(output) }),
+      ids: idsRules({ runtime, iocs: found }),
+    },
     apis: after.apis,
     regexes: after.regexes,
     runtime,

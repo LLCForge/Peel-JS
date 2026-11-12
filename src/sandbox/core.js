@@ -28,7 +28,7 @@ export function createHost(QuickJS) {
   const contexts = new Map();
   let tokenSeq = 0;
 
-  function make(memoryMB) {
+  function make(memoryMB, config = null) {
     const rt = QuickJS.newRuntime();
     rt.setMemoryLimit(memoryMB * 1024 * 1024);
     rt.setMaxStackSize(1 << 20);
@@ -73,6 +73,9 @@ export function createHost(QuickJS) {
       vm.setProp(vm.global, name, fn);
       fn.dispose();
     }
+    // sandbox yapılandırması (zaman, tarayıcı profili, çerez/depolama, sahte yanıtlar): stub'lar okur
+    const c = evalRaw(`globalThis.__peelConfig = ${JSON.stringify(config ?? {})};`, 500);
+    if (!c.ok) { dispose(); throw new Error(`config: ${c.error}`); }
     const s = evalRaw(STUBS, 2000);
     if (!s.ok) { dispose(); throw new Error(`stubs: ${s.error}`); }
 
@@ -80,29 +83,45 @@ export function createHost(QuickJS) {
       const r = evalRaw(`JSON.stringify(${name})`, 1000);
       return r.ok && typeof r.value === 'string' ? JSON.parse(r.value) : fallback;
     };
-    return { evalRaw, readArray, dispose };
+    // Promise geri çağrıları (fetch().then, async fonksiyonların devamı) ancak iş kuyruğu boşaltılınca çalışır
+    const runJobs = (ms) => {
+      deadline = Date.now() + ms;
+      try {
+        rt.executePendingJobs(5000).dispose();
+      } catch {
+        tainted = true;
+      }
+    };
+    return { evalRaw, readArray, runJobs, dispose };
   }
 
-  function withBox(memoryMB, fn) {
-    const box = make(memoryMB);
+  function withBox(memoryMB, config, fn) {
+    const box = make(memoryMB, config);
     try { return fn(box); } finally { box.dispose(); }
   }
 
   function handle(msg) {
-    const { type, code, list, token, timeoutMs = 4000, memoryMB = 64 } = msg;
+    const { type, code, list, token, timeoutMs = 4000, memoryMB = 64, config = null, post = null } = msg;
 
     switch (type) {
       case 'run':
-        return withBox(memoryMB, (box) => {
+        return withBox(memoryMB, config, (box) => {
           const r = box.evalRaw(`(function () {\n${code}\n})()`, timeoutMs);
+          box.runJobs(Math.min(timeoutMs, 2000));
+          // analiz: program bittikten sonra zamanlayıcılar/olay işleyicileri tetiklenir (davranış karşılaştırmasında yok)
+          if (post) {
+            box.evalRaw(post, 2000);
+            box.runJobs(1000);
+          }
           return {
             ok: r.ok, error: r.error, out: box.readArray('__out'), res: box.readArray('__res'),
             net: box.readArray('__peelNet'), reads: box.readArray('__peelReads', {}),
+            crypto: post ? box.readArray('__peelCrypto') : [],
           };
         });
 
       case 'batch':
-        return withBox(memoryMB, (box) => ({
+        return withBox(memoryMB, config, (box) => ({
           ok: true,
           results: list.map((expr) => decodeValue(box.evalRaw(VALUE_OF(expr), 500))),
         }));

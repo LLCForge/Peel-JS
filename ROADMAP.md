@@ -57,29 +57,29 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 
 ## C. Sandbox ve dinamik analiz · Sandbox & dynamic analysis
 
-- [ ] 46. Seçilebilir tarayıcı profilleri
-- [ ] 47. Bot ve gerçek kullanıcı profili karşılaştırması
+- [~] 46. Seçilebilir tarayıcı profilleri — dört profil (Chrome/Windows, Firefox/Linux, Safari/iPhone, headless bot) sandbox yapılandırmasında; arayüzde seçici yok
+- [~] 47. Bot ve gerçek kullanıcı profili karşılaştırması — profil yapılandırmasıyla iki çalıştırma yapılabiliyor; yan yana karşılaştırma ekranı yok
 - [x] 48. Ağ çağrılarını engelleyip kaydetme (fetch, XHR, WebSocket, beacon, image, script)
-- [ ] 49. Sahte fetch/XHR yanıtları
-- [ ] 50. Zaman makinesi
-- [ ] 51. Eksik global detektörü
+- [x] 49. Sahte fetch/XHR yanıtları — yapılandırmadaki URL eşleşmesine göre fetch/XHR yanıtı
+- [~] 50. Zaman makinesi — sabit zaman ve tohum yapılandırılabilir; arayüzden ayar yok
+- [x] 51. Eksik global detektörü — ReferenceError mesajlarından
 - [x] 52. Fingerprint envanteri (navigator/screen/document/location okumaları)
-- [~] 53. Canvas/WebGL/Audio fingerprint — statik API taraması + toDataURL sayımı
+- [~] 53. Canvas/WebGL/Audio fingerprint — statik API taraması + toDataURL sayımı + profil okumaları
 - [ ] 54. Taint takibi
 - [~] 55. eval/Function ile üretilen kod — sarmalayıcılar ve js-confuser rgf (new Function) çağrı yerinde gerçek fonksiyona çevriliyor
-- [ ] 56. Timer ve Promise kuyruğunu sırayla çalıştırma
-- [ ] 57. Sentetik olaylarla handler tetikleme
+- [x] 56. Timer ve Promise kuyruğunu sırayla çalıştırma — Promise iş kuyruğu boşaltılıyor; setInterval geri çağrıları analizde bir kez çalıştırılıyor
+- [x] 57. Sentetik olaylarla handler tetikleme — kayıtlı işleyiciler analizde sentetik olayla tetikleniyor
 - [ ] 58. Sandbox anlık görüntüsü
 - [ ] 59. Deterministik replay
-- [ ] 60. Global nesne ağacı
+- [x] 60. Global nesne ağacı — programın eklediği global ad ve tipleri
 - [ ] 61. Çalışma anı çağrı grafiği
 - [ ] 62. Coverage renklendirme
 - [ ] 63. Sonsuz döngü / anti-debug tuzağını gösterme
 - [ ] 64. WASM import/export
 - [ ] 65. Onaylı gerçek DOM modu
 - [ ] 66. Worker kodunu ayrı sandbox'ta çalıştırma
-- [ ] 67. Cookie ve localStorage'ı önceden doldurma
-- [ ] 68. `subtle.encrypt` girdi/çıktısını yakalama
+- [~] 67. Cookie ve localStorage'ı önceden doldurma — çerez ve localStorage yapılandırmadan doldurulabiliyor; arayüz yok
+- [x] 68. `subtle.encrypt` girdi/çıktısını yakalama — crypto.subtle çağrıları algoritma ve veri önizlemesiyle
 - [x] 69. Pass başına süre profili
 - [ ] 70. Bellek/süre sınırlarını arayüzden ayarlama
 
@@ -88,8 +88,8 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 - [ ] 71. Yerel LLM ile adlandırma (WebGPU)
 - [ ] 72. Kural tabanlı ad önerisi
 - [ ] 73. Fonksiyon açıklama yorumları
-- [ ] 74. Bilinen kütüphaneleri tanıma (LZString, CryptoJS)
-- [ ] 75. Kütüphane sürümü tespiti
+- [x] 74. Bilinen kütüphaneleri tanıma (LZString, CryptoJS) — imza tablosu: jQuery, lodash, CryptoJS, LZString, pako, FingerprintJS, GA, Facebook Pixel, CoinHive, React, axios, forge, JSEncrypt
+- [~] 75. Kütüphane sürümü tespiti — sürüm bilgisi yorum/sabitten okunabiliyorsa
 - [ ] 76. TypeScript tip çıkarımı
 - [ ] 77. Prototype → `class`
 - [ ] 78. ES5 → modern sözdizimi
@@ -113,26 +113,26 @@ Katkı yapmak istersen bir maddeyi seç ve aynı numarayla issue aç. / Pick an 
 
 ## E. Güvenlik ve tehdit analizi · Security & threat analysis
 
-- [ ] 96. Skimmer/miner/keylogger sınıflandırması
-- [ ] 97. Magecart tespiti
+- [x] 96. Skimmer/miner/keylogger sınıflandırması — skimmer, madenci, tuş kaydedici, kimlik toplama, yönlendirme, parmak izi, dinamik kod
+- [x] 97. Magecart tespiti — ödeme alanları + dışarı gönderim
 - [~] 98. Exfiltration haritası — çalışma anı ağ çağrıları tablosu
 - [x] 99. IOC çıkarma (domain, URL, IP, e-posta, cüzdan, JWT, gömülü anahtar) + JSON dışa aktarma
 - [ ] 100. Onaylı VirusTotal/URLhaus sorgusu
-- [ ] 101. YARA kuralı üretme
-- [ ] 102. IDS imzası
+- [x] 101. YARA kuralı üretme — çözülmüş string ve IOC'lerden
+- [x] 102. IDS imzası — Suricata DNS/TLS SNI/HTTP URI kuralları
 - [~] 103. Anti-bot sinyal raporu — fingerprint okumaları + bot tespiti API'leri
-- [ ] 104. Gizlilik (GDPR) raporu
+- [x] 104. Gizlilik (GDPR) raporu — üçüncü taraflar, çerez, depolama, parmak izi
 - [ ] 105. npm supply-chain karşılaştırması
 - [ ] 106. Tarayıcı eklentisi (.crx/.xpi) analizi
-- [ ] 107. Phishing kit endpoint'leri
-- [ ] 108. Redirect zinciri
-- [ ] 109. Risk skoru kartı
+- [~] 107. Phishing kit endpoint'leri — kimlik alanları + gönderim sınıflandırması; uç nokta listesi ağ tablosunda
+- [x] 108. Redirect zinciri — location.href/assign/replace ve window.open kaydı
+- [x] 109. Risk skoru kartı — 0–100 skor, sınıf ağırlıkları
 - [x] 110. Şüpheli API kullanımı
 - [x] 111. Dışarıdan yüklenen ikinci aşama script'ler (script src / image / fetch yakalama)
 - [ ] 112. Polimorfik varyant aileleri
 - [ ] 113. Script değişim takibi
 - [ ] 114. Olay müdahale raporu
-- [ ] 115. Paylaşmadan önce anahtar maskeleme
+- [x] 115. Paylaşmadan önce anahtar maskeleme — JWT, Stripe/AWS/Google/GitHub/Slack anahtarları, e-posta, uzun gizli string
 
 ## F. Arayüz ve editör · UI & editor
 

@@ -63,7 +63,47 @@ function passTimes(list) {
   }));
 }
 
-export function renderReport(root, report, onExport) {
+function threat(th, runtime, actions) {
+  const risk = el('div', { class: `risk risk-${th.risk.level}` },
+    el('b', {}, String(th.risk.score)), el('span', {}, t(`report.risk.${th.risk.level}`)));
+  const classes = th.classes.length
+    ? table([t('report.threat.class'), t('report.threat.evidence')], th.classes.map((c) => [t(`report.class.${c.id}`), c.evidence.map(td).join(' · ')]), ['', 'rep-muted'])
+    : muted('report.threat.none');
+  const libs = th.libraries.length
+    ? el('div', { class: 'chips' }, ...th.libraries.map((l) => el('span', { class: 'chip' }, l.name, l.version ? el('b', {}, l.version) : null)))
+    : muted('report.libs.none');
+  const pv = th.privacy;
+  const dl = el('dl', { class: 'kv' });
+  const row = (key, value) => dl.append(el('dt', {}, t(key)), el('dd', {}, value), el('dd', {}, ''));
+  row('report.privacy.third', pv.thirdParties.join(', ') || '–');
+  row('report.privacy.cookies', t(pv.cookies ? 'yes' : 'no'));
+  row('report.privacy.storage', t(pv.storage ? 'yes' : 'no'));
+  row('report.privacy.fp', pv.fingerprinting.join(', ') || '–');
+  const post = runtime.post;
+  if (post) {
+    row('report.post.fired', `${post.fired} (${[...new Set(post.handlers)].join(', ') || '–'}; setInterval: ${post.timers})`);
+    row('report.post.globals', post.globals.map((g) => `${g.name}: ${g.type}`).join(', ') || '–');
+  }
+  row('report.missing', th.missingGlobals.join(', ') || '–');
+  const crypto = runtime.crypto?.length
+    ? table(['op', 'alg', 'data'], runtime.crypto.map((c) => [c.op, c.alg, c.data || '–']), ['mono', 'mono', 'mono'])
+    : null;
+  const btn = (key, fn) => {
+    const b = el('button', { type: 'button', class: 'ghost' }, t(key));
+    b.addEventListener('click', fn);
+    return b;
+  };
+  return el('div', {}, risk, classes,
+    el('h4', {}, t('report.libs')), libs,
+    el('h4', {}, t('report.privacy')), dl,
+    crypto ? el('h4', {}, t('report.crypto')) : null, crypto,
+    el('div', { class: 'rep-actions' },
+      th.yara ? btn('action.yara', actions.yara) : null,
+      th.ids ? btn('action.ids', actions.ids) : null,
+      btn('action.masked', actions.masked)));
+}
+
+export function renderReport(root, report, onExport, actions = {}) {
   root.textContent = '';
   if (!report) {
     root.append(el('p', { class: 'placeholder' }, t('report.empty')));
@@ -74,6 +114,7 @@ export function renderReport(root, report, onExport) {
   exportBtn.addEventListener('click', onExport);
 
   root.append(el('div', { class: 'rep' },
+    report.threat ? section('report.threat', threat(report.threat, runtime, actions)) : null,
     section('report.detect', detection(report.fingerprint)),
     section('report.metrics', metrics(report.metrics)),
     section('report.network',
