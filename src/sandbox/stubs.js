@@ -413,6 +413,36 @@ globalThis.__peelReads = {};
   Object.assign(navigator, prof.navigator || {});
   Object.assign(screen, prof.screen || {});
 })();
+// QuickJS "".fontcolor() gibi HTML yöntemlerini argümansız çağırınca hata verir; tarayıcılar
+// <font color="undefined"> üretir. jsfuck " karakterini buradan alır: tarayıcı davranışına eşitle.
+(function () {
+  try { "".fontcolor(); return; } catch (e) {}
+  var tags = { anchor: ["a", "name"], fontcolor: ["font", "color"], fontsize: ["font", "size"], link: ["a", "href"] };
+  Object.keys(tags).forEach(function (k) {
+    var tag = tags[k][0], attr = tags[k][1];
+    Object.defineProperty(String.prototype, k, { writable: true, configurable: true, value: function (v) {
+      if (this === null || this === undefined) throw new TypeError("String.prototype." + k + " called on null or undefined");
+      return "<" + tag + " " + attr + '="' + String(v).replace(/"/g, "&quot;") + '">' + String(this) + "</" + tag + ">";
+    } });
+  });
+})();
+// obfuscator.io selfDefending: fn.toString().search("(((.+)+)+)+$"). QuickJS'in özyinelemeli regex motoru uzun
+// metinde host yığınını taşırır (tarayıcıda anında biter). Kalıbın anlamı kesin hesaplanır: en soldaki eşleşme,
+// sonunda satır sonu içermeyen boş olmayan son satırın başıdır; son karakter satır sonuysa eşleşme yoktur.
+(function () {
+  var NESTED = "(((.+)+)+)+$";
+  var realSearch = String.prototype.search;
+  var lastLine = function (s) {
+    var i = Math.max(s.lastIndexOf("\\n"), s.lastIndexOf("\\r"), s.lastIndexOf("\\u2028"), s.lastIndexOf("\\u2029")) + 1;
+    return i < s.length ? i : -1;
+  };
+  Object.defineProperty(String.prototype, "search", { writable: true, configurable: true, value: function search(re) {
+    if (this === null || this === undefined) throw new TypeError("String.prototype.search called on null or undefined");
+    var src = typeof re === "string" ? re : re instanceof RegExp && re.flags === "" ? re.source : null;
+    if (src === NESTED) return lastLine(String(this));
+    return realSearch.call(this, re);
+  } });
+})();
 
 // C66: Blob, object URL ve Worker yakalama — worker kodu analizde ayrı sandbox'ta çalıştırılır
 globalThis.__peelWorkers = [];

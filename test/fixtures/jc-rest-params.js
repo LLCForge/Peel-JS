@@ -11,6 +11,6 @@ var mul = function (...Q) {
   return Q[0] * Q[1];
 };
 console.log(sum3(1, 2), sum3(1, 2, 3, 4), mul(6, 7));
-// EXPECT: function sum3(
+// EXPECT: var mul = function (arg0, arg1)
 // GONE: .length = 3
 // GONE: ...Q

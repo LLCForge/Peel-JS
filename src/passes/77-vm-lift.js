@@ -3,6 +3,7 @@ import { gen } from '../util/ast.js';
 import { keyPath, follow, placeAt } from '../util/keypath.js';
 import { fnv1a } from '../util/hash.js';
 import { findVms } from '../core/vm/detect.js';
+import { isStaticDispatcher } from './70-control-flow.js';
 import { HOLE } from '../core/vm/interp.js';
 import { collectNames } from '../core/vm/lift.js';
 import { staticValues, instrument, captureRun, decodeCapture } from '../core/vm/values.js';
@@ -197,7 +198,8 @@ function serializable(a, extra) {
 
 export async function run(ast, ctx) {
   const { onLog, bump, sandbox } = ctx;
-  const all = findVms(ast).filter((vm) => !hasNote(vm.stmtPath.node) && !hasNote(vm.loopPath.node));
+  // obfuscator.io '2|0|1'.split('|') dağıtıcıları control-flow pass'inde birebir açılır
+  const all = findVms(ast).filter((vm) => !hasNote(vm.stmtPath.node) && !hasNote(vm.loopPath.node) && !isStaticDispatcher(vm.loopPath));
   if (!all.length) return;
   // iç içe statik VM'lerde önce en içteki çevrilir; dıştaki bir sonraki turda yeniden analiz edilir
   const vms = all.filter((vm) => !all.some((o) => o !== vm && o.loopPath.findParent((x) => x === vm.loopPath)));

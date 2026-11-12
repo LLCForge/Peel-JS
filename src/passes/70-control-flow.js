@@ -158,3 +158,22 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
   bump('controlFlow', n);
   bump('controlFlowTraced', traced);
 }
+
+// Sırası statik bilinen obfuscator.io dağıtıcısı mı? vm-lift bu döngüleri bu pass'e bırakır: burada birebir ve
+// bildirimleri koruyarak açılırlar.
+export function isStaticDispatcher(p) {
+  if (!p.isWhileStatement()) return false;
+  const d = dispatcherOf(p);
+  if (!d) return false;
+  if (staticOrder(d.orderB)) return true;
+  // sıra string'i henüz depo nesnesinin arkasında olabilir: o.k.split("|"), o = { k: "2|0|1" }
+  const init = d.orderB?.constant && d.orderB.path.isVariableDeclarator() ? d.orderB.path.node.init : null;
+  const c = t.isCallExpression(init) && init.arguments.length === 1 && t.isStringLiteral(init.arguments[0]) ? init.callee : null;
+  if (!t.isMemberExpression(c) || !t.isMemberExpression(c.object) || !t.isIdentifier(c.object.object)) return false;
+  const prop = c.computed ? c.property.value : c.property.name;
+  const key = c.object.computed ? c.object.property.value : c.object.property.name;
+  const ob = d.orderB.path.scope.getBinding(c.object.object.name);
+  if (prop !== 'split' || !ob?.constant || !ob.path.isVariableDeclarator() || !t.isObjectExpression(ob.path.node.init)) return false;
+  return ob.path.node.init.properties.some((x) => t.isObjectProperty(x) && !x.computed && t.isStringLiteral(x.value) &&
+    (t.isIdentifier(x.key, { name: key }) || t.isStringLiteral(x.key, { value: key })));
+}

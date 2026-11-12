@@ -205,6 +205,94 @@ export const PASS_DOCS = {
     tr: 'Dönüşümler sırasında kaybolan girdi yorumlarını, bağlı oldukları bildirim hâlâ duruyorsa geri koyar.',
     en: 'Restores input comments lost during transforms when the declaration they belonged to still exists.',
   },
+  sourcemap: {
+    tr: 'Satır içi kaynak haritasında adı bulunan bağlamalara özgün adlarını geri verir.',
+    en: 'Restores original names for bindings that an inline source map names.',
+  },
+  integrity: {
+    tr: 'Kaynak metninin özetine bakan bütünlük denetimlerini özgün sonuçlarıyla değiştirir, js-confuser selfDefending denetimini kaldırır.',
+    en: 'Replaces source-hash integrity checks with their original outcome and removes js-confuser selfDefending checks.',
+  },
+  'static-decode': {
+    tr: 'decodeURIComponent, parseInt gibi saf global çağrıları sabit argümanlarla sandbox olmadan katlar.',
+    en: 'Folds pure global calls such as decodeURIComponent and parseInt with constant arguments, without a sandbox.',
+  },
+  'iife-args': {
+    tr: 'jfogs: değerleri parametreye taşıyan IIFE\'nin çözücü önsözünü çalıştırıp değerleri kullanım yerlerine yazar.',
+    en: 'jfogs: runs the decoder prelude of the parameter-hoisting IIFE and writes the values back to their uses.',
+  },
+  'static-strings': {
+    tr: 'obfuscator.io string dizisini ofset, kodlama ve rotasyonu statik çözerek sandbox olmadan açar.',
+    en: 'Decodes the obfuscator.io string array without a sandbox by solving offset, encoding and rotation statically.',
+  },
+  'eval-inline': {
+    tr: 'Fonksiyonun tek deyimi olan sabit eval("…") kodunu (webpack eval devtool) fonksiyon gövdesine yerleştirir.',
+    en: 'Inlines a constant eval("…") that is a function\'s only statement (webpack eval devtool) into the body.',
+  },
+  rgf: {
+    tr: 'js-confuser RGF: eval ile üretilen string fonksiyonları gerçek fonksiyona, kabukları özgün gövdeye çevirir.',
+    en: 'js-confuser RGF: turns eval-generated string functions into real functions and shells back into their bodies.',
+  },
+  confuser: {
+    tr: 'js-confuser dispatcher\'ını ve variableMasking rest dizisini açar, __generator durum makinesini function*\'a çevirir.',
+    en: 'Unpacks the js-confuser dispatcher and variableMasking rest array, turns __generator machines into function*.',
+  },
+  indirection: {
+    tr: 'Getter/this/bind proxy\'leri ve destructuring ile gizlenmiş atamalar gibi dolaylılıkları söker.',
+    en: 'Removes indirections such as getter/this/bind proxies and destructuring-hidden assignments.',
+  },
+  'flat-fns': {
+    tr: 'js-confuser flatten: program düzeyine taşınan gövdeyi düz nesneden arındırıp kabuğuna geri koyar.',
+    en: 'js-confuser flatten: moves the hoisted body back into its shell, resolving the flat object.',
+  },
+  'opaque-smt': {
+    tr: 'Kalan opak koşulları bit-vektör çözücüyle kanıtlayıp sabite çevirir.',
+    en: 'Proves remaining opaque conditions with a bit-vector solver and replaces them with constants.',
+  },
+  'ssa-opt': {
+    tr: 'SSA üzerinde sabit yayılımı, kopya yayılımı, ortak alt ifade ve ölü atama eleme.',
+    en: 'Constant and copy propagation, common subexpression and dead store elimination on SSA.',
+  },
+  'loop-opt': {
+    tr: 'Döngü değişmezi taşıma, indüksiyon değişkeni sadeleştirme ve sabit turlu döngüleri açma.',
+    en: 'Loop-invariant motion, induction variable simplification and unrolling of constant-trip loops.',
+  },
+  specialize: {
+    tr: 'Sabit argümanlarla çağrılan fonksiyonun o sabitlerle sadeleşmiş kopyasını üretir.',
+    en: 'Creates a copy of a function specialised for the constant arguments it is called with.',
+  },
+  flow: {
+    tr: 'try/catch ile gizlenmiş akış, küçük switch\'ler ve zamanlama tabanlı anti-debug gibi akış biçimlerini düzeltir.',
+    en: 'Normalises flow such as try/catch-hidden jumps, small switches and timing-based anti-debug.',
+  },
+  regenerator: {
+    tr: 'regenerator durum makinesini yield/await kullanan düz fonksiyona çevirir.',
+    en: 'Turns a regenerator state machine back into a plain function using yield/await.',
+  },
+  'cfg-opt': {
+    tr: 'switch normalizasyonu, atlama ipekleme ve if-dönüşümü gibi kontrol akışı sadeleştirmeleri.',
+    en: 'Control-flow clean-ups such as switch normalisation, jump threading and if-conversion.',
+  },
+  restructure: {
+    tr: 'Literal kaynaklı destructuring gibi yapısal gizlemeleri anlamı koruyarak düz biçime çevirir.',
+    en: 'Rewrites structural disguises such as literal-sourced destructuring into plain form.',
+  },
+  'dead-extra': {
+    tr: 'Kullanılmayan parametre, import, yinelenen tanım ve erişilemeyen kod gibi fazlalıkları siler.',
+    en: 'Deletes leftovers such as unused parameters and imports, duplicate definitions and unreachable code.',
+  },
+  'confuser-runtime': {
+    tr: 'js-confuser stringConcealing\'in string\'ler çözüldükten sonra ölü kalan çalışma anı yardımcısını (getGlobal, UTF-8 çözücü) siler.',
+    en: 'Removes the js-confuser stringConcealing runtime helper (getGlobal, UTF-8 decoder) left dead once strings are decoded.',
+  },
+  'cff-scope': {
+    tr: 'js-confuser kontrol akışı düzleştirmesinin makine kopyalarını kabuklarına taşır, kapsam nesnesi özelliklerini yerel değişkenlere böler.',
+    en: 'Moves js-confuser flattening machine copies back into their shells and splits scope-object properties into locals.',
+  },
+  webpack: {
+    tr: 'webpack paketinde modül tablosunu ve require fonksiyonunu tanır, webpack adlarını geri verir, modülleri işaretler.',
+    en: 'Recognises the webpack module table and require function, restores webpack names and marks modules.',
+  },
 };
 
 export const LESSONS = TECHNIQUES.filter((x) => x.example);

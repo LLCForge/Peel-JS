@@ -2,12 +2,18 @@ import * as normalize from '../passes/00-normalize.js';
 import * as unpack from '../passes/10-unpack-wrapper.js';
 import * as predecoders from '../passes/20-predecoders.js';
 import * as literals from '../passes/25-literals.js';
+import * as iifeArgs from '../passes/23-iife-args.js';
 import * as constArrays from '../passes/27-const-arrays.js';
 import * as constObjects from '../passes/28-const-objects.js';
 import * as wrappers from '../passes/29-wrappers.js';
 import * as stringArray from '../passes/30-string-array.js';
 import * as runtimeDecoders from '../passes/35-runtime-decoders.js';
 import * as runtimeFunctions from '../passes/36-runtime-functions.js';
+import * as evalInline from '../passes/38-eval-inline.js';
+import * as rgf from '../passes/39-rgf.js';
+import * as flatFns from '../passes/47-flat-fns.js';
+import * as cffScope from '../passes/46-cff-scope.js';
+import * as confuserRuntime from '../passes/48-confuser-runtime.js';
 import * as proxy from '../passes/40-proxy.js';
 import * as constFold from '../passes/50-const-fold.js';
 import * as opaque from '../passes/60-opaque.js';
@@ -20,6 +26,7 @@ import * as antiTiming from '../passes/79-anti-timing.js';
 import * as deadCode from '../passes/80-dead-code.js';
 import * as simplify from '../passes/85-simplify.js';
 import * as unused from '../passes/90-unused.js';
+import * as webpack from '../passes/93-webpack.js';
 import * as rename from '../passes/95-rename.js';
 import * as opaqueSmt from '../passes/62-opaque-smt.js';
 import * as ssaOpt from '../passes/55-ssa-opt.js';
@@ -61,6 +68,7 @@ export const PASSES = [
   { id: 'integrity',    level: 1, kind: 'ast',  needs: 'sandbox', mod: integrity },
   { id: 'literals',     level: 1, kind: 'ast',  needs: null,      mod: literals },
   { id: 'static-decode', level: 1, kind: 'ast', needs: null,      mod: staticDecode },
+  { id: 'iife-args',    level: 2, kind: 'ast',  needs: null,      mod: iifeArgs },
   { id: 'const-arrays', level: 1, kind: 'ast',  needs: null,      mod: constArrays },
   { id: 'const-objects', level: 1, kind: 'ast',  needs: null,      mod: constObjects },
   { id: 'wrappers',     level: 2, kind: 'ast',  needs: null,      mod: wrappers },
@@ -68,11 +76,15 @@ export const PASSES = [
   { id: 'string-array', level: 2, kind: 'ast',  needs: 'sandbox', mod: stringArray },
   { id: 'runtime-decoders', level: 2, kind: 'ast', needs: 'sandbox', mod: runtimeDecoders },
   { id: 'runtime-functions', level: 3, kind: 'ast', needs: 'sandbox', mod: runtimeFunctions },
+  { id: 'eval-inline',  level: 2, kind: 'ast',  needs: null,      mod: evalInline },
+  { id: 'rgf',          level: 2, kind: 'ast',  needs: null,      mod: rgf },
   { id: 'confuser',     level: 2, kind: 'ast',  needs: null,      mod: confuser },
   { id: 'proxy',        level: 2, kind: 'ast',  needs: null,      mod: proxy },
   { id: 'indirection',  level: 2, kind: 'ast',  needs: null,      mod: indirection },
+  { id: 'flat-fns',     level: 2, kind: 'ast',  needs: null,      mod: flatFns },
   { id: 'const-fold',   level: 1, kind: 'ast',  needs: 'sandbox', mod: constFold },
   { id: 'dead-code',    level: 2, kind: 'ast',  needs: null,      mod: deadCode },
+  { id: 'confuser-runtime', level: 2, kind: 'ast', needs: null,   mod: confuserRuntime },
   { id: 'opaque',       level: 2, kind: 'ast',  needs: null,      mod: opaque },
   { id: 'opaque-smt',   level: 2, kind: 'ast',  needs: null,      mod: opaqueSmt },
   { id: 'ssa-opt',      level: 3, kind: 'ast',  needs: null,      mod: ssaOpt },
@@ -81,6 +93,7 @@ export const PASSES = [
   { id: 'state-var',    level: 3, kind: 'ast',  needs: null,      mod: stateVar },
   { id: 'vm-lift',      level: 3, kind: 'ast',  needs: null,      mod: vmLift },
   { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
+  { id: 'cff-scope',    level: 3, kind: 'ast',  needs: null,      mod: cffScope },
   { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
   { id: 'anti-timing',  level: 2, kind: 'ast',  needs: null,      mod: antiTiming },
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
@@ -91,6 +104,7 @@ export const PASSES = [
   { id: 'restructure',  level: 2, kind: 'ast',  needs: null,      mod: restructure },
   { id: 'dead-extra',   level: 2, kind: 'ast',  needs: null,      mod: deadExtra },
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
+  { id: 'webpack',      level: 2, kind: 'ast',  needs: null,      mod: webpack },
   { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },
   // okunabilirlik: Babel kalıntıları, modern sözdizimi, birleştirme/çıkarma, adlandırma ve yorumlar
   { id: 'babel',        level: 4, kind: 'ast',  needs: null,      mod: babelHelpers, finish: true },

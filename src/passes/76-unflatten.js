@@ -3,6 +3,7 @@ import { traverse, gen } from '../util/ast.js';
 import { literalOf } from '../util/literal.js';
 import { isLiteralTree } from '../util/pure.js';
 import { keyPath, placeAt } from '../util/keypath.js';
+import { staticStates } from './46-cff-scope.js';
 import { caseSummaries, machineReport } from '../core/vm/sm.js';
 
 // Durum makinesini düz koda çevirir.
@@ -297,16 +298,18 @@ function substitute(node, S, m, E) {
 // Makineyi hedefleyen (etiketsiz, kendi döngü/switch'i içinde olmayan) break/continue var mı?
 function hasMachineJump(node) {
   let found = false;
-  const walk = (n, nested) => {
+  // deyimin kendi içinde tanımlanan etiketler (outer: for (…) { … break outer; }) makineye atlamaz
+  const walk = (n, nested, labels) => {
     if (!n || typeof n !== 'object' || found || t.isFunction(n)) return;
-    if ((t.isBreakStatement(n) || t.isContinueStatement(n)) && (n.label || !nested)) { found = true; return; }
+    if ((t.isBreakStatement(n) || t.isContinueStatement(n)) && (n.label ? !labels.has(n.label.name) : !nested)) { found = true; return; }
     const inner = nested || t.isLoop(n) || t.isSwitchStatement(n);
+    const own = t.isLabeledStatement(n) ? new Set([...labels, n.label.name]) : labels;
     for (const k of t.VISITOR_KEYS[n.type] ?? []) {
       const v = n[k];
-      if (Array.isArray(v)) v.forEach((c) => walk(c, inner)); else walk(v, inner);
+      if (Array.isArray(v)) v.forEach((c) => walk(c, inner, own)); else walk(v, inner, own);
     }
   };
-  walk(node, false);
+  walk(node, false, new Set());
   return found;
 }
 
@@ -856,35 +859,55 @@ async function arrayMachines(ast, sumFns, { sandbox, onLog }) {
   traverse(ast, {
     FunctionDeclaration(p) {
       // gövde: [ …önce çalışan deyimler (parametre açma vb.), makine döngüsü ]
-      const body = p.node.body.body;
+      // sondaki çıplak return; (makineden düşüldüğünde undefined döndürür) makineden sonra kalabilir
+      const all = p.node.body.body;
+      const tail = all.length > 1 && t.isReturnStatement(all[all.length - 1]) && !all[all.length - 1].argument ? 1 : 0;
+      const body = tail ? all.slice(0, -1) : all;
       if (!p.node.id || !body.length) return;
       const last = body[body.length - 1];
       const mach = t.isLabeledStatement(last) ? machineOf(last.body, last.label.name) : machineOf(last);
       if (!mach || !t.isCallExpression(mach.disc) || !t.isIdentifier(mach.disc.callee) || !sumFns.has(mach.disc.callee.name)) return;
       const arg = mach.disc.arguments[0];
-      const pi = p.node.params.findIndex((x) => t.isIdentifier(x, { name: arg?.name }));
-      if (pi < 0) return;
-      // döngüden önceki deyimler durum dizisine dokunmamalı: başlangıç değeri çağrı yerindeki argümandır
+      let pi = p.node.params.findIndex((x) => t.isIdentifier(x, { name: arg?.name }));
+      let elem = -1;
       const prefix = body.slice(0, -1);
-      if (prefix.some((s) => gen(s).match(new RegExp(`\\b${arg.name.replace(/\$/g, '\\$')}\\b`)))) return;
+      if (pi < 0) {
+        // js-confuser yüksek ayar: durum dizisi argüman dizisinden açılır, kapsam nesnesinde tutulur:
+        //   function M(a, scope, rt, args) { [scope.K.S, scope.K.x = {…}] = args; while (sum(scope.K.S) !== N) … }
+        const path = arg ? pathOf(arg) : null;
+        const first = prefix[0]?.expression;
+        if (!path || !t.isMemberExpression(arg) || prefix.length !== 1 || !t.isAssignmentExpression(first, { operator: '=' }) ||
+            !t.isArrayPattern(first.left) || !t.isIdentifier(first.right)) return;
+        elem = first.left.elements.findIndex((e) => e && pathOf(e) === path);
+        pi = p.node.params.findIndex((x) => t.isIdentifier(x, { name: first.right.name }));
+        if (elem < 0 || pi < 0) return;
+        // dizinin başka elemanları durum yolunu yazmamalı
+        if (first.left.elements.some((e, i) => i !== elem && e && gen(e).includes(path))) return;
+      } else if (prefix.some((s) => gen(s).match(new RegExp(`\\b${arg.name.replace(/\$/g, '\\$')}\\b`)))) {
+        // döngüden önceki deyimler durum dizisine dokunmamalı: başlangıç değeri çağrı yerindeki argümandır
+        return;
+      }
       const b = p.parentPath.scope.getBinding(p.node.id.name);
       if (!b) return;
       const calls = b.referencePaths.map((r) => r.parentPath);
       if (!calls.every((c, i) => c.isCallExpression({ callee: b.referencePaths[i].node }) && c.node.arguments.length > pi &&
           !c.node.arguments.some((a) => t.isSpreadElement(a)))) return;
-      targets.push({ p, mach, pi, arrayName: arg.name, calls });
+      targets.push({ p, mach, tail, pi, elem, arrayName: elem < 0 ? arg.name : pathOf(arg), pathNode: elem < 0 ? null : arg, calls });
     },
   });
   if (!targets.length || !sandbox) return 0;
 
   // başlangıç dizilerini gözle: main(X) → main(__peelInit(k, X))
   const saved = [];
+  const tgSiteOf = new Map();
   let site = 0;
   for (const tg of targets) {
     tg.sites = tg.calls.map((c) => {
       const k = site++;
       saved.push([c.node, c.node.arguments[tg.pi]]);
-      c.node.arguments[tg.pi] = t.callExpression(t.identifier('__peelInit'), [t.numericLiteral(k), c.node.arguments[tg.pi]]);
+      tgSiteOf.set(c.node, { k, c, elem: tg.elem });
+      // durum dizisi argüman dizisinin bir elemanıysa o eleman kaydedilir
+      c.node.arguments[tg.pi] = t.callExpression(t.identifier('__peelInit'), [t.numericLiteral(k), c.node.arguments[tg.pi], t.numericLiteral(tg.elem)]);
       return k;
     });
   }
@@ -894,13 +917,23 @@ async function arrayMachines(ast, sumFns, { sandbox, onLog }) {
     node.arguments[i] = arg;
   }
   const prelude = `var __peelInits = {};
-function __peelInit(k, v) {
+function __peelInit(k, w, e) {
+  var v = e >= 0 ? (Array.isArray(w) ? w[e] : undefined) : w;
   var s = Array.isArray(v) && v.every(function (x) { return typeof x === "number"; }) ? JSON.stringify(v) : null;
   if (!(k in __peelInits)) __peelInits[k] = s; else if (__peelInits[k] !== s) __peelInits[k] = null;
-  return v;
+  return w;
 }`;
   const r = await sandbox.run(`${prelude}\ntry {\n${code}\n} catch (e) {}\n__res.push(__peelInits);`, { timeoutMs: 8000 });
   const inits = r.res?.[0] ?? {};
+  // çalışmada hiç çağrılmayan yerler (ölü kalmış ya da koşula bağlı fonksiyonlar): argüman sayılar ve hiç
+  // değişmeyen sabit dizinin dilimlerinden oluşuyorsa başlangıç durumu statik hesaplanır
+  for (const [node, arg] of saved) {
+    const { k, c, elem } = tgSiteOf.get(node) ?? {};
+    if (k === undefined || k in inits) continue;
+    const src = elem >= 0 ? (t.isArrayExpression(arg) ? arg.elements[elem] : null) : arg;
+    const arr = src ? staticStates(src, c) : null;
+    if (arr) inits[k] = JSON.stringify(arr);
+  }
 
   const used = new Set();
   traverse(ast, { Identifier(q) { used.add(q.node.name); } });
@@ -912,7 +945,8 @@ function __peelInit(k, v) {
   };
   let made = 0;
   for (const tg of targets) {
-    const m = { ...tg.mach, vars: new Set(), arrays: new Set([tg.arrayName]), sumFns };
+    const m = { ...tg.mach, vars: new Set(), arrays: new Set([tg.arrayName]), sumFns,
+      ...(tg.pathNode ? { pathNodes: new Map([[tg.arrayName, tg.pathNode]]), syncOnExit: true } : {}) };
     const clones = new Map();
     let converted = 0;
     tg.calls.forEach((c, i) => {
@@ -927,7 +961,7 @@ function __peelInit(k, v) {
           name = uniqueName(`${tg.p.node.id.name}_${clones.size}`);
           const fn = t.cloneNode(tg.p.node, true);
           fn.id = t.identifier(name);
-          fn.body = t.blockStatement([...fn.body.body.slice(0, -1), ...body]);
+          fn.body = t.blockStatement([...fn.body.body.slice(0, -1 - tg.tail), ...body, ...fn.body.body.slice(fn.body.body.length - tg.tail)]);
           tg.p.insertAfter(fn);
           made++;
         } catch (e) {

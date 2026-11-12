@@ -32,6 +32,14 @@ export const PASS_DEPS = {
   'loop-opt': { after: ['ssa-opt'], why: 'IV/aralık tespiti SCCP ve kopya yayılımı sonrası sade döngüde' },
   specialize: { after: ['loop-opt'], why: 'kısmi değerlendirme sadeleşmiş gövde üzerinde' },
   'cfg-opt': { after: ['simplify'], why: 'if-dönüşümü ve ipekleme son sadeleştirilmiş yapıda' },
+  integrity: { after: ['predecoders'], why: 'özet denetimleri kaynak metni değiştiren her AST pass\'inden önce açılmalı' },
+  'iife-args': { after: ['literals'], why: 'jfogs önsözü normalleştirilmiş literal argümanlarla çalıştırılır' },
+  'eval-inline': { after: ['runtime-decoders'], why: 'eval argümanı ancak string tablosu çözülünce sabit olur' },
+  rgf: { after: ['runtime-decoders'], why: 'RGF tablosundaki kod string\'leri çözülmüş olmalı' },
+  'flat-fns': { after: ['confuser'], why: 'dispatcher açılınca flatten kabuğu doğrudan çağrıya döner' },
+  webpack: { after: ['unused'], why: 'adlar ölü bağlamalar silindikten sonra geri verilir' },
+  'confuser-runtime': { after: ['dead-code'], why: 'yardımcı ancak string çağrıları çözülüp ölü dallar silinince kullanılmaz olur' },
+  'cff-scope': { after: ['unflatten'], why: 'kapsam nesneleri durum makinesi açıldıktan sonra yerel değişkenlere bölünür' },
 };
 
 /** Kayıt defteri sırasını bağımlılıklarla denetler; topolojik sıra, döngüler ve ihlaller. */

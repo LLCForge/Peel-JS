@@ -72,6 +72,16 @@ function readDispatcher(fnPath) {
   let payload = null;
   let lengthHelper = null;
   for (const s of body) {
+    // movedDeclarations: var fns = {…} yerine kullanılmayan bir parametreye atama: P = {…}
+    const movedFns = t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression, { operator: '=' }) &&
+      t.isIdentifier(s.expression.left) && t.isObjectExpression(s.expression.right) &&
+      fn.params.slice(3).some((x) => t.isIdentifier(x, { name: s.expression.left.name }) || (t.isAssignmentPattern(x) && t.isIdentifier(x.left, { name: s.expression.left.name })));
+    if (movedFns) {
+      const obj = s.expression.right;
+      if (!obj.properties.every((p) => t.isObjectProperty(p) && strKey(p.key, p.computed) !== null && t.isFunctionExpression(p.value))) return null;
+      fns = new Map(obj.properties.map((p) => [strKey(p.key, p.computed), p.value]));
+      fnsName = s.expression.left.name;
+    }
     if (t.isVariableDeclaration(s) && s.declarations.length === 1 && t.isObjectExpression(s.declarations[0].init) &&
         t.isIdentifier(s.declarations[0].id)) {
       const obj = s.declarations[0].init;
@@ -110,18 +120,24 @@ function readDispatcher(fnPath) {
 // fns girdisi: function () { var [a, b] = payload; ... }  → { params, body } (yoksa null)
 function readEntry(entryPath, payload, dispatcherPath) {
   const fnNode = entryPath.node;
-  if (fnNode.params.length || fnNode.async || fnNode.generator || usesThisOrArguments(fnNode)) return null;
-  const body = fnNode.body.body;
+  if (fnNode.async || fnNode.generator || usesThisOrArguments(fnNode)) return null;
+  // movedDeclarations: yereller kullanılmayan parametrelere taşınmış olabilir (fns[name]() argümansız çağrılır):
+  // yeniden yerel var olurlar
+  if (!fnNode.params.every((x) => t.isIdentifier(x))) return null;
+  const moved = fnNode.params.length ? [t.variableDeclaration('var', fnNode.params.map((x) => t.variableDeclarator(t.identifier(x.name))))] : [];
+  const body = fnNode.body.body.filter((x) => !(t.isExpressionStatement(x) && t.isUnaryExpression(x.expression, { operator: '!' }) && t.isIdentifier(x.expression.argument)));
   let params = [];
   let rest = body;
   const first = body[0];
   if (t.isVariableDeclaration(first) && first.declarations.length === 1 && t.isArrayPattern(first.declarations[0].id) &&
       t.isIdentifier(first.declarations[0].init, { name: payload })) {
     const els = first.declarations[0].id.elements;
-    if (!els.every((e) => t.isIdentifier(e) || (t.isRestElement(e) && t.isIdentifier(e.argument)))) return null;
+    // iç içe kalıplar da parametre olabilir: flatten + dispatcher → var [flatObject, [a, b]] = payload
+    if (!els.every((e) => e && (t.isIdentifier(e) || t.isArrayPattern(e) || t.isObjectPattern(e) || t.isAssignmentPattern(e) || (t.isRestElement(e) && t.isIdentifier(e.argument))))) return null;
     params = els;
     rest = body.slice(1);
   }
+  rest = [...moved, ...rest];
   // payload başka yerde okunmamalı; dispatcher'ın yerel adlarına (fns, output, name...) bakmamalı
   let bad = false;
   t.traverseFast(t.blockStatement(rest), (n) => { if (t.isIdentifier(n, { name: payload })) bad = true; });
@@ -258,49 +274,108 @@ function dispatchers(ast, onLog) {
   return n;
 }
 
-// ── A-21: rest parametre + length ───────────────────────
+// ── A-21: rest parametre (variableMasking) ───────────
+
+// js-confuser variableMasking (1.x "stack"): parametreler ve yereller tek rest dizisinin elemanlarına taşınır:
+//   function sum(...M) { M.length = 1; M.a = 0; for (M[2] = 0; …) M.a += M[0][M[2]]; return M.a; }
+// Sayısal indeksler parametre, adlı anahtarlar yerel değişken olur. Gövde başındaki "M.length = N" fazla
+// argümanları siler: o zaman N ve üstü indeksler yereldir; bu deyim yoksa en büyük indekse kadar her indeks
+// parametre kalır (fazla argüman gelirse aynı değeri alsın). Atlanır: M başka biçimde kullanılıyorsa
+// (M.length okuması, aktarım, dinamik anahtar, M.x() çağrısı, prototipten gelen ad), gövde arguments kullanıyorsa.
+// Not: rest parametreli fonksiyonun length'i 0'dı, açılınca parametre sayısı olur.
+
+const MAX_MASK_INDEX = 64;
+
+function maskKey(member) {
+  if (!member.computed && t.isIdentifier(member.property)) return member.property.name;
+  if (member.computed && t.isNumericLiteral(member.property) && Number.isInteger(member.property.value)) return member.property.value;
+  if (member.computed && t.isStringLiteral(member.property)) {
+    const v = member.property.value;
+    return /^(0|[1-9]\d*)$/.test(v) ? Number(v) : v;
+  }
+  return null;
+}
+
+function usesOwnArguments(fnPath) {
+  let hit = false;
+  fnPath.traverse({
+    Identifier(p) {
+      if (p.node.name === 'arguments' && p.isReferencedIdentifier() && !p.scope.getBinding('arguments')) {
+        const owner = p.getFunctionParent();
+        if (owner === fnPath || (owner?.isArrowFunctionExpression() && owner.findParent((x) => x === fnPath))) { hit = true; p.stop(); }
+      }
+    },
+  });
+  return hit;
+}
 
 function restParams(ast) {
   let n = 0;
   traverse(ast, {
-    Function(p) {
-      const params = p.node.params;
-      if (params.length !== 1 || !t.isRestElement(params[0]) || !t.isIdentifier(params[0].argument) || !t.isBlockStatement(p.node.body)) return;
-      const M = params[0].argument.name;
-      const first = p.node.body.body[0];
-      const a = t.isExpressionStatement(first) && first.expression;
-      if (!t.isAssignmentExpression(a, { operator: '=' }) || !t.isMemberExpression(a.left) || a.left.computed ||
-          !t.isIdentifier(a.left.object, { name: M }) || !t.isIdentifier(a.left.property, { name: 'length' }) ||
-          !t.isNumericLiteral(a.right) || !Number.isInteger(a.right.value) || a.right.value > 64) return;
-      const N = a.right.value;
-      if (!p.isArrowFunctionExpression() && usesArguments(p.node.body)) return;
-      const b = p.scope.getOwnBinding(M);
-      if (!b || b.constantViolations.length) return;
-      const uses = [];
-      for (const r of b.referencePaths) {
-        if (r.findParent((x) => x.node === first)) continue;
-        const m = r.parentPath;
-        if (!m.isMemberExpression({ object: r.node }) || !m.node.computed || !t.isNumericLiteral(m.node.property)) return;
-        const k = m.node.property.value;
-        if (!Number.isInteger(k) || k < 0 || k >= N) return;
-        if (m.parentPath.isUnaryExpression({ operator: 'delete' }) || m.parentPath.isCallExpression({ callee: m.node })) return;
-        uses.push({ m, k });
+    Function(fn) {
+      const { params } = fn.node;
+      if (params.length !== 1 || !t.isRestElement(params[0]) || !t.isIdentifier(params[0].argument)) return;
+      if (!t.isBlockStatement(fn.node.body)) return;
+      const mask = params[0].argument.name;
+      const b = fn.scope.getBinding(mask);
+      if (!b || b.constantViolations.length || !b.referencePaths.length) return;
+
+      const body = fn.get('body.body');
+      // gövde başındaki M.length = N
+      let limit = null;
+      let lengthStmt = null;
+      const first = body[0]?.node;
+      if (t.isExpressionStatement(first) && t.isAssignmentExpression(first.expression, { operator: '=' }) &&
+          t.isMemberExpression(first.expression.left) && t.isIdentifier(first.expression.left.object, { name: mask }) &&
+          maskKey(first.expression.left) === 'length' && t.isNumericLiteral(first.expression.right) &&
+          Number.isInteger(first.expression.right.value)) {
+        limit = first.expression.right.value;
+        lengthStmt = body[0];
       }
-      // length değişiyor (0 → N): fonksiyon yalnızca çağrılıyorsa gözlenemez
-      const fnRefs = (() => {
-        if (p.isFunctionDeclaration() && p.node.id) return p.parentPath.scope.getBinding(p.node.id.name)?.referencePaths ?? null;
-        if (p.parentPath.isVariableDeclarator({ init: p.node }) && t.isIdentifier(p.parent.id)) {
-          const vb = p.parentPath.scope.getBinding(p.parent.id.name);
-          return vb?.constant ? vb.referencePaths : null;
-        }
-        if (p.parentPath.isCallExpression({ callee: p.node })) return [];
-        return null;
-      })();
-      if (!fnRefs || !fnRefs.every((r) => r.parentPath.isCallExpression({ callee: r.node }) || r.parentPath.isNewExpression({ callee: r.node }))) return;
-      const ids = Array.from({ length: N }, () => p.scope.generateUidIdentifier('arg'));
-      p.node.params = ids;
-      p.node.body.body.shift();
-      for (const u of uses) u.m.replaceWith(t.identifier(ids[u.k].name));
+
+      const refs = [];
+      for (const r of b.referencePaths) {
+        if (lengthStmt && r.findParent((x) => x === lengthStmt)) continue;
+        const m = r.parentPath;
+        if (!m.isMemberExpression({ object: r.node })) return;
+        const key = maskKey(m.node);
+        if (key === null || key === 'length' || (typeof key === 'number' && key > MAX_MASK_INDEX)) return;
+        if (typeof key === 'string' && (!t.isValidIdentifier(key) || ['arguments', 'eval'].includes(key))) return;
+        // dizi/nesne prototipinden gelen ad (M.map) ilk okumada undefined değildir
+        if (typeof key === 'string' && key in []) return;
+        if (m.parentPath.isUnaryExpression({ operator: 'delete' })) return;
+        // M.x() çağrısı this olarak M'yi verir: değişkene dönünce this değişir
+        if (m.parentPath.isCallExpression({ callee: m.node }) || m.parentPath.isOptionalCallExpression({ callee: m.node })) return;
+        refs.push({ m, key });
+      }
+      if (!fn.isArrowFunctionExpression() && usesOwnArguments(fn)) return;
+
+      const numeric = refs.filter((r) => typeof r.key === 'number').map((r) => r.key);
+      const maxIdx = numeric.length ? Math.max(...numeric) : -1;
+      const paramCount = limit === null ? maxIdx + 1 : Math.min(limit, maxIdx + 1);
+
+      // ad üretimi: işlev içinde ve dış kapsamlarda kullanılmayan adlar
+      const taken = new Set();
+      fn.traverse({ Identifier(p) { if (p.isReferencedIdentifier() || p.isBindingIdentifier()) taken.add(p.node.name); } });
+      const fresh = (base) => {
+        let name = base;
+        for (let i = 2; taken.has(name) || fn.scope.hasBinding(name); i++) name = `${base}_${i}`;
+        taken.add(name);
+        return name;
+      };
+      const names = new Map();
+      const nameOf = (key) => {
+        if (!names.has(key)) names.set(key, fresh(typeof key === 'number' ? `arg${key}` : key));
+        return names.get(key);
+      };
+      for (let i = 0; i < paramCount; i++) nameOf(i);
+      for (const { key } of refs) nameOf(key);
+
+      const locals = [...names.entries()].filter(([k]) => !(typeof k === 'number' && k < paramCount)).map(([, v]) => v);
+      for (const { m, key } of refs) m.replaceWith(t.identifier(names.get(key)));
+      fn.node.params = Array.from({ length: paramCount }, (_, i) => t.identifier(names.get(i)));
+      if (lengthStmt) lengthStmt.remove();
+      if (locals.length) fn.get('body').unshiftContainer('body', t.variableDeclaration('var', locals.map((x) => t.variableDeclarator(t.identifier(x)))));
       n++;
     },
   });
