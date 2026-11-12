@@ -4,6 +4,7 @@ import { raw, pretty } from './emit.js';
 import { fnv1a } from '../util/hash.js';
 import { PASSES } from './registry.js';
 import { snapshot, same } from './behavior.js';
+import { resolvePasses } from '../integrations/plugins.js';
 
 const MAX_ROUNDS = 25;
 const CONTEXT_MAX_LEN = 2_000_000;
@@ -17,12 +18,13 @@ const DEEP_MAX_LEN = 1_000_000; // QuickJS'te 1 MB'lık programı çalıştırma
 export async function deobfuscate(input, {
   level = 2, only = null, sandbox = null, deep = false, signal = null,
   onLog = () => {}, onProgress = () => {}, onPass = () => {}, onSnapshot = () => {},
+  plugins = [],
 } = {}) {
   const stats = {};
   const bump = (k, n = 1) => { if (n) stats[k] = (stats[k] || 0) + n; };
   const checkAbort = () => { if (signal?.aborted) throw new Error('İptal edildi'); };
 
-  let enabled = PASSES.filter((p) => (only ? only.includes(p.id) : p.level <= level));
+  let enabled = resolvePasses(PASSES, plugins).filter((p) => (only ? only.includes(p.id) : p.level <= level));
   if (!sandbox) enabled = enabled.filter((p) => p.needs !== 'sandbox');
   const textPasses = enabled.filter((p) => p.kind === 'text');
   const astPasses = enabled.filter((p) => p.kind === 'ast');
