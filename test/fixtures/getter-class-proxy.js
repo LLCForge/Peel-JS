@@ -21,7 +21,7 @@ function main(v) {
 var api = { main: main };
 console.log(api.main(2), api.main(5));
 api.main = null;
-// EXPECT: var out = [target, holder.plain, v + 10, v < 3, String(v), v * 6];
+// EXPECT: out = [target, holder.plain, v + 10, v < 3, String(v), v * 6];
 // EXPECT: out.push(realLog(v), realWarn("x"));
 // GONE: class Ops
 // GONE: function mul

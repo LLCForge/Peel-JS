@@ -48,6 +48,8 @@ function verdict(d, head, holder, info) {
   if (!t.isIdentifier(d.node.id)) return null;
   const b = d.scope.getBinding(d.node.id.name);
   if (!b || b.kind !== 'var' || b.path !== d) return null;
+  // program düzeyindeki var, script'te global nesne özelliği oluşturur (window.x, diğer script'ler): dokunulmaz
+  if (b.scope.path.isProgram()) return null;
   if (renameBlocker(info, b)) return null;
   // aynı ad başka bildirimle tekrar tanımlanıyorsa (var x; var x;) dokunma
   if (b.constantViolations.some((v) => v.isVariableDeclarator() || v.isFunctionDeclaration() || v.isCatchClause())) return null;

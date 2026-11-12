@@ -7,12 +7,12 @@ var g5 = (function () { return this; })();
 var g6 = (function () { "use strict"; return this; })();
 var g7 = globalThis.globalThis;
 console.log(g1 === g2, g2 === g3, g3 === g4, g4 === g5, typeof g6, g7 === g1);
-// EXPECT: var g1 = globalThis;
-// EXPECT: var g2 = globalThis;
-// EXPECT: var g3 = globalThis;
-// EXPECT: var g4 = globalThis;
-// EXPECT: var g5 = globalThis;
-// EXPECT: var g6 = void 0;
-// EXPECT: var g7 = globalThis;
+// EXPECT: g1 = globalThis;
+// EXPECT: g2 = globalThis;
+// EXPECT: g3 = globalThis;
+// EXPECT: g4 = globalThis;
+// EXPECT: g5 = globalThis;
+// EXPECT: g6 = undefined;
+// EXPECT: g7 = globalThis;
 // GONE: return this
 // GONE: typeof window
