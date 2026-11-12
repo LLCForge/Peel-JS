@@ -23,6 +23,7 @@ import * as staticDecode from '../passes/26-static-decode.js';
 import * as restructure from '../passes/86-restructure.js';
 import * as dispatcher from '../passes/77-dispatcher.js';
 import * as staticStringArray from '../passes/31-static-string-array.js';
+import * as regenerator from '../passes/78-regenerator.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
@@ -53,6 +54,7 @@ export const PASSES = [
   { id: 'restructure',  level: 2, kind: 'ast',  needs: null,      mod: restructure },
   { id: 'dispatcher',   level: 2, kind: 'ast',  needs: null,      mod: dispatcher },
   { id: 'static-string-array', level: 2, kind: 'ast', needs: null, mod: staticStringArray },
+  { id: 'regenerator',  level: 2, kind: 'ast',  needs: null,      mod: regenerator },
 ];
 
 export const byId = (id) => PASSES.find((p) => p.id === id);
