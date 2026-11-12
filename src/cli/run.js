@@ -5,6 +5,7 @@ import { basename, dirname, join, relative, resolve, extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { deobfuscate } from '../core/pipeline.js';
 import { splitBundle } from '../core/bundle.js';
+import { createTrace } from '../analysis/trace.js';
 import { analyze } from '../core/analyze.js';
 import { rulesPlugin } from '../integrations/rules.js';
 import { verifyPlugin } from '../integrations/signing.js';
@@ -168,7 +169,10 @@ async function processOne(item, o, ctx) {
   }
   const sandbox = o.sandbox === false ? null : await getSandbox();
   const snapshots = [];
+  // pass kayıtları ve yama günlüğü yalnızca rapor istenirken tutulur (çalıştırmayı yavaşlatır)
+  const trace = o.report || o.html || o.json ? createTrace({ keepComments: true }) : null;
   const r = await deobfuscate(input, {
+    trace,
     level: o.level ?? 4,
     sandbox,
     deep: o.deep ?? Boolean(sandbox),
@@ -198,7 +202,7 @@ async function processOne(item, o, ctx) {
   const needReport = o.report || o.sarif || o.html || o.failOn || o.json || o.semgrep;
   let report = null;
   if (needReport) {
-    report = await analyze({ input, text: r.text, output: code, events: r.events, sandbox });
+    report = await analyze({ input, text: r.text, output: code, events: r.events, sandbox, trace, stats: r.stats });
     report.stats = r.stats;
     result.risk = report.threat.risk;
     result.techniques = detectTechniques(input).map((x) => x.id);

@@ -1,4 +1,5 @@
 import { t, td } from '../i18n.js';
+import { render as renderSemantics } from './analysis/semantics.js';
 
 const MAX_ROWS = 60;
 
@@ -150,6 +151,12 @@ function engine(e, stats) {
   return el('div', {}, ...parts);
 }
 
+function semanticsBody(data) {
+  const box = el('div', { class: 'rep-semantics' });
+  renderSemantics(box, data);
+  return box;
+}
+
 export function renderReport(root, report, onExport, actions = {}) {
   root.textContent = '';
   if (!report) {
@@ -185,6 +192,7 @@ export function renderReport(root, report, onExport, actions = {}) {
       ? table(['Pass', '', ''], report.rollbacks.map((r) => [r.id, `#${r.round}`, td(r.reason ?? '')]), ['mono', 'num', 'rep-muted'])
       : muted('report.rollbacks.none')),
     report.engine ? section('report.engine', engine(report.engine, report.stats)) : null,
+    report.semantics ? section('report.semantics', semanticsBody(report.semantics)) : null,
     exportBtn,
   ));
 }

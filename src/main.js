@@ -30,6 +30,7 @@ import { fnv1a } from './util/hash.js';
 import { t, applyI18n, toggleLang, onLang, getLang, LANGS } from './i18n.js';
 import { SAMPLE } from './sample.js';
 import { mountIntegrations } from './ui/integrations/index.js';
+import { createTrace } from './analysis/trace.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -297,8 +298,11 @@ async function run({ mode = 'normal' } = {}) {
     if (ans !== 'yes') rejected.add(key);
     return ans === 'yes';
   } : null;
+  // pass kayıtları, yama günlüğü, köken ve yorum koruma (E-V); rapordaki semantik bölüm bunu okur
+  const trace = createTrace({ keepComments: true });
   try {
     const res = await deobfuscate(src, {
+      trace,
       level: LEVEL,
       only,
       order: only,
@@ -346,7 +350,7 @@ async function run({ mode = 'normal' } = {}) {
       setStatus(output.trim() === src.trim() ? 'status.unchanged' : 'status.done', { s: secs }, 'ok');
     }
     announce(status.textContent);
-    const report = await analyze({ input: src, text: res.text, output, events: res.events, sandbox: sandboxOk ? sandbox : null });
+    const report = await analyze({ input: src, text: res.text, output, events: res.events, sandbox: sandboxOk ? sandbox : null, trace });
     report.stats = res.stats;
     doc.report = report;
     doc.runs = [...(doc.runs ?? []), {

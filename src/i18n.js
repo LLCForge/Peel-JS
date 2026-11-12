@@ -137,6 +137,7 @@ const DICT = {
     'report.engine.dead.none': 'Türüne göre sayılmış ölü kod yok.',
     'report.engine.bundle': 'Paket modülleri ({k})',
     'report.engine.bundle.none': 'Paket (webpack/esbuild/browserify/kaynak haritalı) yapısı bulunamadı.',
+    'report.semantics': 'Semantik analiz',
   },
   en: {
     'brand.sub': 'JS DEOBFUSCATOR',
@@ -272,6 +273,7 @@ const DICT = {
     'report.engine.dead.none': 'No dead code counted by type.',
     'report.engine.bundle': 'Bundle modules ({k})',
     'report.engine.bundle.none': 'No bundle (webpack/esbuild/browserify/source-mapped) structure found.',
+    'report.semantics': 'Semantic analysis',
   },
 };
 
