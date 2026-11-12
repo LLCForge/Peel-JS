@@ -9,10 +9,36 @@ const RUNTIME = `
 var regeneratorRuntime = {
   mark: function (f) { return f; },
   wrap: function (inner, outer, self, tryLocs) {
-    var RET = {}, DELEGATE = {};
+    var RET = {}, DELEGATE = {}, CONT = {};
     var delegate = null;
+    // tamamlanma kayıtları: try içindeki return/break/continue/throw önce finally'ye yönlendirilir
+    var entries = (tryLocs || []).map(function (x) { return { tryLoc: x[0], catchLoc: x[1], finallyLoc: x[2], afterLoc: x[3] }; });
+    var completion = null;
+    function finallyFor(prev) {
+      for (var k = entries.length - 1; k >= 0; k--) {
+        var e = entries[k];
+        if (e.finallyLoc != null && prev >= e.tryLoc && prev < e.finallyLoc) return e;
+      }
+      return null;
+    }
     var ctx = { prev: 0, next: 0, sent: undefined, done: false, rval: undefined, err: undefined,
-      abrupt: function (type, arg) { this.done = true; this.rval = arg; return RET; },
+      complete: function (type, arg) {
+        if (type === 'return') { this.done = true; this.rval = arg; return RET; }
+        if (type === 'throw') throw arg;
+        this.next = arg; return CONT;
+      },
+      abrupt: function (type, arg) {
+        var e = finallyFor(this.prev);
+        if (e) { completion = { type: type, arg: arg }; this.next = e.finallyLoc; return CONT; }
+        return this.complete(type, arg);
+      },
+      finish: function (loc) {
+        var e = entries.find(function (x) { return x.finallyLoc === loc; });
+        var c = completion; completion = null;
+        if (!c) { this.next = e.afterLoc; return CONT; }
+        this.prev = loc;
+        return this.abrupt(c.type, c.arg);
+      },
       stop: function () { this.done = true; return RET; },
       catch: function () { return this.err; },
       delegateYield: function (iterable, name, nextLoc) { delegate = { it: iterable[Symbol.iterator](), name: name, nextLoc: nextLoc }; return DELEGATE; } };
@@ -27,12 +53,18 @@ var regeneratorRuntime = {
         ctx.sent = v;
         var r;
         try { r = inner.call(self, ctx); } catch (e) {
-          // hata yönlendirmesi: prev'i kapsayan try girişinin catch konumuna atla
-          var entry = (tryLocs || []).find(function (x) { return ctx.prev >= x[0] && ctx.prev < x[1]; });
-          if (!entry) throw e;
-          ctx.err = e; ctx.next = entry[1]; ctx.prev = entry[1]; continue;
+          // hata yönlendirmesi: önce kapsayan catch, yoksa kapsayan finally (tamamlanma: throw)
+          var hit = null;
+          for (var k = entries.length - 1; k >= 0 && !hit; k--) {
+            var en = entries[k];
+            if (en.catchLoc != null && ctx.prev >= en.tryLoc && ctx.prev < en.catchLoc) hit = { to: en.catchLoc, c: true };
+            else if (en.finallyLoc != null && ctx.prev >= en.tryLoc && ctx.prev < en.finallyLoc) hit = { to: en.finallyLoc, c: false };
+          }
+          if (!hit) throw e;
+          if (hit.c) ctx.err = e; else completion = { type: 'throw', arg: e };
+          ctx.next = hit.to; ctx.prev = hit.to; continue;
         }
-        if (r === DELEGATE) continue;
+        if (r === DELEGATE || r === CONT) continue;
         if (r === RET || ctx.done) { ctx.done = true; return { done: true, value: ctx.rval }; }
         return { done: false, value: r };
       }
@@ -149,10 +181,18 @@ function outer() {
 }
 `;
 
-// desteklenmeyen biçim: try/finally — makineye dokunulmamalı
+const drain = (g, sends = []) => {
+  const o = [];
+  let k = 0;
+  for (let r = g.next(); ; r = g.next(sends[k++])) { o.push(r.value); if (r.done) break; }
+  return o;
+};
+
+// try/finally: return'ün finally'den geçmesi; döngüde try/catch/finally, throw, abrupt("break")
 const FINALLY = `
-var _m = regeneratorRuntime.mark(fin);
-function fin() {
+var _m4 = regeneratorRuntime.mark(fin);
+var _m5 = regeneratorRuntime.mark(loop);
+function fin(log) {
   return regeneratorRuntime.wrap(function fin$(_c) {
     while (1) switch (_c.prev = _c.next) {
       case 0:
@@ -160,23 +200,65 @@ function fin() {
         _c.next = 3;
         return 1;
       case 3:
-        _c.prev = 3;
-        done();
-        return _c.finish(3);
-      case 6:
+        return _c.abrupt("return", "r");
+      case 4:
+        _c.prev = 4;
+        log.push("f");
+        return _c.finish(4);
+      case 7:
       case "end":
         return _c.stop();
     }
-  }, _m, null, [[0, , 3, 6]]);
+  }, _m4, null, [[0, , 4, 7]]);
+}
+function loop(log) {
+  var i;
+  return regeneratorRuntime.wrap(function loop$(_d) {
+    while (1) switch (_d.prev = _d.next) {
+      case 0:
+        i = 0;
+      case 1:
+        if (!(i < 5)) { _d.next = 20; break; }
+      case 2:
+        _d.prev = 2;
+        if (!(i === 1)) { _d.next = 5; break; }
+        throw new Error("bir");
+      case 5:
+        if (!(i === 3)) { _d.next = 7; break; }
+        return _d.abrupt("break", 20);
+      case 7:
+        _d.next = 9;
+        return i;
+      case 9:
+        _d.next = 15;
+        break;
+      case 11:
+        _d.prev = 11;
+        _d.t0 = _d["catch"](2);
+        log.push("c" + _d.t0.message);
+      case 15:
+        _d.prev = 15;
+        log.push("f" + i);
+        return _d.finish(15);
+      case 18:
+        i++;
+        _d.next = 1;
+        break;
+      case 20:
+      case "end":
+        return _d.stop();
+    }
+  }, _m5, null, [[2, 11, 15, 18]]);
 }
 `;
 
-const drain = (g, sends = []) => {
-  const o = [];
-  let k = 0;
-  for (let r = g.next(); ; r = g.next(sends[k++])) { o.push(r.value); if (r.done) break; }
-  return o;
-};
+async function exerciseFinally(code) {
+  const ctx = { out: null };
+  vm.runInNewContext(`${RUNTIME}\n${code}\n;out = { fin: fin, loop: loop };`, ctx);
+  const l1 = [];
+  const l2 = [];
+  return { fin: drain(ctx.out.fin(l1)), finLog: l1, loop: drain(ctx.out.loop(l2)), loopLog: l2 };
+}
 
 async function exercise(code) {
   const ctx = { fetchLike: async (id) => ({ ok: id > 0, json: async () => ({ name: 'kayıt' }) }), out: null };
@@ -205,6 +287,12 @@ assert.match(r.code, /catch \(_err0\)/);
 assert.match(r.code, /total = yield\* safe\(4\)/);
 assert.deepEqual(await exercise(r.code), before);
 
-const keep = await deobfuscate(FINALLY, { only: ['regenerator'], sandbox: null });
-assert.ok(keep.code.includes('fin$'), 'finally içeren makineye dokunulmamalı');
+const fb = await exerciseFinally(FINALLY);
+assert.deepEqual(fb, { fin: [1, 'r'], finLog: ['f'], loop: [0, 2, undefined], loopLog: ['f0', 'cbir', 'f1', 'f2', 'f3'] });
+const fr = await deobfuscate(FINALLY, { only: ['regenerator'], sandbox: null });
+assert.ok(!fr.code.includes('_c.') && !fr.code.includes('_d.'), fr.code);
+assert.match(fr.code, /function\* fin\(log\)/);
+assert.match(fr.code, /finally \{/);
+assert.match(fr.code, /catch \(_err2\)/);
+assert.deepEqual(await exerciseFinally(fr.code), fb);
 console.log('regenerator: ok');

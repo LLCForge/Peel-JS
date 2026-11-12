@@ -6,9 +6,11 @@ import { traverse } from '../util/ast.js';
 //     case 0: …; _context.next = 2; return fetch(u);  case 2: r = _context.sent; … } }, _callee, this, tryLocs)
 //   → yield / await (async sarmalayıcıda), _context.sent tüketen deyimle birleşir; ileri koşullu atlamalar
 //   if/else, geri atlamalar while (true) + break/continue, abrupt("return") return, delegateYield yield*,
-//   tryLocs içindeki try/catch blokları try { } catch (e) { } olur.
+//   tryLocs içindeki try/catch/finally blokları yerel try { } catch (e) { } finally { } olur (finish(F) ile biten
+//   finally bölgesi; try içinden abrupt("return"|"break"|"continue") yerel return/break/continue: tamamlanma
+//   kaydı yerel try/finally ile aynı biçimde finally'den geçer).
 //   _asyncToGenerator(regeneratorRuntime.mark(function f(){…})) → async function; mark'lı bildirim → function*.
-//   Tanınmayan yapı (finally, yapısız atlama, blok dışında okunan sent) görülürse makineye dokunulmaz.
+//   Tanınmayan yapı (yapısız atlama, blok dışında okunan sent) görülürse makineye dokunulmaz.
 
 class Bail extends Error {}
 
@@ -54,8 +56,7 @@ function parseTryLocs(node) {
   return node.elements.map((e) => {
     if (!t.isArrayExpression(e)) throw new Bail('tryLocs');
     const v = e.elements.map((x) => (x == null ? null : t.isNumericLiteral(x) ? x.value : (() => { throw new Bail('tryLocs'); })()));
-    if (v[2] != null) throw new Bail('finally');
-    return { tryLoc: v[0], catchLoc: v[1] };
+    return { tryLoc: v[0], catchLoc: v[1] ?? null, finallyLoc: v[2] ?? null, afterLoc: v[3] ?? null };
   });
 }
 
@@ -127,27 +128,54 @@ function convert(inner, isAsync, tryLocsNode) {
         // try/catch: tryLoc etiketi → try bölgesi [tryLoc, catchLoc), catch bölgesi [catchLoc, sonrası)
         const tr = tries.find((x) => x.tryLoc === it.label);
         if (tr) {
-          const prevStmt = items[i + 1]?.stmt;
-          const pv = assignTo(prevStmt, ctx, 'prev');
+          const pv = assignTo(items[i + 1]?.stmt, ctx, 'prev');
           if (!t.isNumericLiteral(pv) || pv.value !== it.label) throw new Bail('try başı');
-          const cPos = posOf(tr.catchLoc);
-          if (cPos === undefined || cPos <= i || cPos > to || !isJumpTo(cPos - 2)) throw new Bail('try sonu');
-          const after = nextAssign(items[cPos - 2].stmt, ctx);
-          const aPos = posOf(after);
-          if (aPos === undefined || aPos <= cPos || aPos > to) throw new Bail('catch sonu');
-          // catch başı: _context.prev = C; _context.t0 = _context["catch"](T);
-          const cPrev = assignTo(items[cPos + 1]?.stmt, ctx, 'prev');
-          const t0stmt = items[cPos + 2]?.stmt;
-          const t0Right = t0stmt && t.isExpressionStatement(t0stmt) && t.isAssignmentExpression(t0stmt.expression) ? t0stmt.expression.right : null;
-          if (!t.isNumericLiteral(cPrev) || !t.isCallExpression(t0Right) || !ctxMember(t0Right.callee, ctx, 'catch')) throw new Bail('catch başı');
-          const errProp = propOf(t0stmt.expression.left);
-          const errId = t.identifier(`_err${it.label}`);
-          for (let k = cPos + 3; k < aPos; k++) if (items[k].stmt) replaceMember(items[k].stmt, ctx, errProp, () => t.identifier(errId.name));
-          const tryPart = emit(i + 2, cPos - 2, loop);
-          if (tryPart.pending) tryPart.out.push(t.expressionStatement(tryPart.pending.expr));
-          const catchPart = emit(cPos + 3, aPos, loop);
-          if (catchPart.pending) catchPart.out.push(t.expressionStatement(catchPart.pending.expr));
-          pushStmt(t.tryStatement(t.blockStatement(tryPart.out), t.catchClause(errId, t.blockStatement(catchPart.out))));
+          const fPos = tr.finallyLoc != null ? posOf(tr.finallyLoc) : null;
+          // catch başı: _context.prev = C; _context.tN = _context["catch"](T); → hata değişkeni
+          const readCatch = (cPos, end) => {
+            const cPrev = assignTo(items[cPos + 1]?.stmt, ctx, 'prev');
+            const tStmt = items[cPos + 2]?.stmt;
+            const right = tStmt && t.isExpressionStatement(tStmt) && t.isAssignmentExpression(tStmt.expression) ? tStmt.expression.right : null;
+            if (!t.isNumericLiteral(cPrev) || !t.isCallExpression(right) || !ctxMember(right.callee, ctx, 'catch')) throw new Bail('catch başı');
+            const errProp = propOf(tStmt.expression.left);
+            const errId = t.identifier(`_err${it.label}`);
+            for (let k = cPos + 3; k < end; k++) if (items[k].stmt) replaceMember(items[k].stmt, ctx, errProp, () => t.identifier(errId.name));
+            const part = emit(cPos + 3, end, loop);
+            if (part.pending) part.out.push(t.expressionStatement(part.pending.expr));
+            return t.catchClause(errId, t.blockStatement(part.out));
+          };
+          const block = (from, end) => {
+            const part = emit(from, end, loop);
+            if (part.pending) part.out.push(t.expressionStatement(part.pending.expr));
+            return t.blockStatement(part.out);
+          };
+          if (fPos == null) {
+            // try/catch: try bölgesi catch'in sonrasına atlayarak biter
+            const cPos = posOf(tr.catchLoc);
+            if (cPos === undefined || cPos <= i || cPos > to || !isJumpTo(cPos - 2)) throw new Bail('try sonu');
+            const aPos = posOf(nextAssign(items[cPos - 2].stmt, ctx));
+            if (aPos === undefined || aPos <= cPos || aPos > to) throw new Bail('catch sonu');
+            const tryBlock = block(i + 2, cPos - 2);
+            pushStmt(t.tryStatement(tryBlock, readCatch(cPos, aPos)));
+            i = aPos - 1;
+            continue;
+          }
+          // try/(catch)/finally: try ve catch bölgeleri finally'ye atlar ya da düşer; finally
+          // _context.prev = F ile başlar, return _context.finish(F) ile biter. Tamamlanma kaydı (normal, return,
+          // break, continue, throw) yerel try/finally'de aynı biçimde işler.
+          const aPos = tr.afterLoc != null ? posOf(tr.afterLoc) : items.length;
+          if (fPos === undefined || fPos <= i || aPos === undefined || aPos > to || aPos <= fPos) throw new Bail('finally konumu');
+          const tryEnd = tr.catchLoc != null ? posOf(tr.catchLoc) : fPos;
+          if (tryEnd === undefined || tryEnd <= i) throw new Bail('try sonu');
+          const strip = (end) => (isJumpTo(end - 2, tr.finallyLoc) ? end - 2 : end);
+          const tryBlock = block(i + 2, strip(tryEnd));
+          const handler = tr.catchLoc != null ? readCatch(tryEnd, strip(fPos)) : null;
+          const fPrev = assignTo(items[fPos + 1]?.stmt, ctx, 'prev');
+          const fin = items[aPos - 1]?.stmt;
+          const finOk = t.isReturnStatement(fin) && t.isCallExpression(fin.argument) && ctxMember(fin.argument.callee, ctx, 'finish') &&
+            t.isNumericLiteral(fin.argument.arguments[0], { value: tr.finallyLoc });
+          if (!t.isNumericLiteral(fPrev) || fPrev.value !== tr.finallyLoc || !finOk) throw new Bail('finally gövdesi');
+          pushStmt(t.tryStatement(tryBlock, handler, block(fPos + 2, aPos - 1)));
           i = aPos - 1;
           continue;
         }
@@ -226,6 +254,12 @@ function convert(inner, isAsync, tryLocsNode) {
         const args = s.argument.arguments;
         if (m === 'stop') { flushPending(); return { out, pending: null }; }
         if (m === 'abrupt' && t.isStringLiteral(args[0], { value: 'return' })) { pushStmt(t.returnStatement(args[1] ?? null)); continue; }
+        // try içinden döngü dışına/başına çıkış: abrupt("break"|"continue", hedef) → yerel break/continue
+        if (m === 'abrupt' && loop && t.isNumericLiteral(args[1]) && (t.isStringLiteral(args[0], { value: 'break' }) || t.isStringLiteral(args[0], { value: 'continue' }))) {
+          const kind = args[0].value;
+          if (kind === 'break' && args[1].value === loop.exit) { pushStmt(t.breakStatement()); continue; }
+          if (kind === 'continue' && args[1].value === loop.head) { pushStmt(t.continueStatement()); continue; }
+        }
         if (m === 'delegateYield' && t.isStringLiteral(args[1]) && t.isNumericLiteral(args[2])) {
           flushPending();
           if (nextLabelAfter(i + 1) !== args[2].value) throw new Bail('doğrusal olmayan yield*');
