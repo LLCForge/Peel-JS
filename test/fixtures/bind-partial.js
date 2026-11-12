@@ -1,4 +1,4 @@
-// E107: f.bind(T)(…) düzleştirme; E109: bind ile kısmi uygulama çağrı yerinde açılır
+// E107: bağlanmış fonksiyonun hemen çağrılması düzleşir; E109: kısmi uygulama çağrı yerinde açılır
 function join3(a, b, c) { return [a, b, c].join("-"); }
 var obj = { tag: "o", say: function (x) { return this.tag + x; } };
 function main(v) {

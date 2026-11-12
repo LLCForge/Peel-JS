@@ -1,4 +1,4 @@
-// E115: Object.create(proto, tanımlayıcılar) → nesne literali; E116: Reflect.get/set/has/apply → doğrudan biçim
+// E115: nesne oluşturma tanımlayıcıları → nesne literali; E116: yansıtma API çağrıları → doğrudan biçim
 function sum(a, b) { var s = a + b; return s; }
 function main() {
   var base = Object.create(null, {
