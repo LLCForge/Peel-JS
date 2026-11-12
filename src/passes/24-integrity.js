@@ -21,7 +21,8 @@ function isSelfDefendingIife(stmt) {
   let e = stmt.expression;
   if (t.isUnaryExpression(e)) e = e.argument;
   if (!t.isCallExpression(e) || e.arguments.length || !t.isFunctionExpression(e.callee)) return false;
-  const body = e.callee.body.body;
+  // başında başka kilit deyimleri (lock.startDate vb.) olabilir: yalnızca son iki deyim koruma kalıbıdır
+  const body = e.callee.body.body.slice(-2);
   if (body.length !== 2 || !t.isVariableDeclaration(body[0]) || !t.isReturnStatement(body[1])) return false;
   const [decl] = body[0].declarations;
   if (body[0].declarations.length !== 1 || !t.isIdentifier(decl.id) || !t.isFunctionExpression(decl.init)) return false;
@@ -141,7 +142,10 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
   traverse(ast, {
     ExpressionStatement(p) {
       if (!isSelfDefendingIife(p.node)) return;
-      if (Array.isArray(p.container)) p.remove(); else p.replaceWith(t.emptyStatement());
+      // IIFE deyimdir, dönüş değeri kullanılmaz: koruma kalıbı (son iki deyim) çıkarılır, önceki deyimler kalır
+      const fnBody = (t.isUnaryExpression(p.node.expression) ? p.node.expression.argument : p.node.expression).callee.body.body;
+      fnBody.splice(-2, 2);
+      if (!fnBody.length) { if (Array.isArray(p.container)) p.remove(); else p.replaceWith(t.emptyStatement()); }
       guards++;
     },
   });
