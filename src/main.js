@@ -119,10 +119,13 @@ function setStats(o) {
   stats.textContent = '';
   for (const [k, v] of Object.entries(o)) {
     if (!v) continue;
+    // çevirisi olmayan iç sayaçlar (ör. stat.dead.inTest) durum çubuğunda ham anahtar olarak görünmesin; raporda yer alırlar
+    const label = t(`stat.${k}`);
+    if (label === `stat.${k}`) continue;
     const s = document.createElement('span');
     const b = document.createElement('b');
     b.textContent = v.toLocaleString();
-    s.append(b, ` ${t(`stat.${k}`)}`);
+    s.append(b, ` ${label}`);
     stats.appendChild(s);
   }
 }

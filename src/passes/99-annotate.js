@@ -40,30 +40,36 @@ function attach(node, value) {
   return true;
 }
 
+const CATS = {
+  tr: { main: 'Ana akış', imports: 'İçe aktarmalar', classes: 'Sınıflar', consts: 'Sabitler ve durum', net: 'Ağ işlemleri', dom: 'Sayfa (DOM) işlemleri', storage: 'Depolama', codec: 'Kodlama ve şifreleme', helpers: 'Yardımcı fonksiyonlar', ctor: 'Kurucu fonksiyon', ctorM: 'Kurucu', cls: 'Sınıf; metotları' },
+  en: { main: 'Main flow', imports: 'Imports', classes: 'Classes', consts: 'Constants and state', net: 'Network', dom: 'Page (DOM)', storage: 'Storage', codec: 'Encoding and crypto', helpers: 'Helper functions', ctor: 'Constructor function', ctorM: 'Constructor', cls: 'Class; methods' },
+};
+let C = CATS.tr;
+
 // Üst düzey deyimin bölüm kategorisi
 function category(st) {
   const s = t.isExportNamedDeclaration(st.node) || t.isExportDefaultDeclaration(st.node) ? st.get('declaration') : st;
-  if (!s?.node) return 'Ana akış';
-  if (s.isImportDeclaration()) return 'İçe aktarmalar';
-  if (s.isClassDeclaration()) return 'Sınıflar';
+  if (!s?.node) return C.main;
+  if (s.isImportDeclaration()) return C.imports;
+  if (s.isClassDeclaration()) return C.classes;
   if (s.isVariableDeclaration()) {
     const inits = s.node.declarations.map((d) => d.init);
-    if (inits.every((i) => !i || t.isLiteral(i) || t.isArrayExpression(i) || t.isObjectExpression(i) || t.isUnaryExpression(i))) return 'Sabitler ve durum';
+    if (inits.every((i) => !i || t.isLiteral(i) || t.isArrayExpression(i) || t.isObjectExpression(i) || t.isUnaryExpression(i))) return C.consts;
     if (inits.some((i) => t.isFunction(i))) return fnCategory(s.get('declarations').find((d) => t.isFunction(d.node.init)).get('init'));
     // hesaplanan başlangıç değeri çalışan koddur: ayrı başlık ana akışı tek deyimlik bölümlere bölerdi
-    return 'Ana akış';
+    return C.main;
   }
   if (s.isFunctionDeclaration()) return fnCategory(s);
-  return 'Ana akış';
+  return C.main;
 }
 
 function fnCategory(fn) {
   const f = facts(fn);
-  if (f.network.size) return 'Ağ işlemleri';
-  if (f.domWrite || f.domRead || f.events.size) return 'Sayfa (DOM) işlemleri';
-  if (f.storage) return 'Depolama';
-  if (f.decode || f.crypto) return 'Kodlama ve şifreleme';
-  return 'Yardımcı fonksiyonlar';
+  if (f.network.size) return C.net;
+  if (f.domWrite || f.domRead || f.events.size) return C.dom;
+  if (f.storage) return C.storage;
+  if (f.decode || f.crypto) return C.codec;
+  return C.helpers;
 }
 
 // Bölümler: [{ cat, start }] — boş deyimler (yazdırılmaz) sayılmaz ve bölümü bölmez: başlığı boş deyime
@@ -79,6 +85,8 @@ export function sections(cats) {
 
 export async function run(ast, { onLog, bump, naming = {} }) {
   if (naming.annotate === false) return;
+  const lang = naming.lang === 'en' ? 'en' : 'tr';
+  C = CATS[lang];
   const inf = createInferer();
   // önceki turların yorumları (silinen düğümlerden kardeşlere taşınmış olanlar dahil) temizlenir
   t.traverseFast(ast.program, (n) => {
@@ -89,9 +97,9 @@ export async function run(ast, { onLog, bump, naming = {} }) {
   let docs = 0;
   traverse(ast, {
     FunctionDeclaration(p) {
-      const { text, sig, generic } = summarizeFunction(p, inf);
+      const { text, sig, generic } = summarizeFunction(p, inf, lang);
       const ctor = isConstructor(p);
-      if (attach(p.node, jsdoc(ctor ? `Kurucu fonksiyon: ${text}` : text, sig, ctor ? '@constructor' : null, generic && !ctor))) docs++;
+      if (attach(p.node, jsdoc(ctor ? `${C.ctor}: ${text}` : text, sig, ctor ? '@constructor' : null, generic && !ctor))) docs++;
     },
     VariableDeclaration(p) {
       if (p.node.declarations.length !== 1) return;
@@ -99,18 +107,18 @@ export async function run(ast, { onLog, bump, naming = {} }) {
       const init = d.get('init');
       if (!t.isIdentifier(d.node.id) || !(init.isFunctionExpression() || init.isArrowFunctionExpression())) return;
       if (!(p.parentPath.isProgram() || p.parentPath.isBlockStatement() || p.parentPath.isExportNamedDeclaration())) return;
-      const { text, sig, generic } = summarizeFunction(init, inf);
+      const { text, sig, generic } = summarizeFunction(init, inf, lang);
       if (attach(p.parentPath.isExportNamedDeclaration() ? p.parent : p.node, jsdoc(text, sig, null, generic))) docs++;
     },
     ClassMethod(p) {
       if (p.node.computed) return;
-      const { text, sig, generic } = summarizeFunction(p, inf);
-      if (attach(p.node, jsdoc(p.node.kind === 'constructor' ? `Kurucu: ${text}` : text, sig, null, generic))) docs++;
+      const { text, sig, generic } = summarizeFunction(p, inf, lang);
+      if (attach(p.node, jsdoc(p.node.kind === 'constructor' ? `${C.ctorM}: ${text}` : text, sig, null, generic))) docs++;
     },
     ClassDeclaration(p) {
       const methods = p.node.body.body.filter((m) => t.isClassMethod(m) && m.kind === 'method' && t.isIdentifier(m.key)).map((m) => m.key.name);
       // metotsuz sınıfın özeti yalnızca "Sınıf" olurdu: yazılmaz
-      if (attach(p.node, methods.length ? `*\n * @summary Sınıf; metotları: ${methods.slice(0, 6).join(', ')}\n ` : null)) docs++;
+      if (attach(p.node, methods.length ? `*\n * @summary ${C.cls}: ${methods.slice(0, 6).join(', ')}\n ` : null)) docs++;
     },
   });
 

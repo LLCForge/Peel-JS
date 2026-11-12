@@ -34,7 +34,8 @@ export async function run(ast, { onLog, bump, naming = {} }) {
             if (idx < 0) { ok = false; break; }
             first = Math.min(first, idx);
           }
-          if (ok && first > i + 1) target.set(i, first);
+          // arada yalnızca bildirimler varsa taşınmaz: iki komşu bildirim her turda yer değiştirip salınırdı
+          if (ok && first > i + 1 && body.slice(i + 1, first).some((s2) => !s2.isVariableDeclaration())) target.set(i, first);
         }
         if (!target.size) return;
         // literal başlangıçlar tanımlayıcı içermez: taşınan bildirimler birbirinin kullanım yeri olamaz

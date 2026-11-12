@@ -34,11 +34,15 @@ function forEachNode(root, fn, parent = null) {
   }
 }
 
+// yorum anahtarı boşluktan bağımsız: üretici çok satırlı yorumların girintisini değiştirir, yoksa yorum
+// "kayboldu" sanılıp her turda bir kopya daha takılır
+const commentKey = (value) => value.replace(/\s+/g, ' ').trim();
+
 function commentsOf(root) {
-  const out = new Map(); // yorum metni → { comment, anchor, where }
+  const out = new Map(); // normalize yorum metni → { comment, anchor, where }
   forEachNode(root, (n) => {
     for (const where of ['leadingComments', 'trailingComments', 'innerComments']) {
-      for (const c of n[where] ?? []) if (!out.has(c.value)) out.set(c.value, { comment: c, anchor: n, where });
+      for (const c of n[where] ?? []) if (!out.has(commentKey(c.value))) out.set(commentKey(c.value), { comment: c, anchor: n, where });
     }
   });
   return out;
@@ -161,6 +165,7 @@ export function createTrace({ keepComments = false, lightAbove = 250_000 } = {})
               while (!target && anchor && !t.isStatement(anchor)) { anchor = m.parentA.get(anchor); target = anchor ? m.map.get(anchor) : null; }
               if (!target || t.isProgram(target)) { commentStats.dropped++; continue; }
               const where = info.where === 'innerComments' ? 'leadingComments' : info.where;
+              if ((target[where] ?? []).some((c) => commentKey(c.value) === text)) continue;
               target[where] = [...(target[where] ?? []), { type: info.comment.type, value: info.comment.value }];
               reattached++;
             }

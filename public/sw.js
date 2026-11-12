@@ -2,7 +2,7 @@
 // kullanıcı kodu hiçbir zaman ağ isteği olmadığı için önbelleğe de girmez.
 // Kurulumda sayfa ve sayfanın referans verdiği derlenmiş dosyalar alınır; geri kalanlar (worker, WASM,
 // isteğe bağlı parçalar) ilk kullanımda önbelleğe yazılır. Sayfa gezintisi ağ-öncelikli, dosyalar önbellek-önceliklidir.
-const VERSION = 'peel-v1';
+const VERSION = 'peel-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './peel-icon.svg', './favicon.ico'];
 
 self.addEventListener('install', (event) => {
@@ -31,6 +31,8 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
+  // geliştirme sunucusu modülleri (Vite): asla önbellekten sunulmaz, yoksa eski kod çalışır
+  if (/^\/(@vite|@id|@fs|src|node_modules)\//.test(url.pathname) || url.searchParams.has('v') || url.searchParams.has('t')) return;
 
   if (req.mode === 'navigate') {
     event.respondWith((async () => {

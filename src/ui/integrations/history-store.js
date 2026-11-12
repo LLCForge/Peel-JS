@@ -1,19 +1,10 @@
 // Tarayıcıda çözüm geçmişi deposu (G146): IndexedDB, yalnızca bu cihazda. IndexedDB kullanılamazsa
 // (gizli pencere, kapalı site verisi) bellek içi depoya düşer ve geçmiş sekme kapanınca silinir.
 import { memoryStore } from '../../integrations/history.js';
+import { openDb } from '../store.js';
 
-const DB = 'peel';
 const STORE = 'history';
 const KEY = 'entries';
-
-function open() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
 
 function tx(db, mode, fn) {
   return new Promise((resolve, reject) => {
@@ -27,7 +18,7 @@ function tx(db, mode, fn) {
 
 export async function browserStore() {
   try {
-    const db = await open();
+    const db = await openDb();
     return {
       persistent: true,
       async load() { return (await tx(db, 'readonly', (s) => s.get(KEY))) ?? []; },

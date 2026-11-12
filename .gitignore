@@ -15,7 +15,6 @@ Thumbs.db
 desktop.ini
 
 # yerel araç ve ortam dosyaları
-.claude/
 .env
 .env.*
 !.env.example

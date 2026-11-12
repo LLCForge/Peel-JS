@@ -85,32 +85,54 @@ const list = (set, max = 3) => {
   return a.length > max ? `${a.slice(0, max).join(', ')}…` : a.join(', ');
 };
 
-/** Bir fonksiyon için Türkçe tek cümlelik özet + imza */
-export function summarizeFunction(path, inf = createInferer()) {
+// Fonksiyon özeti ifadeleri; naming.lang 'en' ise İngilizce, aksi halde Türkçe
+const PHRASES = {
+  tr: {
+    fields: (x) => `örnek alanlarını kurar (${x})`, network: (u) => `ağ isteği yapar${u ? ` (${u})` : ''}`,
+    domWrite: 'sayfa içeriğini değiştirir', domRead: 'sayfadan eleman okur', storage: 'tarayıcı depolamasına erişir',
+    events: (x) => `olay dinler (${x})`, timers: 'zamanlayıcı kurar', decode: 'string kodlar/çözer', crypto: 'kriptografi kullanır',
+    dynamic: 'çalışma anında kod üretir', awaits: 'asenkron bekler', yields: 'değer üretir (generator)',
+    loops: (n) => (n > 1 ? `${n} döngü içerir` : 'döngü içerir'), recursion: 'kendini çağırır', throws: 'hata fırlatabilir',
+    console: 'konsola yazar', calls: (x) => `çağırdıkları: ${x}`, voidGeneric: 'yan etkisiz ya da basit bir işlem yapar', valueGeneric: 'bir değer hesaplar',
+  },
+  en: {
+    fields: (x) => `sets up instance fields (${x})`, network: (u) => `makes network requests${u ? ` (${u})` : ''}`,
+    domWrite: 'changes page content', domRead: 'reads elements from the page', storage: 'accesses browser storage',
+    events: (x) => `listens for events (${x})`, timers: 'sets up timers', decode: 'encodes/decodes strings', crypto: 'uses cryptography',
+    dynamic: 'generates code at runtime', awaits: 'awaits asynchronously', yields: 'yields values (generator)',
+    loops: (n) => (n > 1 ? `contains ${n} loops` : 'contains a loop'), recursion: 'calls itself', throws: 'may throw',
+    console: 'writes to the console', calls: (x) => `calls: ${x}`, voidGeneric: 'performs a simple or side-effect-free operation', valueGeneric: 'computes a value',
+  },
+};
+export const phrasesFor = (lang) => PHRASES[lang] ?? PHRASES.tr;
+
+/** Bir fonksiyon için tek cümlelik özet + imza (lang: 'tr' | 'en') */
+export function summarizeFunction(path, inf = createInferer(), lang = 'tr') {
+  const P = phrasesFor(lang);
   const f = facts(path);
   const parts = [];
-  if (f.fields.size) parts.push(`örnek alanlarını kurar (${list(f.fields, 4)})`);
-  if (f.network.size) parts.push(`ağ isteği yapar${f.urls.size ? ` (${list(f.urls, 2)})` : ''}`);
-  if (f.domWrite) parts.push('sayfa içeriğini değiştirir');
-  else if (f.domRead) parts.push('sayfadan eleman okur');
-  if (f.storage) parts.push('tarayıcı depolamasına erişir');
-  if (f.events.size) parts.push(`olay dinler (${list(f.events)})`);
-  if (f.timers) parts.push('zamanlayıcı kurar');
-  if (f.decode) parts.push('string kodlar/çözer');
-  if (f.crypto) parts.push('kriptografi kullanır');
-  if (f.dynamic) parts.push('çalışma anında kod üretir');
-  if (f.awaits) parts.push('asenkron bekler');
-  if (f.yields) parts.push('değer üretir (generator)');
-  if (f.loops) parts.push(f.loops > 1 ? `${f.loops} döngü içerir` : 'döngü içerir');
-  if (f.recursion) parts.push('kendini çağırır');
-  if (f.throws) parts.push('hata fırlatabilir');
-  if (f.console && parts.length === 0) parts.push('konsola yazar');
-  if (f.calls.size) parts.push(`çağırdıkları: ${list(f.calls, 4)}`);
+  if (f.fields.size) parts.push(P.fields(list(f.fields, 4)));
+  if (f.network.size) parts.push(P.network(f.urls.size ? list(f.urls, 2) : ''));
+  if (f.domWrite) parts.push(P.domWrite);
+  else if (f.domRead) parts.push(P.domRead);
+  if (f.storage) parts.push(P.storage);
+  if (f.events.size) parts.push(P.events(list(f.events)));
+  if (f.timers) parts.push(P.timers);
+  if (f.decode) parts.push(P.decode);
+  if (f.crypto) parts.push(P.crypto);
+  if (f.dynamic) parts.push(P.dynamic);
+  if (f.awaits) parts.push(P.awaits);
+  if (f.yields) parts.push(P.yields);
+  if (f.loops) parts.push(P.loops(f.loops));
+  if (f.recursion) parts.push(P.recursion);
+  if (f.throws) parts.push(P.throws);
+  if (f.console && parts.length === 0) parts.push(P.console);
+  if (f.calls.size) parts.push(P.calls(list(f.calls, 4)));
   const sig = inf.fn(path);
   // generic: gövdeden çıkarılabilen bir bilgi yok, özet yalnızca kalıp cümle
   const generic = !parts.length;
   if (generic) {
-    parts.push(sig.returns === 'void' ? 'yan etkisiz ya da basit bir işlem yapar' : 'bir değer hesaplar');
+    parts.push(sig.returns === 'void' ? P.voidGeneric : P.valueGeneric);
   }
   const text = parts.join('; ');
   return { text: text[0].toUpperCase() + text.slice(1), sig, facts: f, generic };

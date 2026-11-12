@@ -1,5 +1,6 @@
 import { fnv1a } from '../../util/hash.js';
 import { parseNameMap } from '../../naming/names.js';
+import { getLang } from '../../i18n.js';
 
 // Kullanıcıya özel kolaylıklar tarayıcıda saklanır: seçenekler, ad sözlüğü (E231), dosya başına ad haritası (87),
 // biçim profili (E239). Depolama kapalıysa bellekte çalışır.
@@ -48,7 +49,7 @@ export const setFormat = (p) => write(KEY_FORMAT, p);
 
 /** Pipeline seçenekleri: geçiş anahtarları + önce sözlük sonra dosya haritası */
 export function namingOptions(input) {
-  return { ...getOptions(), names: { ...getDict(), ...getMap(input) } };
+  return { ...getOptions(), lang: getLang(), names: { ...getDict(), ...getMap(input) } };
 }
 
 // Açıklamalı fark için pipeline anlık görüntüleri (bellekte, son çözüm)

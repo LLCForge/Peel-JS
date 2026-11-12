@@ -5,17 +5,27 @@ const DB = 'peel';
 const STORE = 'session';
 const MAX_TEXT = 25 * 1024 * 1024;
 
-function open() {
+// 'peel' veritabanını oturum ve geçmiş depoları paylaşır; ikisi de her açılışta var olmalı
+// (sürüm 1'de hangisi önce açıldıysa yalnızca onun deposu oluşuyordu)
+const STORES = ['session', 'history'];
+
+export function openDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
+    const req = indexedDB.open(DB, 2);
+    req.onupgradeneeded = () => {
+      for (const name of STORES) if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name);
+    };
+    req.onsuccess = () => {
+      // başka sekme daha yeni sürüme yükseltirken açık bağlantı onu kilitlemesin
+      req.result.onversionchange = () => req.result.close();
+      resolve(req.result);
+    };
     req.onerror = () => reject(req.error ?? new Error('IndexedDB açılamadı'));
   });
 }
 
 async function tx(mode, fn) {
-  const db = await open();
+  const db = await openDb();
   try {
     return await new Promise((resolve, reject) => {
       const t = db.transaction(STORE, mode);
@@ -29,7 +39,8 @@ async function tx(mode, fn) {
   }
 }
 
-export const saveSession = (data) => tx('readwrite', (s) => s.put(data, 'current'));
+// JSON gidiş-dönüşü: rapordaki tembel hesap fonksiyonları (lazySymbolic) yapılandırılmış klonlanamaz
+export const saveSession = (data) => tx('readwrite', (s) => s.put(JSON.parse(JSON.stringify(data)), 'current'));
 export const loadSession = () => tx('readonly', (s) => s.get('current'));
 export const clearSession = () => tx('readwrite', (s) => s.delete('current'));
 

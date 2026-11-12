@@ -14,6 +14,7 @@ import { salvage } from '../analysis/salvage.js';
 
 // js-confuser high (pack + iç içe CFF) katman katman açılır: büyük çekimler 25 turu aşabilir; değişiklik durunca biter
 const MAX_ROUNDS = 40;
+const MAX_FINISH_ROUNDS = 8;
 const CONTEXT_MAX_LEN = 2_000_000;
 const DEEP_MAX_LEN = 2_000_000; // QuickJS'te 1 MB'lık programı çalıştırmak saniyenin altında (js-confuser high çekimleri 1 MB'ı aşabilir)
 
@@ -151,6 +152,7 @@ export async function deobfuscate(input, {
     // finish: true olan okunabilirlik pass'leri, çözme pass'leri sabitlendikten sonra devreye girer
     // (ör. kısa metot sözdizimi proxy tanımayı engellemesin)
     let finishing = !astPasses.some((p) => !p.finish);
+    let finishRounds = 0;
     for (round = resumed ? resumed.round + 1 : 1; round <= MAX_ROUNDS; round++) {
       let changed = false;
       for (const p of astPasses) {
@@ -226,6 +228,8 @@ export async function deobfuscate(input, {
       // salınım (aynı kod yeniden) de sabitlenme sayılır: okunabilirlik aşaması yine de çalışır
       if ((!changed || seen.has(h)) && !finishing && astPasses.some((p) => p.finish)) { finishing = true; seen.add(h); continue; }
       if (!changed || seen.has(h)) break;
+      // okunabilirlik aşaması yalnızca biçim değiştirir: sınırsız sürerse (salınım, büyüyen yorum) çıktıyı bekletmesin
+      if (finishing && ++finishRounds >= MAX_FINISH_ROUNDS) { onLog(`okunabilirlik aşaması ${MAX_FINISH_ROUNDS} turda sabitlenmedi, durduruldu`, 'warn'); break; }
       seen.add(h);
     }
   } finally {

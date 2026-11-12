@@ -239,7 +239,7 @@ async function processOne(item, o, ctx) {
     plugins: ctx.plugins,
     onSnapshot: o.git ? (s) => snapshots.push(s) : undefined,
     // ad haritası (88) önce sözlük gibi uygulanır; proje dosyasının adları (renames) ayrıca aşağıda
-    naming: { names: ctx.names ?? {} },
+    naming: { names: ctx.names ?? {}, lang: o.lang === 'en' ? 'en' : 'tr' },
     format: o.format ?? 'default',
   });
   // E32 / E33: daha iyi doğrulanmış sonuç bulunursa çıktı onunla değişir (rapor ilk çalıştırmanın metin katmanını kullanır)
@@ -405,6 +405,7 @@ Seçenekler / Options:
       --fail-on <low|medium|high> risk bu düzeye ulaşırsa çıkış kodu 4
   -w, --watch                dosya değiştikçe yeniden çöz
   -c, --config <dosya>       yapılandırma (varsayılan: peel.config.json)
+      --lang <tr|en>         kod içi açıklamaların ve HTML raporun dili (varsayılan tr)
   -q, --quiet                stderr'e log yazma
   -h, --help                 yardım
 

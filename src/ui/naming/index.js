@@ -262,7 +262,7 @@ function summaryView(ctx) {
         if (rows.length >= MAX_ROWS) return f.stop();
         const name = f.node.id?.name ?? (f.parentPath.isVariableDeclarator() ? f.parent.id.name : null) ?? f.node.key?.name ?? null;
         if (!name) return;
-        const { text, sig } = summarizeFunction(f, inf);
+        const { text, sig } = summarizeFunction(f, inf, getLang());
         rows.push([`${name}(${sig.params.map((x) => x.name).join(', ')})`, f.node.loc?.start.line ?? '', sig.returns, text]);
       },
     });
