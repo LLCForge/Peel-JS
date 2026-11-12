@@ -169,7 +169,7 @@ export function parsePemKeys(text, b64decode) {
   const out = [];
   for (const m of text.matchAll(PEM)) {
     try {
-      const der = b64decode(m[3].replace(/\\n|\\r|[\s"'+]/g, ''));
+      const der = b64decode(m[3].replace(/\\[nr]|[\s"']/g, ''));
       const key = der && parseRsaDer(der);
       if (key) out.push({ ...key, source: `PEM ${m[2].toLowerCase()}` });
     } catch { /* bozuk PEM */ }
