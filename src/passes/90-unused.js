@@ -107,6 +107,7 @@ export async function run(ast, { onLog, bump, level }) {
   const allowGlobal = level >= 4;
   // ölü özellik atamaları yalnızca maksimum seviyede; kalan fonksiyon bildirimleri sonraki turda temizlenir
   let n = allowGlobal ? deadPropertyStores(ast) : 0;
+  bump('dead.propertyStore', n);
 
   traverse(ast, {
     FunctionDeclaration(p) {
@@ -117,6 +118,7 @@ export async function run(ast, { onLog, bump, level }) {
       if (b.referencePaths.some((r) => !r.findParent((x) => x === p))) return;
       p.remove();
       n++;
+      bump('dead.unusedFunction');
     },
     VariableDeclarator(p) {
       if (!t.isIdentifier(p.node.id) || isExported(p)) return;
@@ -130,9 +132,11 @@ export async function run(ast, { onLog, bump, level }) {
       if (!p.node.init || isInertInit(p.get('init'))) {
         p.remove();
         n++;
+        bump('dead.unusedVariable');
       } else if (decl.node.declarations.length === 1 && Array.isArray(decl.container)) {
         decl.replaceWith(t.expressionStatement(p.node.init));
         n++;
+        bump('dead.unusedVariable');
       }
     },
   });

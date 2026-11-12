@@ -24,6 +24,7 @@ import * as integrity from '../passes/24-integrity.js';
 import * as confuser from '../passes/37-confuser.js';
 import * as indirection from '../passes/42-indirection.js';
 import * as flow from '../passes/78-flow.js';
+import * as deadExtra from '../passes/82-dead-extra.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
@@ -53,6 +54,7 @@ export const PASSES = [
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
   { id: 'flow',         level: 2, kind: 'ast',  needs: null,      mod: flow },
   { id: 'simplify',     level: 2, kind: 'ast',  needs: null,      mod: simplify },
+  { id: 'dead-extra',   level: 2, kind: 'ast',  needs: null,      mod: deadExtra },
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
   { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },
 ];

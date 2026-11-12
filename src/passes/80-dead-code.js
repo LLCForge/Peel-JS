@@ -239,11 +239,13 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
     DebuggerStatement(p) {
       if (Array.isArray(p.container)) p.remove(); else p.replaceWith(t.emptyStatement());
       n++;
+      bump('dead.debugger');
     },
     ExpressionStatement(p) {
       if (isProtectionIife(p.node)) {
         if (Array.isArray(p.container)) p.remove(); else p.replaceWith(t.emptyStatement());
         n++;
+        bump('dead.protection');
         return;
       }
       const e = p.node.expression;
@@ -254,6 +256,7 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
       if (inert && Array.isArray(p.container)) {
         p.remove();
         n++;
+        bump('dead.noop');
         return;
       }
       if (t.isSequenceExpression(e) && Array.isArray(p.container)) {
@@ -266,22 +269,28 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
       if (v === undefined) return;
       const keep = v ? p.node.consequent : p.node.alternate;
       const dead = v ? p.node.alternate : p.node.consequent;
-      if (replaceStatement(p, keep, dead)) n++;
+      if (replaceStatement(p, keep, dead)) { n++; bump('dead.constIf'); }
     },
     ConditionalExpression(p) {
       const v = truthiness(p.node.test);
       if (v === undefined) return;
       p.replaceWith(v ? p.node.consequent : p.node.alternate);
       n++;
+      bump('dead.constIf');
     },
     WhileStatement(p) {
-      if (truthiness(p.node.test) === false && replaceStatement(p, null, p.node.body)) n++;
+      if (truthiness(p.node.test) === false && replaceStatement(p, null, p.node.body)) { n++; bump('dead.constIf'); }
     },
   });
 
-  n += await foldInTests(ast, { sandbox, ctx });
-  n += unwrapCalls(ast, onLog);
-  n += removeGuardedCallbacks(ast, onLog);
+  // E220: ölü kod türüne göre sayılır (rapordaki dağılım)
+  const inTests = await foldInTests(ast, { sandbox, ctx });
+  const wrappers = unwrapCalls(ast, onLog);
+  const guards = removeGuardedCallbacks(ast, onLog);
+  bump('dead.inTest', inTests);
+  bump('dead.emptyWrapper', wrappers);
+  bump('dead.guard', guards);
+  n += inTests + wrappers + guards;
 
   if (n) onLog(`dead-code: ${n} öğe temizlendi`, 'info');
   bump('deadCode', n);
