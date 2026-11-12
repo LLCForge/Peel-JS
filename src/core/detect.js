@@ -11,7 +11,7 @@ export const PROFILES = {
   all: null,
   'obfuscator-io': ['normalize', 'unpack', 'predecoders', 'literals', 'const-arrays', 'const-objects', 'wrappers', 'string-array',
     'runtime-decoders', 'proxy', 'const-fold', 'dead-code', 'opaque', 'state-var', 'unflatten', 'control-flow', 'simplify', 'unused',
-    'static-decode', 'restructure'],
+    'static-decode', 'restructure', 'static-string-array'],
   'js-confuser': ['normalize', 'unpack', 'predecoders', 'literals', 'const-arrays', 'const-objects', 'wrappers', 'string-array',
     'runtime-decoders', 'runtime-functions', 'proxy', 'const-fold', 'dead-code', 'opaque', 'state-var', 'unflatten', 'vm',
     'control-flow', 'simplify', 'unused', 'static-decode', 'restructure', 'dispatcher'],
@@ -19,7 +19,7 @@ export const PROFILES = {
   encoder: ['normalize', 'unpack', 'predecoders', 'literals', 'const-fold', 'static-decode'],
   minifier: ['normalize', 'literals', 'const-fold', 'simplify', 'static-decode', 'restructure', 'rename'],
   bundler: ['normalize', 'literals', 'simplify', 'static-decode', 'restructure'],
-  transpiler: ['normalize', 'literals', 'simplify', 'restructure', 'static-decode'],
+  transpiler: ['normalize', 'literals', 'simplify', 'restructure', 'static-decode', 'regenerator'],
 };
 
 // [regex, kanıt, ağırlık(0–100), en az eşleşme]
@@ -258,7 +258,7 @@ const BASE = {
   normalize: 95, unpack: 90, predecoders: 85, literals: 98, 'const-arrays': 90, 'const-objects': 88, wrappers: 88,
   'string-array': 85, 'runtime-decoders': 70, 'runtime-functions': 60, proxy: 85, 'const-fold': 92, 'dead-code': 80,
   opaque: 80, 'state-var': 75, unflatten: 72, vm: 60, 'control-flow': 75, simplify: 95, unused: 85, rename: 90,
-  'static-decode': 97, restructure: 92, dispatcher: 85,
+  'static-decode': 97, restructure: 92, dispatcher: 85, 'static-string-array': 93, regenerator: 88,
 };
 export function passConfidence(events, { verified = false } = {}) {
   const byPass = new Map();
