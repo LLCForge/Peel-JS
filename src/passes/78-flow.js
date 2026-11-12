@@ -5,7 +5,7 @@ import { literalValue } from '../util/pure.js';
 // Akış normalizasyonu. Her kural yalnızca yerel olarak eşdeğerliği kanıtlanan biçime uygulanır.
 //  E161 try/catch ile gizlenmiş akış       E163 küçük switch → if zinciri    E164 literal dönen switch → Map tablosu
 //  E166 break/continue normalizasyonu      E170 guard cümlesi                E217 boş catch
-//  E203 zamanlama tabanlı anti-debug kontrolü
+//  (E203 zamanlama tabanlı anti-debug: 79-anti-timing)
 
 const MAX_IF_CASES = 3;
 const MIN_TABLE_CASES = 4;
@@ -265,63 +265,8 @@ function guards(ast) {
   return n;
 }
 
-// ── E203: zamanlama tabanlı anti-debug ──────────────────
-
-// Date.now(), performance.now(), new Date().getTime(), +new Date(), new Date().valueOf()
-function isClock(p, n) {
-  const unbound = (name) => !p.scope.getBinding(name);
-  if (t.isUnaryExpression(n, { operator: '+' })) return t.isNewExpression(n.argument) && t.isIdentifier(n.argument.callee, { name: 'Date' }) && !n.argument.arguments.length && unbound('Date');
-  if (!t.isCallExpression(n) || n.arguments.length || !t.isMemberExpression(n.callee) || n.callee.computed) return false;
-  const { object, property } = n.callee;
-  if (t.isIdentifier(object, { name: 'Date' }) && property.name === 'now') return unbound('Date');
-  if (t.isIdentifier(object, { name: 'performance' }) && property.name === 'now') return unbound('performance');
-  return t.isNewExpression(object) && t.isIdentifier(object.callee, { name: 'Date' }) && !object.arguments.length &&
-    ['getTime', 'valueOf'].includes(property.name) && unbound('Date');
-}
-
-// if (CLOCK - t0 > N) …  →  { name: t0, threshold: N, branchIsTrue }
-function elapsedTest(p, test) {
-  if (!t.isBinaryExpression(test) || !['>', '>=', '<', '<='].includes(test.operator)) return null;
-  const diffSide = (d) => t.isBinaryExpression(d, { operator: '-' }) && isClock(p, d.left) && t.isIdentifier(d.right) ? d.right.name : null;
-  let name = diffSide(test.left);
-  let num = test.right;
-  let slow = ['>', '>='].includes(test.operator); // test doğruysa "yavaş" (hata ayıklanıyor) dal
-  if (!name) {
-    name = diffSide(test.right);
-    num = test.left;
-    slow = ['<', '<='].includes(test.operator);
-  }
-  if (!name || !t.isNumericLiteral(num) || num.value < 20) return null;
-  return { name, slow };
-}
-
-function timingChecks(ast) {
-  let n = 0;
-  traverse(ast, {
-    IfStatement(p) {
-      if (!Array.isArray(p.container) || !p.node) return;
-      const e = elapsedTest(p, p.node.test);
-      if (!e) return;
-      const b = p.scope.getBinding(e.name);
-      if (!b?.constant || b.references !== 1 || !b.path.isVariableDeclarator() || !isClock(p, b.path.node.init)) return;
-      const decl = b.path.parentPath;
-      if (decl.parentPath !== p.parentPath || decl.node.declarations.length !== 1) return;
-      // ölçüm ile test arasında yalnızca debugger/boş deyim: normal çalışmada geçen süre ~0, eşik aşılamaz
-      const between = p.container.slice(decl.key + 1, p.key);
-      if (!between.every((s) => t.isDebuggerStatement(s) || t.isEmptyStatement(s))) return;
-      const normal = e.slow ? p.node.alternate : p.node.consequent;
-      const keep = asList(normal);
-      if (keep.some(isLexical)) p.replaceWith(t.blockStatement(keep)); else if (keep.length) p.replaceWithMultiple(keep); else p.remove();
-      decl.remove();
-      n++;
-    },
-  });
-  return n;
-}
-
 export async function run(ast, { onLog, bump, level }) {
   const steps = [
-    ['dead.timingAntiDebug', 'E203 zamanlama tabanlı anti-debug kontrolü kaldırıldı', () => timingChecks(ast)],
     ['flowTry', 'E161/E217 try/catch sadeleştirildi', () => tries(ast)],
     ['flowSwitch', 'E163/E164 switch if zincirine/tabloya çevrildi', () => (level >= 3 ? switches(ast, level) : 0)],
     ['flowJump', 'E166 break/continue normalleştirildi', () => jumps(ast)],

@@ -8,6 +8,9 @@ import { traverse, gen } from '../util/ast.js';
 // Ölçüm, kod adım adım izlenirken (debugger açıkken) uzar; normal çalıştırmada koşul yanlıştır. Gövdesi yalnızca
 // anti-debug eylemlerinden (debugger, sonsuz döngü, throw, sayfa yenileme/yönlendirme/kapatma) oluşan böyle bir
 // kontrol kaldırılır; else dalı varsa yerine o konur (normal yol). Deep doğrulama çıktının aynı kaldığını denetler.
+// E203: ölçüm (var t0 = CLOCK) testten hemen önceyse ve arada yalnızca debugger/boş deyim varsa normal çalışmada geçen
+// süre ~0'dır: eşik (≥ 20 ms) aşılamaz, gövde ne olursa olsun normal dal kalır. Yalnızca kaldırılan testlerde okunan
+// saat değişkenlerinin bildirimleri de silinir (saat okuması yan etkisiz).
 
 const CLOCK = (n) =>
   (t.isCallExpression(n) && t.isMemberExpression(n.callee) && !n.callee.computed &&
@@ -47,28 +50,69 @@ function onlyAntiDebug(node) {
   });
 }
 
+const asList = (s) => (!s ? [] : t.isBlockStatement(s) ? s.body : [s]);
+const isLexical = (s) => t.isFunctionDeclaration(s) || t.isClassDeclaration(s) || (t.isVariableDeclaration(s) && s.kind !== 'var');
+// saat okuması gölgelenmiş bir Date/performance'a gitmiyor
+const realClock = (p, n) => CLOCK(n) && !p.scope.getBinding('Date') && !p.scope.getBinding('performance');
+
+// E203: var t0 = CLOCK; [debugger;] if (CLOCK - t0 > N) …  →  normal dal (true: test doğruysa yavaş yol)
+function adjacentTiming(p) {
+  const test = p.node.test;
+  if (!Array.isArray(p.container) || !t.isBinaryExpression(test) || !['>', '>=', '<', '<='].includes(test.operator)) return null;
+  const diff = (d) => (t.isBinaryExpression(d, { operator: '-' }) && realClock(p, d.left) && t.isIdentifier(d.right) ? d.right.name : null);
+  let name = diff(test.left);
+  let num = test.right;
+  let slow = ['>', '>='].includes(test.operator);
+  if (!name) { name = diff(test.right); num = test.left; slow = ['<', '<='].includes(test.operator); }
+  if (!name || !t.isNumericLiteral(num) || num.value < 20) return null;
+  const b = p.scope.getBinding(name);
+  if (!b?.constant || b.references !== 1 || !b.path.isVariableDeclarator() || !realClock(p, b.path.node.init)) return null;
+  const decl = b.path.parentPath;
+  if (decl.parentPath !== p.parentPath || decl.node.declarations.length !== 1) return null;
+  const between = p.container.slice(decl.key + 1, p.key);
+  if (!between.every((s) => t.isDebuggerStatement(s) || t.isEmptyStatement(s))) return null;
+  return { normal: slow ? p.node.alternate : p.node.consequent };
+}
+
 export async function run(ast, { onLog, bump, findings }) {
   const clockVars = new Set();
   traverse(ast, {
     VariableDeclarator(p) {
-      if (t.isIdentifier(p.node.id) && p.node.init && CLOCK(p.node.init)) clockVars.add(p.node.id.name);
+      if (t.isIdentifier(p.node.id) && p.node.init && realClock(p, p.node.init)) clockVars.add(p.node.id.name);
     },
     AssignmentExpression(p) {
-      if (t.isIdentifier(p.node.left) && CLOCK(p.node.right)) clockVars.add(p.node.left.name);
+      if (t.isIdentifier(p.node.left) && realClock(p, p.node.right)) clockVars.add(p.node.left.name);
     },
   });
   let n = 0;
   traverse(ast, {
     IfStatement(p) {
-      if (!timingTest(p.node.test, clockVars) || !onlyAntiDebug(p.node.consequent)) return;
-      const test = gen(p.node.test);
-      const alt = p.node.alternate;
-      if (findings) (findings.timing ??= []).push({ test, action: gen(p.node.consequent).slice(0, 200), line: p.node.loc?.start.line ?? null, kept: alt ? 'else dalı' : null });
-      if (alt) p.replaceWith(t.isBlockStatement(alt) ? alt : t.blockStatement([alt]));
+      if (!p.node) return;
+      let normal;
+      const unshadowed = !p.scope.getBinding('Date') && !p.scope.getBinding('performance');
+      if (unshadowed && timingTest(p.node.test, clockVars) && onlyAntiDebug(p.node.consequent)) normal = p.node.alternate;
+      else { const e = adjacentTiming(p); if (!e) return; normal = e.normal; }
+      if (findings) (findings.timing ??= []).push({ test: gen(p.node.test), action: gen(p.node.consequent).slice(0, 200), line: p.node.loc?.start.line ?? null, kept: normal ? 'normal dal' : null });
+      const keep = asList(normal);
+      if (!Array.isArray(p.container) || keep.some(isLexical)) p.replaceWith(t.blockStatement(keep));
+      else if (keep.length) p.replaceWithMultiple(keep);
       else p.remove();
       n++;
     },
   });
+  if (n) {
+    // yalnızca kaldırılan testlerde okunan saat değişkenleri: artık okunmayan bildirim gereksiz
+    traverse(ast, {
+      Program(p) { p.scope.crawl(); },
+      VariableDeclarator(p) {
+        if (!t.isIdentifier(p.node.id) || !clockVars.has(p.node.id.name) || !p.node.init || !realClock(p, p.node.init)) return;
+        const b = p.scope.getBinding(p.node.id.name);
+        if (!b || b.referenced || b.constantViolations.length || b.path !== p) return;
+        if (p.parentPath.node.declarations.length === 1 && !p.parentPath.parentPath.isFor()) p.parentPath.remove();
+        else p.remove();
+      },
+    });
+  }
   if (n) onLog(`anti-timing: ${n} zamanlama tabanlı anti-debug kontrolü kaldırıldı`, 'info');
   bump('antiTiming', n);
 }

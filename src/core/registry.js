@@ -82,7 +82,7 @@ export const PASSES = [
   { id: 'vm-lift',      level: 3, kind: 'ast',  needs: null,      mod: vmLift },
   { id: 'unflatten',    level: 3, kind: 'ast',  needs: null,      mod: unflatten },
   { id: 'vm',           level: 3, kind: 'ast',  needs: 'sandbox', mod: vm },
-  { id: 'anti-timing',  level: 3, kind: 'ast',  needs: null,      mod: antiTiming },
+  { id: 'anti-timing',  level: 2, kind: 'ast',  needs: null,      mod: antiTiming },
   { id: 'control-flow', level: 3, kind: 'ast',  needs: null,      mod: controlFlow },
   { id: 'flow',         level: 2, kind: 'ast',  needs: null,      mod: flow },
   { id: 'regenerator',  level: 2, kind: 'ast',  needs: null,      mod: regenerator },
