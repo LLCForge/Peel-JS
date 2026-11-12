@@ -82,10 +82,10 @@ const ROTATION = /\.push\([^;]*\.shift\(\)\)|\["push"\]\([^;]*\["shift"\]\(\)\)/
 // gövde metni fonksiyon başına bir kez üretilir: her çağrıda yeniden üretmek büyük dosyada O(çağrı × boyut)
 const rotationCache = new WeakMap();
 function isRotationFn(node) {
-  // yalnızca değişken bildirimleri + tek döngüden oluşan gövde: rotasyonu içeren bütün bir paket/modül
+  // yalnızca değişken/fonksiyon (sarmalayıcı) bildirimleri + tek döngüden oluşan gövde: rotasyonu içeren bütün bir paket/modül
   // fonksiyonu (webpack-obfuscator loader'ı her modüle kendi tablosunu koyar) rotasyon sayılmaz
-  const own = (b) => t.isBlockStatement(b) && b.body.length <= 3 &&
-    b.body.every((s) => t.isVariableDeclaration(s) || t.isLoop(s)) && b.body.some((s) => t.isLoop(s));
+  const own = (b) => t.isBlockStatement(b) && b.body.filter((s) => !t.isFunctionDeclaration(s)).length <= 3 &&
+    b.body.every((s) => t.isVariableDeclaration(s) || t.isLoop(s) || t.isFunctionDeclaration(s)) && b.body.some((s) => t.isLoop(s));
   if (!rotationCache.has(node)) rotationCache.set(node, own(node.body) && ROTATION.test(gen(node.body)));
   return rotationCache.get(node);
 }
@@ -307,6 +307,14 @@ async function resolveCalls(ast, ctx) {
     return;
   }
   try {
+    // Program düzeyi decoder hiç çalışmayan bir daldan çağrılıyorsa (selfDefending geri çağrısı) yakalanmamıştır:
+    // global adıyla doğrudan bağla. Program global kapsamda çalıştığı için ad o fonksiyondur.
+    const unseen = groups.filter((g) => !g.memberPath && g.binding.kind === 'hoisted' && g.binding.scope.path.isProgram() &&
+      g.binding.constantViolations.every((v) => v.findParent((x) => x === g.binding.path)));
+    if (unseen.length) {
+      await sandbox.batchIn(opened.token, unseen.map((g) =>
+        `(typeof ${g.binding.identifier.name} === "function" && !__peelFns[${g.id}] && (__peelFns[${g.id}] = ${g.binding.identifier.name}), 0)`));
+    }
     let total = 0;
     const decoders = new Set();
     for (const g of groups) {

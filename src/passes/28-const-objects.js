@@ -95,7 +95,7 @@ function foldBuilders(ast) {
   return jobs.length;
 }
 
-export async function run(ast, { onLog, bump }) {
+export async function run(ast, { onLog, bump, level = 2 }) {
   let n = 0;
   // yapı değişti: bağlamalar bayat, satır içi yazma bir sonraki turda taze ağaçla yapılır
   const folded = foldBuilders(ast);
@@ -122,13 +122,24 @@ export async function run(ast, { onLog, bump }) {
       }
       const b = p.scope.getBinding(id.name);
       if (!b || b.constantViolations.length || !b.referencePaths.length) return;
-      // her kullanım o.k okuması (ya da proxy için o.k(...) çağrısı) olmalı
+      // her kullanım o.k okuması (ya da proxy için o.k(...) çağrısı) olmalı.
+      // Seviye 3+: obfuscator.io depo nesnesi (en az 3 proxy fonksiyon) ölü enjekte dallarda değer olarak geçebilir
+      // (f(o), return o). Nesneye hiçbir yerde yazılmıyorsa üye okumaları yine yazılır, bildirim kalır;
+      // kaçan değerin nesneyi değiştirmediği varsayımı derin davranış doğrulamasıyla denetlenir.
+      const storage = level >= 3 && [...props.values()].filter((x) => x.kind).length >= 3;
       const uses = [];
+      let escapes = 0;
       for (const r of b.referencePaths) {
         const m = r.parentPath;
-        if (!m.isMemberExpression({ object: r.node })) return;
+        if (!m.isMemberExpression({ object: r.node })) {
+          if (!storage) return;
+          escapes++;
+          continue;
+        }
         const k = keyName(m.node.property, m.node.computed);
-        const entry = k === null ? null : props.get(k);
+        let entry = k === null ? null : props.get(k);
+        // nesnede ve Object.prototype'ta olmayan ad (ölü daldaki o.length) undefined okur
+        if (!entry && k !== null && !(k in Object.prototype) && !props.has('__proto__')) entry = { literal: t.unaryExpression('void', t.numericLiteral(0)) };
         if (!entry) return;
         const par = m.parentPath;
         if (par.isAssignmentExpression({ left: m.node }) || par.isUpdateExpression() || par.isUnaryExpression({ operator: 'delete' }) ||
@@ -145,8 +156,8 @@ export async function run(ast, { onLog, bump }) {
       }
       // bildirim kullanımlardan önce olmalı (hoisting'te var değeri undefined'dır)
       if (b.kind !== 'var' && b.kind !== 'let' && b.kind !== 'const') return;
-      const stmt = p.parentPath;
-      if (uses.some((u) => u.path.getFunctionParent() === p.getFunctionParent() && u.path.node.start < stmt.node.end)) return;
+      // aynı bildirimdeki sonraki tanımlayıcılar (var o = {…}, v = o.f(x)) nesne kurulduktan sonra çalışır
+      if (uses.some((u) => u.path.getFunctionParent() === p.getFunctionParent() && u.path.node.start < p.node.end)) return;
       // iç içe kullanımlar (o.add(o.a, 1)) önce içten dışa değiştirilir
       for (const u of uses.sort((a, c) => c.path.node.start - a.path.node.start || a.path.node.end - c.path.node.end)) {
         if (!u.path.node) continue;
@@ -154,8 +165,9 @@ export async function run(ast, { onLog, bump }) {
         else u.path.replaceWith(expand(u.entry.kind, u.path.node.arguments));
         n++;
       }
-      p.remove();
-      onLog(`const-objects: ${id.name} (${props.size} anahtar) ${uses.length} kullanım yerine yazıldı`, 'info');
+      if (escapes && !uses.length) return;
+      if (!escapes) p.remove();
+      onLog(`const-objects: ${id.name} (${props.size} anahtar) ${uses.length} kullanım yerine yazıldı${escapes ? `, ${escapes} değer kullanımı için bildirim kaldı` : ''}`, 'info');
     },
   });
   bump('constObject', n);

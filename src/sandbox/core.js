@@ -45,7 +45,9 @@ export function createHost(QuickJS, options = {}) {
   function make(memoryMB, config = null, plugins = []) {
     const rt = QuickJS.newRuntime();
     rt.setMemoryLimit(memoryMB * 1024 * 1024);
-    rt.setMaxStackSize(1 << 20);
+    // QuickJS sınırı host (Node/tarayıcı) yığınından önce dolmalı: 1 MB'ta derin özyineleme (debugProtection) host
+    // yığınını taşırıp çalıştırmayı yakalanamaz biçimde düşürüyordu; 320 KB'ta QuickJS kendi "stack overflow" hatasını atar.
+    rt.setMaxStackSize(320 * 1024);
     let deadline = Date.now() + 5000;
     rt.setInterruptHandler(() => Date.now() > deadline);
     const vm = rt.newContext();

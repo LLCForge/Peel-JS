@@ -126,28 +126,78 @@ function isLengthSpoofer(fnPath) {
     t.isReturnStatement(ret) && t.isIdentifier(ret.argument, { name: params[0].name });
 }
 
+// Deyim olarak tek başına duran, değerlendirmesi gözlenebilir hiçbir şey yapmayan ifadeler (depo nesnesi
+// kullanımları satır içine yazıldıktan sonra kalan kabuklar):
+//   ({ a: "x", f: function (b, c) { return b + c; } });      — yalnızca literal/fonksiyon değerli, sabit anahtarlı nesne
+//   (function () { var x = true; return function () { … }; })();   — yalnızca fonksiyon üreten IIFE
+const inertObject = (e) => t.isObjectExpression(e) && e.properties.every((x) => t.isObjectProperty(x) && !x.computed &&
+  (literalValue(x.value).ok || t.isFunctionExpression(x.value) || t.isArrowFunctionExpression(x.value) || inertObject(x.value)));
+function factoryIife(e) {
+  if (!t.isCallExpression(e) || e.arguments.length || !t.isFunctionExpression(e.callee) || e.callee.async || e.callee.generator) return false;
+  const body = e.callee.body.body;
+  const last = body[body.length - 1];
+  if (!t.isReturnStatement(last) || !(t.isFunctionExpression(last.argument) || t.isArrowFunctionExpression(last.argument))) return false;
+  return body.slice(0, -1).every((s) => t.isVariableDeclaration(s) &&
+    s.declarations.every((d) => t.isIdentifier(d.id) && (!d.init || literalValue(d.init).ok || t.isFunction(d.init))));
+}
+
 // obfuscator.io selfDefending / debugProtection / disableConsoleOutput: bir "callController" ile tek seferlik
 // çalıştırılan koruma geri çağrıları. Kodun kendi metnini regex ile tarar; biçimlendirilmiş kodda sonsuz döngüye girer.
 const GUARD_STRINGS = new Set(['(((.+)+)+)+$', 'function *\\( *\\)', '\\+\\+ *(?:[a-zA-Z_$][0-9a-zA-Z_$]*)',
   // javascript-obfuscator 0.x selfDefending: sıkıştırılmış fonksiyon metni ve \x/\u kaçışı testi
   '\\w+ *\\(\\) *{\\w+ *[\'|"].+[\'|"];? *}', '(\\\\[x|u](\\w){2,4})+']);
 
-function isGuardCallback(node) {
+// Kontrol akışı düzleştirmesiyle birlikte koruma string'leri ve çağrılar sabit "depo" nesnesinin arkasındadır:
+//   var o = { k: "(((.+)+)+)+$", c: function (a, b, d) { return a(b, d); }, r: function (a) { return a(); } };
+//   var g = o.c(C, this, function () { … o.k … }); o.r(g);
+// Hiç değiştirilmeyen nesne literal'inin özelliği değer olarak okunur.
+function objectProp(scope, member) {
+  if (!t.isMemberExpression(member) || !t.isIdentifier(member.object)) return null;
+  const key = !member.computed && t.isIdentifier(member.property) ? member.property.name : t.isStringLiteral(member.property) ? member.property.value : null;
+  const b = key === null ? null : scope.getBinding(member.object.name);
+  if (!b?.constant || !b.path.isVariableDeclarator() || !t.isObjectExpression(b.path.node.init)) return null;
+  const prop = b.path.node.init.properties.find((x) => t.isObjectProperty(x) && !x.computed &&
+    (t.isIdentifier(x.key, { name: key }) || t.isStringLiteral(x.key, { value: key })));
+  return prop?.value ?? null;
+}
+
+// depo nesnesinin "çağırıcı" proxy'si mi: function (f, ...xs) { return f(...xs); }  (arity = parametre sayısı)
+function isCallerProxy(fn, arity) {
+  if (!t.isFunctionExpression(fn) || fn.params.length !== arity || !fn.params.every((x) => t.isIdentifier(x))) return false;
+  const ret = fn.body.body.length === 1 ? fn.body.body[0] : null;
+  const c = t.isReturnStatement(ret) ? ret.argument : null;
+  return t.isCallExpression(c) && t.isIdentifier(c.callee, { name: fn.params[0].name }) && c.arguments.length === arity - 1 &&
+    c.arguments.every((a, i) => t.isIdentifier(a, { name: fn.params[i + 1].name }));
+}
+
+function isGuardCallback(node, scope = null) {
   if (!t.isFunctionExpression(node) && !t.isArrowFunctionExpression(node)) return false;
   let hit = false;
-  t.traverseFast(node, (n) => { if (t.isStringLiteral(n) && GUARD_STRINGS.has(n.value)) hit = true; });
+  t.traverseFast(node, (n) => {
+    if (t.isStringLiteral(n) && GUARD_STRINGS.has(n.value)) hit = true;
+    if (scope && !hit && t.isMemberExpression(n)) {
+      const v = objectProp(scope, n);
+      if (t.isStringLiteral(v) && GUARD_STRINGS.has(v.value)) hit = true;
+    }
+  });
   return hit;
 }
 
-// C(this, function () { …koruma… })
-const guardCall = (n) => t.isCallExpression(n) && n.arguments.length === 2 &&
-  t.isThisExpression(n.arguments[0]) && isGuardCallback(n.arguments[1]);
+// C(this, function () { …koruma… })  ya da  o.c(C, this, function () { … })  (o.c çağırıcı proxy)
+const guardCall = (n, scope = null) => t.isCallExpression(n) && ((n.arguments.length === 2 &&
+  t.isThisExpression(n.arguments[0]) && isGuardCallback(n.arguments[1], scope)) ||
+  (scope && n.arguments.length === 3 && t.isThisExpression(n.arguments[1]) && isCallerProxy(objectProp(scope, n.callee), 3) &&
+    isGuardCallback(n.arguments[2], scope)));
+
+// g()  ya da  o.r(g)  (o.r tek argümanlı çağırıcı proxy)
+const callsOnly = (c, ref, scope) => (c.isCallExpression({ callee: ref.node }) && !c.node.arguments.length) ||
+  (c.isCallExpression() && c.node.arguments.length === 1 && c.node.arguments[0] === ref.node && isCallerProxy(objectProp(scope, c.node.callee), 1));
 
 function removeGuardedCallbacks(ast, onLog) {
   let n = 0;
   traverse(ast, {
     CallExpression(p) {
-      if (!p.node || !guardCall(p.node)) return;
+      if (!p.node || !guardCall(p.node, p.scope)) return;
       const parent = p.parentPath;
       // C(this, cb)();  → deyimi sil
       if (parent.isCallExpression({ callee: p.node }) && !parent.node.arguments.length && parent.parentPath.isExpressionStatement()) {
@@ -162,7 +212,7 @@ function removeGuardedCallbacks(ast, onLog) {
       // geri çağrı kendi değişkenini de okur (v7.toString()); o referanslar silinen bildirimle birlikte gider
       const refs = b.referencePaths.filter((r) => !r.findParent((x) => x === p));
       const calls = refs.map((r) => r.parentPath);
-      if (!calls.every((c, i) => c.isCallExpression({ callee: refs[i].node }) && !c.node.arguments.length)) return;
+      if (!calls.every((c, i) => callsOnly(c, refs[i], c.scope))) return;
       for (const c of calls) {
         const host = c.parentPath;
         if (host.isExpressionStatement() && Array.isArray(host.container)) host.remove();
@@ -254,7 +304,7 @@ export async function run(ast, { onLog, bump, sandbox, ctx }) {
       // `W;` gibi tek başına bağlı bir isim ya da literal: değerlendirmenin gözlenebilir etkisi yok
       // (bağsız isim ReferenceError fırlatabileceği için dokunulmaz; "use strict" gibi direktifler zaten ayrı düğüm)
       const inert = (t.isIdentifier(e) && p.scope.getBinding(e.name) && !p.findParent((x) => x.isWithStatement())) ||
-        (literalValue(e).ok && !t.isStringLiteral(e));
+        (literalValue(e).ok && !t.isStringLiteral(e)) || inertObject(e) || factoryIife(e);
       if (inert && Array.isArray(p.container)) {
         p.remove();
         n++;
