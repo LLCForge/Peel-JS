@@ -13,6 +13,7 @@ const BROWSER_IDLE_MS = 60000;
 let pending = null;
 let idleTimer = null;
 let unavailable = null;
+let inflight = 0; // süren z3Solve çağrıları: boşta kapatma bunlar bitmeden çalışmamalı
 
 const isNode = typeof process !== 'undefined' && Boolean(process.versions?.node) && typeof window === 'undefined';
 
@@ -69,11 +70,14 @@ export const z3Status = () => (unavailable ? { available: false, reason: unavail
 
 /** @returns {Promise<{ status, backend: 'z3', ms, model?, reason? }>} */
 export async function z3Solve(prep, timeoutMs = 5000) {
-  const z = await load();
-  if (!z) return { status: 'unknown', backend: 'z3', ms: 0, reason: unavailable };
+  // boşta zamanlayıcısı süren bir denetimi bitirirse (pthread'ler kapatılır) denetimin promise'i hiç yerleşmez
+  clearTimeout(idleTimer);
+  inflight++;
   try {
+    const z = await load();
+    if (!z) return { status: 'unknown', backend: 'z3', ms: 0, reason: unavailable };
     return { ...(await z.check(prep, timeoutMs)), backend: 'z3' };
   } finally {
-    scheduleShutdown();
+    if (--inflight === 0) scheduleShutdown();
   }
 }
