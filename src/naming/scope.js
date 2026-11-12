@@ -34,8 +34,9 @@ function harmlessKey(p, depth = 0) {
   if (t.isMemberExpression(n) && t.isIdentifier(n.object, { name: 'Symbol' }) && !p.scope.getBinding('Symbol')) return true;
   if (t.isIdentifier(n)) {
     const b = p.scope.getBinding(n.name);
-    if (!b || !b.path.isVariableDeclarator() || !b.path.node.init) return false;
-    if (!harmlessKey(b.path.get('init'), depth + 1)) return false;
+    if (!b || !b.path.isVariableDeclarator()) return false;
+    // başlangıçsız bildirim: her atama sayısal olmalı (okumadan önce atanmasa bile undefined bir metot adı değildir)
+    if (b.path.node.init ? !harmlessKey(b.path.get('init'), depth + 1) : !b.constantViolations.length) return false;
     return b.constantViolations.every((v) => v.isUpdateExpression() ||
       (v.isAssignmentExpression() && v.node.operator !== '+=' && (v.node.operator !== '=' || harmlessKey(v.get('right'), depth + 1))));
   }

@@ -167,8 +167,6 @@ var c = new Counter(1);
 console.log(Array.from(range(c.inc() + 1)).join(","), c.inc(), c.inc());
 load(2).then(function (v) { console.log(v); });
 load(9).then(function (v) { console.log(v); });
-// son ifade Promise olmasın: sandbox değerlendirme sonucunu döker
-void 0;
 // EXPECT: function* range(n)
 // EXPECT: yield i;
 // EXPECT: async function load(x)

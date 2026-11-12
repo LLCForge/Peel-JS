@@ -2,7 +2,9 @@ import * as t from '@babel/types';
 
 // regenerator durum makinesini yapısal generator gövdesine çevirir (79).
 //
-//   return R.wrap(function f$(ctx) { while (1) switch (ctx.prev = ctx.next) { case 0: …; ctx.next = 2; return X; case 2: y = ctx.sent; … } }, f, this, tryLocs)
+//   klasik:  return R.wrap(function f$(ctx) { while (1) switch (ctx.prev = ctx.next) { case 0: …; ctx.next = 2; return X; case 2: y = ctx.sent; … } }, f, this, tryLocs)
+//   kompakt (Babel 7.27+ _regenerator()):  …w(function (ctx) { while (1) switch (ctx.p = ctx.n) { … y = ctx.v; return ctx.a(2, r); … } })
+//     a(2, v) = return, a(3, N) = break/continue, f(N) = finally bitişi, d(it, N) = yield*, catch bloğunda X = ctx.v hata nesnesi
 //
 // regenerator durumları kaynak sırasında numaralar: ileri atlama if/else, geri atlama döngüdür.
 // Bloklar bu sıraya göre aralıklar halinde yapılandırılır; beklenmeyen her biçimde null döner (fonksiyona dokunulmaz).
@@ -10,6 +12,13 @@ import * as t from '@babel/types';
 class Bail extends Error {}
 const bail = (why) => { throw new Bail(why); };
 const MAX_STATEMENTS = 4000;
+
+// Bağlam alan adları: lehçeye göre (decompile/machineSwitch çağrısı süresince geçerli)
+const DIALECTS = {
+  classic: { next: 'next', prev: 'prev', sent: 'sent' },
+  compact: { next: 'n', prev: 'p', sent: 'v' },
+};
+let P = DIALECTS.classic;
 
 const isCtx = (n, ctx) => t.isIdentifier(n, { name: ctx });
 const ctxProp = (n, ctx) => {
@@ -26,14 +35,15 @@ const keyOf = (n) => (t.isNumericLiteral(n) ? n.value : t.isStringLiteral(n) ? n
 function nextAssign(st, ctx) {
   if (!t.isExpressionStatement(st)) return null;
   const e = st.expression;
-  if (t.isAssignmentExpression(e, { operator: '=' }) && ctxProp(e.left, ctx) === 'next' && t.isNumericLiteral(e.right)) return e.right.value;
+  if (t.isAssignmentExpression(e, { operator: '=' }) && ctxProp(e.left, ctx) === P.next && t.isNumericLiteral(e.right)) return e.right.value;
   return null;
 }
 const isPrevMarker = (st, ctx) => t.isExpressionStatement(st) && t.isAssignmentExpression(st.expression, { operator: '=' }) &&
-  ctxProp(st.expression.left, ctx) === 'prev' && t.isNumericLiteral(st.expression.right);
+  ctxProp(st.expression.left, ctx) === P.prev && t.isNumericLiteral(st.expression.right);
 
 /** while (1) switch (ctx.prev = ctx.next) {…} gövdesini bulur */
-export function machineSwitch(fn, ctx) {
+export function machineSwitch(fn, ctx, dialect = 'classic') {
+  P = DIALECTS[dialect];
   const body = fn.body.body;
   if (body.length !== 1 || !t.isWhileStatement(body[0])) return null;
   const loop = body[0];
@@ -42,8 +52,8 @@ export function machineSwitch(fn, ctx) {
   if (t.isBlockStatement(sw)) { if (sw.body.length !== 1) return null; sw = sw.body[0]; }
   if (!t.isSwitchStatement(sw)) return null;
   const d = sw.discriminant;
-  const ok = (t.isAssignmentExpression(d, { operator: '=' }) && ctxProp(d.left, ctx) === 'prev' && ctxProp(d.right, ctx) === 'next') ||
-    ctxProp(d, ctx) === 'next';
+  const ok = (t.isAssignmentExpression(d, { operator: '=' }) && ctxProp(d.left, ctx) === P.prev && ctxProp(d.right, ctx) === P.next) ||
+    ctxProp(d, ctx) === P.next;
   return ok ? sw : null;
 }
 
@@ -51,24 +61,28 @@ export function machineSwitch(fn, ctx) {
  * @param {object} sw     switch düğümü
  * @param {string} ctx    bağlam parametresinin adı
  * @param {Array} tryLocs [[tryLoc, catchLoc, finallyLoc, afterLoc], …] (sayı ya da null)
- * @param {object} o      { awaitMode: yield yerine await üret }
+ * @param {object} o      { awaitMode, dialect: 'classic'|'compact', delegateOk(expr): yield* hedefi kesin yinelenebilir mi }
  * @returns {{ body: object[], temps: string[] } | null}
  */
-export function decompile(sw, ctx, tryLocs = [], { awaitMode = false } = {}) {
+export function decompile(sw, ctx, tryLocs = [], { awaitMode = false, dialect = 'classic', delegateOk = () => false } = {}) {
+  P = DIALECTS[dialect];
   try {
-    return run(sw, ctx, tryLocs, awaitMode);
+    return run(sw, ctx, tryLocs, awaitMode, dialect === 'compact', delegateOk);
   } catch (e) {
     if (e instanceof Bail) return null;
     throw e;
   }
 }
 
-function run(sw, ctx, tryLocs, awaitMode) {
+function run(sw, ctx, tryLocs, awaitMode, compact, delegateOk) {
   // ── 1) bloklar ──
   const blocks = [];
   const keyIndex = new Map();
   const temps = new Set();
+  const readTemps = new Set();
   let usesSent = false;
+  // catch bloklarının başlangıç durumları: kompakt biçimde ilk "X = ctx.v" hata nesnesidir
+  const catchKeys = new Set(tryLocs.map((l) => l[1]).filter((x) => x != null));
   let count = 0;
 
   const rewrite = (node) => {
@@ -80,8 +94,8 @@ function run(sw, ctx, tryLocs, awaitMode) {
       if (!n.type) return;
       if (t.isMemberExpression(n) && isCtx(n.object, ctx)) {
         const p = ctxProp(n, ctx);
-        if (p === 'sent') { usesSent = true; parent[key] = t.identifier('_sent'); return; }
-        if (typeof p === 'string' && /^t\d+$/.test(p)) { temps.add(p); parent[key] = t.identifier(`_${p}`); return; }
+        if (p === P.sent) { usesSent = true; parent[key] = t.identifier('_sent'); return; }
+        if (!compact && typeof p === 'string' && /^t\d+$/.test(p)) { temps.add(p); readTemps.add(p); parent[key] = t.identifier(`_${p}`); return; }
         bail(`desteklenmeyen bağlam erişimi: ${p}`);
       }
       if (isCtx(n, ctx)) bail('bağlam değer olarak kullanılıyor');
@@ -111,9 +125,26 @@ function run(sw, ctx, tryLocs, awaitMode) {
     const st = c.consequent;
     let i = 0;
     const startBlock = () => { cur = { keys: [], stmts: [], term: null }; blocks.push(cur); };
+    let catchPending = compact && catchKeys.has(key);
     for (; i < st.length; i++) {
       const s = st[i];
       if (isPrevMarker(s, ctx)) continue;
+      // kompakt catch: X = ctx.v
+      if (catchPending) {
+        catchPending = false;
+        const e = t.isExpressionStatement(s) ? s.expression : null;
+        if (e && t.isAssignmentExpression(e, { operator: '=' }) && t.isIdentifier(e.left) && ctxProp(e.right, ctx) === P.sent) {
+          cur.stmts.push({ catchInto: e.left.name, temp: false });
+          continue;
+        }
+        if (!(e && ctxProp(e, ctx) === P.sent)) {
+          // hata nesnesi okunmuyor: catch parametresiz
+          cur.stmts.push({ catchInto: null, temp: false });
+        } else {
+          cur.stmts.push({ catchInto: null, temp: false });
+          continue;
+        }
+      }
       const nx = nextAssign(s, ctx);
       if (nx !== null) {
         const after = st[i + 1];
@@ -135,6 +166,26 @@ function run(sw, ctx, tryLocs, awaitMode) {
         startBlock();
         continue;
       }
+      if (t.isReturnStatement(s) && compact) {
+        const a = s.argument;
+        const code = ctxCall(a, ctx, 'a') && t.isNumericLiteral(a.arguments[0]) ? a.arguments[0].value : null;
+        if (code === 2) {
+          cur.term = a.arguments.length > 1 ? { kind: 'return', expr: rewrite(a.arguments[1]) } : { kind: 'stop' };
+          break;
+        }
+        if (code === 3 && t.isNumericLiteral(a.arguments[1])) { cur.term = { kind: 'goto', to: a.arguments[1].value }; break; }
+        if (ctxCall(a, ctx, 'f') && t.isNumericLiteral(a.arguments[0])) { cur.term = { kind: 'finish', loc: a.arguments[0].value }; break; }
+        if (ctxCall(a, ctx, 'd') && a.arguments.length === 2 && t.isNumericLiteral(a.arguments[1])) {
+          if (awaitMode) bail('async içinde yield*');
+          // _regeneratorValues(x): x kesin yinelenebilir değilse yield* farklı davranır (dizi benzeri/next'li nesne kabul eder)
+          const it = a.arguments[0];
+          const inner = t.isCallExpression(it) && t.isIdentifier(it.callee) && /^_?regeneratorValues\d*$/.test(it.callee.name) && it.arguments.length === 1 ? it.arguments[0] : null;
+          if (!inner || !delegateOk(inner)) bail('yield* hedefi kanıtlanamadı');
+          cur.term = { kind: 'delegate', expr: rewrite(inner), into: null, to: a.arguments[1].value };
+          break;
+        }
+        bail('beklenmeyen return');
+      }
       if (t.isReturnStatement(s)) {
         const a = s.argument;
         if (ctxCall(a, ctx, 'stop') && !a.arguments.length) { cur.term = { kind: 'stop' }; break; }
@@ -147,18 +198,24 @@ function run(sw, ctx, tryLocs, awaitMode) {
         if (ctxCall(a, ctx, 'finish') && t.isNumericLiteral(a.arguments[0])) { cur.term = { kind: 'finish', loc: a.arguments[0].value }; break; }
         if (ctxCall(a, ctx, 'delegateYield') && t.isStringLiteral(a.arguments[1]) && /^t\d+$/.test(a.arguments[1].value) && t.isNumericLiteral(a.arguments[2])) {
           if (awaitMode) bail('async içinde yield*');
+          if (!delegateOk(a.arguments[0])) bail('yield* hedefi kanıtlanamadı');
           temps.add(a.arguments[1].value);
           cur.term = { kind: 'delegate', expr: rewrite(a.arguments[0]), into: a.arguments[1].value, to: a.arguments[2].value };
           break;
         }
         bail('beklenmeyen return');
       }
-      // ctx.tK = ctx["catch"](N) → catch parametresi
-      if (t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression, { operator: '=' }) &&
-        /^t\d+$/.test(ctxProp(s.expression.left, ctx) ?? '') && ctxCall(s.expression.right, ctx, 'catch')) {
-        cur.stmts.push({ catchInto: ctxProp(s.expression.left, ctx), loc: keyOf(s.expression.right.arguments[0]) });
-        temps.add(ctxProp(s.expression.left, ctx));
-        continue;
+      // ctx.tK = ctx["catch"](N) ya da _t = ctx["catch"](N) → catch parametresi
+      if (!compact && t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression, { operator: '=' }) && ctxCall(s.expression.right, ctx, 'catch')) {
+        const left = s.expression.left;
+        keyOf(s.expression.right.arguments[0]);
+        if (/^t\d+$/.test(ctxProp(left, ctx) ?? '')) {
+          cur.stmts.push({ catchInto: ctxProp(left, ctx), temp: true });
+          temps.add(ctxProp(left, ctx));
+          continue;
+        }
+        if (t.isIdentifier(left)) { cur.stmts.push({ catchInto: left.name, temp: false }); continue; }
+        bail('catch hedefi');
       }
       if (t.isBreakStatement(s) || t.isContinueStatement(s)) bail('çıplak break/continue');
       cur.stmts.push(rewrite(s));
@@ -273,12 +330,12 @@ function run(sw, ctx, tryLocs, awaitMode) {
         continue;
       }
       const b = blocks[i];
-      let catchParam = null;
+      let marker = null;
       for (const s of b.stmts) {
-        if (s.catchInto) { catchParam = s.catchInto; continue; }
+        if (s.catchInto !== undefined) { marker = s; continue; }
         out.push(s);
       }
-      if (catchParam && !frames.some((f) => f.catchParam === catchParam && f.catchStart === i)) bail('catch bağlaması bölge dışında');
+      if (marker && !frames.some((f) => f.catchStart === i)) bail('catch bağlaması bölge dışında');
       const tm = b.term;
       switch (tm.kind) {
         case 'return': out.push(t.returnStatement(tm.expr)); return out;
@@ -290,8 +347,9 @@ function run(sw, ctx, tryLocs, awaitMode) {
         }
         case 'yield': case 'delegate': {
           const y = tm.kind === 'delegate' ? yieldNode(tm.expr, true) : yieldNode(tm.expr);
-          if (tm.kind === 'delegate') out.push(t.expressionStatement(t.assignmentExpression('=', t.identifier(`_${tm.into}`), y)));
-          else out.push(t.expressionStatement(usesSent ? t.assignmentExpression('=', t.identifier('_sent'), y) : y));
+          // yield* sonucu: klasikte tK geçicisine, kompaktta ctx.v'ye; okunmuyorsa yalnızca ifade
+          const target = tm.kind === 'delegate' && tm.into ? (readTemps.has(tm.into) ? `_${tm.into}` : null) : (usesSent ? '_sent' : null);
+          out.push(t.expressionStatement(target ? t.assignmentExpression('=', t.identifier(target), y) : y));
           if (tm.toIdx === until) return out;
           if (special(tm.toIdx, frames) || tm.toIdx <= i) { out.push(...jumpTo(tm.toIdx, frames)); return out; }
           i = tm.toIdx;
@@ -379,12 +437,15 @@ function run(sw, ctx, tryLocs, awaitMode) {
     const block = emit(start, tryEnd, [...frames, { kind: 'region', exits: exitsTry }], skipLoopAt, start);
     let handler = null;
     if (catchAt != null) {
-      const first = blocks[catchAt].stmts.find((s) => s.catchInto);
+      const first = blocks[catchAt].stmts.find((s) => s.catchInto !== undefined);
       if (!first) bail('catch parametresi');
       const catchEnd = finallyAt ?? after;
-      const body = emit(catchAt, catchEnd, [...frames, { kind: 'region', exits: new Set([catchEnd, after]), catchParam: first.catchInto, catchStart: catchAt }]);
-      handler = t.catchClause(t.identifier(`_${first.catchInto}`), t.blockStatement(body));
-      catchTemps.add(first.catchInto);
+      if (first.catchInto && !first.temp && mentionedOutside(first.catchInto, catchAt, catchEnd)) bail('catch değişkeni bölge dışında kullanılıyor');
+      const body = emit(catchAt, catchEnd, [...frames, { kind: 'region', exits: new Set([catchEnd, after]), catchStart: catchAt }]);
+      const param = first.catchInto ? t.identifier(first.temp ? `_${first.catchInto}` : first.catchInto) : null;
+      handler = t.catchClause(param, t.blockStatement(body));
+      if (first.temp) catchTemps.add(first.catchInto);
+      else if (first.catchInto) catchLocals.add(first.catchInto);
     }
     let finalizer = null;
     if (finallyAt != null) {
@@ -395,12 +456,24 @@ function run(sw, ctx, tryLocs, awaitMode) {
   }
 
   const catchTemps = new Set();
+  const catchLocals = new Set();
+  // ad catch bölgesi [from, to) dışındaki bloklarda geçiyor mu?
+  function mentionedOutside(name, from, to) {
+    let found = false;
+    blocks.forEach((b, i) => {
+      if (found || (i >= from && i < to)) return;
+      const nodes = [...b.stmts.filter((x) => x.type), b.term.expr, b.term.test].filter(Boolean);
+      for (const n of nodes) t.traverseFast(n, (x) => { if (t.isIdentifier(x, { name })) found = true; });
+    });
+    return found;
+  }
   const body = tidy(emit(0, END, []));
   // gövdenin son deyimi çıplak return ise gereksiz
   while (body.length && t.isReturnStatement(body.at(-1)) && !body.at(-1).argument) body.pop();
-  const vars = [...temps].filter((x) => !catchTemps.has(x)).map((x) => `_${x}`);
+  // yalnızca yield* hedefi olup hiç okunmayan geçiciler bildirilmez
+  const vars = [...temps].filter((x) => !catchTemps.has(x) && readTemps.has(x)).map((x) => `_${x}`);
   if (usesSent) vars.unshift('_sent');
-  return { body, temps: vars, catchTemps: [...catchTemps].map((x) => `_${x}`) };
+  return { body, temps: vars, catchTemps: [...catchTemps].map((x) => `_${x}`), catchLocals: [...catchLocals] };
 }
 
 // L: while (true) { if (c) break L; …; continue L; }  →  while (!c) { … }   (etikete başka atlama yoksa)
@@ -448,6 +521,8 @@ function tidy(list) {
 function isJump(st, ctx) {
   const body = t.isBlockStatement(st) ? st.body : [st];
   if (body.length === 2 && nextAssign(body[0], ctx) !== null && t.isBreakStatement(body[1]) && !body[1].label) return true;
+  if (body.length === 1 && t.isReturnStatement(body[0]) && ctxCall(body[0].argument, ctx, 'a') &&
+    t.isNumericLiteral(body[0].argument.arguments[0], { value: 3 }) && t.isNumericLiteral(body[0].argument.arguments[1])) return true;
   if (body.length === 1 && t.isReturnStatement(body[0]) && ctxCall(body[0].argument, ctx, 'abrupt') &&
     t.isStringLiteral(body[0].argument.arguments[0]) && /^(break|continue)$/.test(body[0].argument.arguments[0].value)) return true;
   return false;
