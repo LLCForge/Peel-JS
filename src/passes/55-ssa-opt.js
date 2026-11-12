@@ -31,15 +31,20 @@ export async function run(ast, { onLog, bump }) {
 function optimize(fn, st) {
   if (sroa(fn)) { st.sroa++; fn.scope.crawl(); }
   const phases = [constants, copies, gvn, deadAssignments, cse, pre];
+  let fx = null;
   for (const phase of phases) {
-    const fx = ssaFor(fn);
-    if (!fx) return;
-    sccp(fx);
-    absint(fx);
+    // SSA yalnızca önceki aşama ağacı değiştirdiyse yeniden kurulur
+    if (!fx) {
+      fx = ssaFor(fn);
+      if (!fx) return;
+      sccp(fx);
+      absint(fx);
+    }
     const n = phase(fx, fn);
     if (n) {
       st[phase.key] += n;
       fn.scope.crawl();
+      fx = null;
     }
   }
 }

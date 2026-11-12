@@ -19,6 +19,11 @@ import * as deadCode from '../passes/80-dead-code.js';
 import * as simplify from '../passes/85-simplify.js';
 import * as unused from '../passes/90-unused.js';
 import * as rename from '../passes/95-rename.js';
+import * as opaqueSmt from '../passes/62-opaque-smt.js';
+import * as ssaOpt from '../passes/55-ssa-opt.js';
+import * as loopOpt from '../passes/57-loop-opt.js';
+import * as specializeFns from '../passes/58-specialize.js';
+import * as cfgOpt from '../passes/87-cfg-opt.js';
 
 // Dizi sırası çalışma sırasıdır.
 // level: 1=güvenli 2=normal 3=agresif 4=maksimum
@@ -45,6 +50,12 @@ export const PASSES = [
   { id: 'simplify',     level: 2, kind: 'ast',  needs: null,      mod: simplify },
   { id: 'unused',       level: 3, kind: 'ast',  needs: null,      mod: unused },
   { id: 'rename',       level: 4, kind: 'ast',  needs: null,      mod: rename },
+  // sembolik/derleyici pass'leri (turlar sabit noktaya kadar sürdüğü için sondan da etkili)
+  { id: 'opaque-smt',   level: 2, kind: 'ast',  needs: null,      mod: opaqueSmt },
+  { id: 'ssa-opt',      level: 3, kind: 'ast',  needs: null,      mod: ssaOpt },
+  { id: 'loop-opt',     level: 3, kind: 'ast',  needs: null,      mod: loopOpt },
+  { id: 'specialize',   level: 4, kind: 'ast',  needs: null,      mod: specializeFns },
+  { id: 'cfg-opt',      level: 3, kind: 'ast',  needs: null,      mod: cfgOpt },
 ];
 
 export const byId = (id) => PASSES.find((p) => p.id === id);

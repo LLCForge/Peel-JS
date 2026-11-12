@@ -1070,11 +1070,25 @@ export class Exec {
       ? this.ev1(this.ev(s, calleeNode.object, ctx), (st, recv) => {
         const keyPairs = calleeNode.computed ? this.ev(st, calleeNode.property, ctx) : [[st, C(calleeNode.property.name)]];
         return this.ev1(keyPairs, (s2, key) => {
+          // alıcı null/undefined olabilirse önce atan yol ayrılır (yöntem okuması TypeError)
+          if (isTerm(recv) && recv.k !== 'c') {
+            const ty = types(recv);
+            if (ty.has('undefined') || ty.has('null')) {
+              const out = [];
+              for (const [sb, isNull] of this.decide(s2, mk('==', recv, C(null)), calleeNode, ctx)) {
+                if (isNull) { sb.status = 'throw'; sb.value = C('TypeError'); this.traceAdd(sb, calleeNode, 'fırlatma', { why: 'null alıcı' }); out.push([sb, { fn: null, recv }]); }
+                else out.push([sb, { fn: this.peekMember(sb, recv, key, calleeNode, ctx), recv }]);
+              }
+              return out;
+            }
+          }
+          if (isTerm(recv) && recv.k === 'c' && recv.v == null) {
+            s2.status = 'throw';
+            s2.value = C('TypeError');
+            return [[s2, { fn: null, recv }]];
+          }
           // yöntem değeri: kayıt yalnızca çağrı sonucu için tutulur (enstrümantasyon üye erişimini çağrıda sarmalamaz)
-          const saved = this.o.guide;
-          const fn = this.peekMember(s2, recv, key, calleeNode, ctx);
-          this.o.guide = saved;
-          return [[s2, { fn, recv }]];
+          return [[s2, { fn: this.peekMember(s2, recv, key, calleeNode, ctx), recv }]];
         });
       })
       : this.ev(s, calleeNode, ctx).map(([st, fn]) => [st, { fn, recv: UNDEF }]);
@@ -1092,7 +1106,8 @@ export class Exec {
     const tr = s.trace.length;
     let r;
     try {
-      const pairs = this.getProp(s, recv, key, node, ctx);
+      // null denetimi çağıranda yapıldı: burada çatallanma olmaz
+      const pairs = this.getProp(s, recv, key, node, ctx, true);
       r = pairs.length === 1 && pairs[0][0] === s && s.status === 'normal' ? pairs[0][1] : null;
     } finally {
       this.o.guide = g;

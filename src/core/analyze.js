@@ -4,6 +4,7 @@ import { traverse } from '../util/ast.js';
 import { fnv1a } from '../util/hash.js';
 import { encodingReport } from './encodings.js';
 import { POST_SCRIPT, classify, riskScore, privacy, yaraRule, idsRules, libraries, missingGlobals } from './threat.js';
+import { symbolicReport } from '../symbolic/report.js';
 
 // Çözülmüş kod hakkında rapor: obfuscator tespiti, IOC'ler, şüpheli API'ler, ağ çağrıları,
 // fingerprint okumaları ve kalite metrikleri. Statik kısım AST'den, dinamik kısım sandbox'tan gelir.
@@ -209,5 +210,7 @@ export async function analyze({ input, text, output, events = [], sandbox = null
       functions: after.functions,
       outputHash: fnv1a(output),
     },
+    // sembolik yürütme, concolic, SMT kanıtları, nokta/etki/taint analizleri, değişmezler
+    symbolic: await symbolicReport({ text: text ?? input, output, sandbox }).catch((e) => ({ skipped: e.message })),
   };
 }
